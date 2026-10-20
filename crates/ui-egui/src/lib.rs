@@ -221,11 +221,14 @@ pub struct Chrome {
     /// The ribbon's File tab and the Backstage view it opens (also reached by keyboard and
     /// commands such as `ui.backstage`).
     pub file_tab: bool,
+    /// The ArtCraft community (Discord) link in the About dialog. A host that embeds GridCraft
+    /// in its own product turns it off.
+    pub community_links: bool,
 }
 
 impl Default for Chrome {
     fn default() -> Self {
-        Chrome { title_bar: true, file_tab: true }
+        Chrome { title_bar: true, file_tab: true, community_links: true }
     }
 }
 
@@ -1289,12 +1292,12 @@ pub fn clean_error(e: &str) -> String {
 
 #[allow(clippy::disallowed_methods)] // the clock is read only off wasm
 pub fn now_ms() -> f64 {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         use std::time::{SystemTime, UNIX_EPOCH};
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         0.0
     }

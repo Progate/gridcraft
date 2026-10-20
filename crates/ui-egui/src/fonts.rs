@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 
 /// A font file is skipped by the scan past this size: a catalog only needs each face's name, and a
 /// damaged or enormous file must not turn startup into a long read.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 const MAX_FONT_FILE: u64 = 64 << 20;
 
 /// One face of one installed font file.
@@ -36,11 +36,11 @@ pub struct Face {
 
 /// The font folders of the platform (the system's and the user's). Empty on wasm.
 pub fn system_font_dirs() -> Vec<PathBuf> {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         Vec::new()
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         let mut dirs: Vec<PathBuf> = Vec::new();
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
@@ -67,7 +67,7 @@ pub fn system_font_dirs() -> Vec<PathBuf> {
 }
 
 /// Weight implied by a style name (`"Bold"` → 700, `"Light"` → 300).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn style_weight(style: &str) -> f32 {
     let s: String = style.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
     const TABLE: &[(&str, f32)] = &[
@@ -89,14 +89,14 @@ fn style_weight(style: &str) -> f32 {
 }
 
 /// Whether a style name reads as italic or oblique.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn style_italic(style: &str) -> bool {
     let s: String = style.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect();
     s.contains("italic") || s.contains("oblique")
 }
 
 /// Every face in `data` as `(index, family, style)`. Damaged data yields nothing, never a panic.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn file_faces(data: &[u8]) -> Vec<(u32, String, String)> {
     use skrifa::raw::FileRef;
     use skrifa::{MetadataProvider, string::StringId};
@@ -120,7 +120,7 @@ fn file_faces(data: &[u8]) -> Vec<(u32, String, String)> {
 
 /// Catalog every face under `dirs`, recursing into subfolders. A folder reached twice (through a
 /// symlink) is read once, so a link back to a parent ends the walk.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Face> {
     let mut out: Vec<Face> = Vec::new();
     let mut stack: Vec<PathBuf> = dirs.to_vec();
@@ -151,7 +151,7 @@ pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Face> {
     out
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub fn scan_dirs(_dirs: &[PathBuf]) -> Vec<Face> {
     Vec::new()
 }
@@ -173,7 +173,7 @@ fn catalog_now() -> Option<&'static [Face]> {
 pub fn start_scan() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         if CATALOG.get().is_none() {
             // A failed spawn leaves the scan to the first blocking lookup.
             let _ = std::thread::Builder::new().name("font-scan".into()).spawn(|| {
@@ -369,7 +369,7 @@ mod tests {
         assert!(file_faces(&[]).is_empty());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn the_scan_catalogs_fonts_and_reads_each_folder_once() {
         let dir = std::env::temp_dir().join(format!("gridcraft-fonts-scan-{}", std::process::id()));
@@ -399,7 +399,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn binding_a_family_binds_all_four_roles_and_never_stores_missing_data() {
         let dir = std::env::temp_dir().join(format!("gridcraft-fonts-bind-{}", std::process::id()));

@@ -206,7 +206,7 @@ pub(crate) fn font_parses(bytes: &[u8], index: u32) -> bool {
 
 /// Loads the first candidate that exists and parses. A file that exists but can't be parsed is
 /// skipped with a warning and the next candidate is tried.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn try_load(paths: &[(&str, u32)]) -> Option<FontData> {
     for (p, index) in paths {
         if let Ok(bytes) = std::fs::read(p) {
@@ -237,7 +237,7 @@ pub(crate) fn drop_unparseable_fonts(fonts: &mut FontDefinitions) {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 fn try_load(_paths: &[(&str, u32)]) -> Option<FontData> {
     None
 }
@@ -447,7 +447,7 @@ pub fn font_definitions_with(language: crate::i18n::Language, used: &[String]) -
 /// without this a Thai, Hebrew, Japanese or Chinese workbook shows tofu boxes even though the text
 /// was read correctly. With a face installed those scripts get real glyphs instead of tofu; nothing
 /// is bundled, and a machine without the face keeps the old behaviour.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<String> {
     let mut keys = Vec::new();
     // Files already loaded as a fallback face. A file serves at most one key: the region-merged
@@ -470,7 +470,7 @@ fn load_fallback(fonts: &mut FontDefinitions, han: HanOrder) -> Vec<String> {
     keys
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
     Vec::new()
 }
@@ -479,7 +479,7 @@ fn load_fallback(_fonts: &mut FontDefinitions, _han: HanOrder) -> Vec<String> {
 /// family is enough — epaint picks the first face with the glyph, and a script's glyphs live in one
 /// file. Order only matters between faces that both cover a glyph (Japanese vs Chinese kanji), so
 /// the interface language reorders the two Han entries and nothing else.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn fallback_faces(han: HanOrder) -> Vec<(&'static str, Vec<(String, u32)>)> {
     let ja = ("sys-cjk-han-ja", cjk_han_japanese());
     let zh = ("sys-cjk-han-zh", cjk_han_simplified());
@@ -501,7 +501,7 @@ fn fallback_faces(han: HanOrder) -> Vec<(&'static str, Vec<(String, u32)>)> {
 /// Linux directories that hold CJK fonts across distributions: Debian/Ubuntu (`opentype/noto`,
 /// `truetype/wqy`), Fedora (`google-noto-cjk`), Arch (`noto-cjk`, `wenquanyi`), ChromeOS's Linux
 /// container (`chromeos/notocjk`, #1762), plus local and flat layouts.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 const LINUX_CJK_DIRS: [&str; 11] = [
     "/usr/share/fonts/opentype/noto",
     "/usr/share/fonts/google-noto-cjk",
@@ -521,7 +521,7 @@ const LINUX_CJK_DIRS: [&str; 11] = [
 /// The region-merged `NotoSansCJK-Regular.ttc` holds one face per locale (JP 0, KR 1, SC 2, TC 3,
 /// HK 4) with the same glyph coverage, so the index only picks glyph shapes. Whichever Han list
 /// comes first loads it; [`load_fallback`] does not load the same file again for the other.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn cjk_han_japanese() -> Vec<(String, u32)> {
     let mac = "/System/Library/Fonts";
     let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
@@ -532,13 +532,15 @@ fn cjk_han_japanese() -> Vec<(String, u32)> {
     for d in LINUX_CJK_DIRS {
         v.push((format!("{d}/NotoSansCJKjp-Regular.otf"), 0));
         v.push((format!("{d}/NotoSansCJK-Regular.ttc"), 0)); // JP face
+        // Noto Sans JP as Google Fonts ships it (the region subset), which BrowserOS installs.
+        v.push((format!("{d}/NotoSansJP-Regular.otf"), 0));
     }
     v
 }
 
 /// Simplified Chinese Han faces. Loaded apart from the Japanese ones so a glyph one family lacks
 /// (simplified-only hanzi in a Japanese font) still falls through to a real glyph.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn cjk_han_simplified() -> Vec<(String, u32)> {
     let mac = "/System/Library/Fonts";
     let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
@@ -562,7 +564,7 @@ fn cjk_han_simplified() -> Vec<(String, u32)> {
 
 /// Hangul faces (Korean). The Han faces above that come from the region-merged Noto Sans CJK file
 /// already carry Hangul; [`load_fallback`] then skips this list rather than load the file twice.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn cjk_hangul() -> Vec<(String, u32)> {
     let mac = "/System/Library/Fonts";
     let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
@@ -578,7 +580,7 @@ fn cjk_hangul() -> Vec<(String, u32)> {
 
 /// Thai faces. Windows ships Leelawadee UI and Tahoma/Microsoft Sans Serif (both carry Thai);
 /// macOS has Thonburi; Linux usually has Noto Sans Thai or Garuda.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn thai() -> Vec<(String, u32)> {
     let mac_sys = "/System/Library/Fonts";
     let mac_sup = "/System/Library/Fonts/Supplemental";
@@ -606,7 +608,7 @@ fn thai() -> Vec<(String, u32)> {
 
 /// Hebrew faces. Windows has David and FrankRuehl (and Tahoma/Courier New carry Hebrew); macOS has
 /// Arial Hebrew and David; Linux usually has Noto Sans Hebrew or DejaVu Sans.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn hebrew() -> Vec<(String, u32)> {
     let mac_sys = "/System/Library/Fonts";
     let mac_sup = "/System/Library/Fonts/Supplemental";
@@ -641,7 +643,7 @@ fn hebrew() -> Vec<(String, u32)> {
 /// which then render as empty boxes (#197, #54). DejaVu Sans covers most of them; the paths cover
 /// Debian/Ubuntu, Fedora and Arch layouts. [`load_fallback`] skips the file if Hebrew already
 /// loaded it.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn symbols() -> Vec<(String, u32)> {
     let win = std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into());
     let mut v: Vec<(String, u32)> = vec![(format!("{win}\\seguisym.ttf"), 0), ("/System/Library/Fonts/Apple Symbols.ttf".into(), 0)];
@@ -661,7 +663,7 @@ fn symbols() -> Vec<(String, u32)> {
 
 /// A second symbol face for what the first lacks (⌘ and other technical symbols): Noto Sans
 /// Symbols 2 where it is installed, or Segoe UI Symbol behind Segoe UI.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn symbols_more() -> Vec<(String, u32)> {
     let mut v: Vec<(String, u32)> = Vec::new();
     for d in [
@@ -680,11 +682,11 @@ fn symbols_more() -> Vec<(String, u32)> {
 
 /// Whether any symbol fallback face is installed (tests skip their glyph checks without one).
 pub fn symbol_face_installed() -> bool {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         symbols().iter().chain(symbols_more().iter()).any(|(p, _)| std::path::Path::new(p).exists())
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         false
     }
@@ -780,7 +782,7 @@ mod font_binding_tests {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(all(target_arch = "wasm32", target_os = "unknown"))))]
 mod tests {
     use super::*;
     use crate::i18n::Language;
@@ -948,7 +950,7 @@ mod tests {
         out.textures_delta.clear(); // nothing consumes the atlas in a headless test
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn try_load_skips_a_broken_candidate() {
         // A candidate that exists but is not a readable font must not win over a good one behind it.

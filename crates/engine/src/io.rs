@@ -453,7 +453,7 @@ pub fn to_html(wb: &Workbook, sheet: usize) -> Result<String> {
     Ok(out)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn read_file(path: &str) -> Result<Vec<u8>> {
     let meta = std::fs::metadata(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))?;
     if meta.len() > 2 * 1024 * 1024 * 1024 {
@@ -462,12 +462,12 @@ pub fn read_file(path: &str) -> Result<Vec<u8>> {
     std::fs::read(path).map_err(|e| EngineError::Other(format!("{path}: {e}")))
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub fn read_file(path: &str) -> Result<Vec<u8>> {
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
     // Write to a temporary file, then rename: a crash never leaves a half-written workbook.
     let tmp = format!("{path}.sctmp");
@@ -479,7 +479,7 @@ pub fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
     })
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub fn write_file(path: &str, _bytes: &[u8]) -> Result<()> {
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
 }
@@ -699,7 +699,7 @@ mod tests {
 
     /// A save that can't be put in place (here a folder already has the workbook's name, as
     /// with a file another app holds locked) fails without leaving `<name>.sctmp` behind.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn failed_save_leaves_no_temporary_file() {
         let dir = std::env::temp_dir().join(format!("gridcraft-write-{}", std::process::id()));

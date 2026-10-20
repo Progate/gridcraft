@@ -1703,7 +1703,7 @@ fn ods_import_keeps_cached_values_and_reports_limits() {
 }
 
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn ods_import_never_reuses_source_as_save_target() {
     #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -1734,7 +1734,7 @@ fn ods_import_never_reuses_source_as_save_target() {
 
 /// Open a `;` CSV by path (a double-click), edit, Save: the file keeps its `;` separator.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn saving_an_opened_semicolon_csv_keeps_semicolons() {
     #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -1809,7 +1809,7 @@ fn link_target(path: &std::path::Path) -> String {
 /// Save As into another folder keeps the link on the same file, as Excel does: the relative path
 /// is rewritten from the new folder (#801).
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn save_as_into_another_folder_keeps_linked_workbooks_on_the_same_file() {
     #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -1838,7 +1838,7 @@ fn save_as_into_another_folder_keeps_linked_workbooks_on_the_same_file() {
 /// A typo like `report.cvs` must not quietly write an XLSX under that name and adopt it as the
 /// document's file.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn saving_to_an_unknown_extension_is_refused() {
     #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -1863,7 +1863,7 @@ fn saving_to_an_unknown_extension_is_refused() {
 /// An XLSX opened by its content under an unknown extension (`budget.dat`) saves back to its own
 /// file as XLSX; a Save As to another unknown extension is still refused.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn an_xlsx_opened_under_an_unknown_extension_saves_back_as_xlsx() {
     #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -2446,7 +2446,7 @@ fn xlsb_import_keeps_cached_values_and_reports_limits() {
 }
 
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn xlsb_import_never_reuses_source_as_save_target() {
     #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
@@ -3236,7 +3236,7 @@ fn encrypted_workbooks_open_with_their_password() {
 }
 
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
     const PW: &str = "synthetic-pw-5522";
     #[allow(clippy::disallowed_methods)] // native-only test: a unique temp dir name

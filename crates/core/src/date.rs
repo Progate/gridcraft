@@ -43,12 +43,12 @@ pub fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
 /// On wasm32 `std::time::SystemTime::now` traps, so the browser clock is read through `Date.now()`.
 #[allow(clippy::disallowed_methods)] // the std clock is read only off wasm
 pub fn unix_now_ms() -> Option<f64> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         let d = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?;
         Some(d.as_secs_f64() * 1000.0)
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         Some(js_sys::Date::now())
     }

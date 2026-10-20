@@ -21,11 +21,11 @@ pub fn specs() -> Vec<CommandSpec> {
 fn dictionary() -> &'static HashSet<String> {
     static DICT: OnceLock<HashSet<String>> = OnceLock::new();
     DICT.get_or_init(|| {
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         {
             HashSet::new()
         }
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         {
             let mut set = HashSet::new();
             for path in ["/usr/share/dict/words", "/usr/share/dict/american-english", "/usr/share/dict/british-english"] {

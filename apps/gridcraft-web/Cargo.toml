@@ -20,7 +20,7 @@ egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
 rfd = { workspace = true }
 wasm-bindgen = "0.2"

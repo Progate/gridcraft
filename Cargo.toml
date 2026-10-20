@@ -75,3 +75,8 @@ opt-level = 3
 lto = "thin"
 codegen-units = 16
 debug = 0
+
+# BrowserOS（wasm32-wasip1-threads）: wasm の parking_lot_core はロックが競合すると panic する
+# （nightly の feature でしか本物の待ちにならない）。std の park / unpark で待つ版（→ browseros/README.md）
+[patch.crates-io]
+parking_lot_core = { path = "browseros/crates/parking_lot_core" }
