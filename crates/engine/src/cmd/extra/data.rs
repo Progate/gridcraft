@@ -35,8 +35,15 @@ pub(super) fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
                 xml: None,
             }));
         }
+        let old_end = t.data_range().map_or(t.range.start.row, |d| d.end.row);
         t.columns = cols;
         t.range = r;
+        // Rows the table takes in get its calculated column formulas.
+        if let Some(from) = old_end.checked_add(1) {
+            for c in crate::tables::fill_calculated(sheet, ti, from, r.end.row) {
+                cx.changed.push((si, c));
+            }
+        }
         cx.structural = true;
         Ok(Json::Null)
     })

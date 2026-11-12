@@ -5,6 +5,7 @@ use gridcraft_formula::Expr;
 use gridcraft_model::Formula;
 
 /// Formula text for a file.
+#[cfg(test)]
 pub fn to_file(f: &Formula) -> String {
     to_file_in(f, None)
 }

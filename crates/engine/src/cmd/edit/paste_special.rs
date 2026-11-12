@@ -376,6 +376,10 @@ pub(super) fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
             rewrite_all_formulas(&mut cx.wb, &src_sheet_name, &e)?;
             cx.structural = true;
         }
+        // Pasting contents next to a table extends it, as typing does.
+        if !link && !matches!(what, What::Formats | What::Comments | What::Validation | What::ColumnWidths) {
+            crate::tables::auto_expand(cx, dest_sheet, pasted);
+        }
         let end = at.offset_clamped((tiles_r * h) as i64 - 1, (tiles_c * w) as i64 - 1);
         *cx.sel = crate::Selection { active: at, anchor: at, ranges: vec![RangeRef::new(at, end)] };
         Ok(())

@@ -494,6 +494,7 @@ pub(crate) fn edit<R>(s: &mut Session, f: impl FnOnce(&mut Ctx) -> Result<R>) ->
     let d = s.doc_mut()?;
     commit(d, |cx| {
         let r = f(cx)?;
+        crate::tables::fill_inserted_rows(cx);
         crate::tables::sync_headers(cx);
         Ok(r)
     })

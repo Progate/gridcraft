@@ -37,9 +37,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             format_as_table
         ),
-        cmd!("table.totalRow", "Total Row", ["Table", "Table Style Options"], None, "{table?, on?: bool}", has_doc, |s, p| table_flag(
-            s, p, "totals"
-        )),
+        cmd!(
+            "table.totalRow",
+            "Total Row",
+            ["Table", "Table Style Options"],
+            None,
+            "{table?, on?: bool, label?: \"Total\" (the first column's label; Excel's Japanese UI writes 集計)}",
+            has_doc,
+            |s, p| table_flag(s, p, "totals")
+        ),
         cmd!("table.bandedRows", "Banded Rows", ["Table", "Table Style Options"], None, "{table?, on?}", has_doc, |s, p| table_flag(
             s,
             p,
@@ -424,8 +430,15 @@ fn find_table(s: &Session, p: &Json) -> Result<(usize, usize)> {
 fn table_flag(s: &mut Session, p: &Json, which: &str) -> Result<Json> {
     let (si, ti) = find_table(s, p)?;
     let on = bool_param(p, "on");
+    let label = str_param(p, "label").filter(|l| !l.is_empty()).unwrap_or("Total").to_string();
     edit(s, |cx| {
         let sh = cx.sheet_mut(si)?;
+        // Excel sums the last column when it holds numbers and counts it otherwise.
+        let last_numeric = sh.tables.get(ti).and_then(|t| t.data_range()).is_some_and(|d| {
+            let col = RangeRef::new(CellRef::new(d.start.row, d.end.col), d.end);
+            let mut it = sh.cells.iter_range(col).filter(|(_, c)| c.has_content()).peekable();
+            it.peek().is_none() || it.any(|(_, c)| matches!(c.value, gridcraft_core::Value::Number(_)))
+        });
         let Some(t) = sh.tables.get_mut(ti) else { return Ok(Json::Null) };
         match which {
             "totals" => {
@@ -438,13 +451,13 @@ fn table_flag(s: &mut Session, p: &Json, which: &str) -> Result<Json> {
                     if v {
                         t.range.end.row += 1;
                         if let Some(first) = t.columns.first_mut() {
-                            first.totals_label = Some("Total".into());
+                            first.totals_label = Some(label.clone());
                         }
                         if t.columns.len() > 1
                             && let Some(last) = t.columns.last_mut()
                             && last.totals == TotalsFn::None
                         {
-                            last.totals = TotalsFn::Sum;
+                            last.totals = if last_numeric { TotalsFn::Sum } else { TotalsFn::Count };
                         }
                     } else {
                         let row = t.range.end.row;
@@ -518,6 +531,8 @@ fn table_total_fn(s: &mut Session, p: &Json) -> Result<Json> {
             && let Some(c) = t.columns.get_mut(i)
         {
             c.totals = f;
+            // Choosing a function, or None, replaces the first column's label.
+            c.totals_label = None;
         }
         write_totals(sh, ti);
         cx.structural = true;

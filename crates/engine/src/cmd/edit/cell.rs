@@ -173,6 +173,8 @@ pub(super) fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
         }
         crate::cmd::data::grow_autofilter(sh, at);
         cx.touch(sheet, at);
+        crate::tables::auto_expand(cx, sheet, RangeRef::cell(at));
+        crate::tables::calculated_entry(cx, sheet, at);
         Ok(Json::Null)
     })?;
     let v = s.doc()?.wb.sheet(sheet).map(|sh| sh.value(at)).unwrap_or_default();
@@ -233,6 +235,8 @@ pub(super) fn range_set_values(s: &mut Session, p: &Json) -> Result<Json> {
     let mut converted: Vec<(CellRef, String)> = Vec::new();
     let mut converted_count = 0;
     edit(s, |cx| {
+        let mut formulas = Vec::new();
+        let mut end = start;
         for (ri, row) in rows.iter().enumerate() {
             let cols: Vec<&Json> = match row.as_array() {
                 Some(a) => a.iter().collect(),
@@ -287,6 +291,12 @@ pub(super) fn range_set_values(s: &mut Session, p: &Json) -> Result<Json> {
                         converted.push((at, input.clone()));
                     }
                 }
+                // One formula a column decides its calculated column: the others were written in
+                // the same command, so each would find the same, and rescan the column.
+                if cell.as_ref().is_some_and(|c| c.formula.is_some()) && !formulas.iter().any(|f: &CellRef| f.col == at.col) {
+                    formulas.push(at);
+                }
+                end = CellRef::new(end.row.max(at.row), end.col.max(at.col));
                 let sh = cx.sheet_mut(sheet)?;
                 match cell {
                     Some(c) => sh.set_cell(at, c),
@@ -298,6 +308,11 @@ pub(super) fn range_set_values(s: &mut Session, p: &Json) -> Result<Json> {
                 cx.touch(sheet, at);
                 count += 1;
             }
+        }
+        // Values written next to a table extend it, and formulas make calculated columns, as typing does.
+        crate::tables::auto_expand(cx, sheet, RangeRef::new(start, end));
+        for at in formulas {
+            crate::tables::calculated_entry(cx, sheet, at);
         }
         Ok(())
     })?;

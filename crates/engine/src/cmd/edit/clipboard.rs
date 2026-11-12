@@ -337,6 +337,8 @@ fn paste_text(s: &mut Session, p: &Json, text: &str) -> Result<Json> {
         }
         if h > 0 && w > 0 {
             let end = at.offset_clamped(h as i64 - 1, w as i64 - 1);
+            // Pasting next to a table extends it, as typing does.
+            crate::tables::auto_expand(cx, sheet, RangeRef::new(at, end));
             *cx.sel = crate::Selection { active: at, anchor: at, ranges: vec![RangeRef::new(at, end)] };
         }
         Ok(())

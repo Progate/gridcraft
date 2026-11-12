@@ -978,6 +978,40 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
     }
 }
 
+/// Excel names the table in every structured reference it saves, a table's own cells and
+/// calculated columns too (`Sales[[#This Row],[Units]]`), and shows those this-row references to
+/// their own table as `[@Units]`: they are read back in that form, the one typing gives.
+fn own_table_shorthand(sheet: &mut Sheet) {
+    let tables: Vec<(String, RangeRef)> = sheet.tables.iter().map(|t| (t.name.clone(), t.range)).collect();
+    for (name, range) in &tables {
+        let found: Vec<(CellRef, Formula)> = sheet
+            .cells
+            .iter_range(*range)
+            .filter_map(|(c, cell)| {
+                let f = cell.formula.as_ref()?;
+                let e = f.with_expr(|e| crate::fmla::own_table_shorthand(e, name))??;
+                Some((c, Formula { text: gridcraft_formula::print(&e), expr: Some(std::sync::Arc::new(e)), array: f.array, dynamic: f.dynamic }))
+            })
+            .collect();
+        for (c, f) in found {
+            if let Some(cell) = sheet.cells.get_mut(c) {
+                cell.formula = Some(std::sync::Arc::new(f));
+            }
+        }
+    }
+    for t in sheet.tables.iter_mut() {
+        let name = t.name.clone();
+        for col in t.columns.iter_mut() {
+            if let Some(text) = col.formula.as_deref()
+                && let Ok(e) = gridcraft_formula::parse(text)
+                && let Some(short) = crate::fmla::own_table_shorthand(&e, &name)
+            {
+                col.formula = Some(gridcraft_formula::print(&short));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1032,39 +1066,5 @@ mod tests {
         let ranges = parse_sqref(Some(&sq));
         assert_eq!(ranges.len(), 12_000);
         assert_eq!(ranges.last().copied(), RangeRef::parse("A12000"));
-    }
-}
-
-/// Excel names the table in every structured reference it saves, a table's own cells and
-/// calculated columns too (`Sales[[#This Row],[Units]]`), and shows those this-row references to
-/// their own table as `[@Units]`: they are read back in that form, the one typing gives.
-fn own_table_shorthand(sheet: &mut Sheet) {
-    let tables: Vec<(String, RangeRef)> = sheet.tables.iter().map(|t| (t.name.clone(), t.range)).collect();
-    for (name, range) in &tables {
-        let found: Vec<(CellRef, Formula)> = sheet
-            .cells
-            .iter_range(*range)
-            .filter_map(|(c, cell)| {
-                let f = cell.formula.as_ref()?;
-                let e = f.with_expr(|e| crate::fmla::own_table_shorthand(e, name))??;
-                Some((c, Formula { text: gridcraft_formula::print(&e), expr: Some(std::sync::Arc::new(e)), array: f.array, dynamic: f.dynamic }))
-            })
-            .collect();
-        for (c, f) in found {
-            if let Some(cell) = sheet.cells.get_mut(c) {
-                cell.formula = Some(std::sync::Arc::new(f));
-            }
-        }
-    }
-    for t in sheet.tables.iter_mut() {
-        let name = t.name.clone();
-        for col in t.columns.iter_mut() {
-            if let Some(text) = col.formula.as_deref()
-                && let Ok(e) = gridcraft_formula::parse(text)
-                && let Some(short) = crate::fmla::own_table_shorthand(&e, &name)
-            {
-                col.formula = Some(gridcraft_formula::print(&short));
-            }
-        }
     }
 }
