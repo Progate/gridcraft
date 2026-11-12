@@ -87,6 +87,8 @@ fn rounding() {
     }
     assert!(matches!(ev2("ROUNDUP", 1234.0, -309.0), Value::Error(CellError::Num)));
     close(ev2("ROUNDUP", 0.1 + 0.2, 1.0), 0.3);
+    close(ev2("ROUNDDOWN", 0.29, 2.0), 0.29);
+    close(ev2("ROUNDUP", 0.29, 2.0), 0.29);
     close(ev2("TRUNC", 8.987, 2.0), 8.98);
     close(ev1("TRUNC", -8.9), -8.0);
     close(ev1("INT", -8.9), -9.0);
@@ -500,4 +502,32 @@ fn criteria_cut_inside_a_surrogate_pair() {
     // Comparisons treat it as sorting just above the 126 kept emoji.
     close(sumifs(format!(">={}", e.repeat(128))), 1.0 + 2.0);
     close(sumifs(format!("<={}", e.repeat(128))), 3.0);
+}
+
+/// Pay from a time: hours worked × 24 × hourly wage, cut to whole yen. Excel's ROUNDDOWN reads
+/// the product to 16 significant digits, so a product one unit short in the 16th digit stays
+/// short (6599), although the cell itself shows 6600; INT floors the binary value.
+#[test]
+fn rounddown_of_a_time_times_wage_matches_excel() {
+    let exact = |v: Value, want: f64| assert!(matches!(v, Value::Number(n) if n == want), "{v:?} != {want}");
+    // TIME(6,36,0) = 0.275 → 0.275*24*1000 = 6600.000000000001 → 6600.
+    let time = (6.0 * 3600.0 + 36.0 * 60.0) / 86400.0;
+    assert_eq!(time * 24.0 * 1000.0, 6600.000000000001);
+    exact(ev2("ROUNDDOWN", time * 24.0 * 1000.0, 0.0), 6600.0);
+    // 19:06 − 12:30 = 0.2749999999999999 → 6599.999999999998 → 6599 (the "1 yen short" result).
+    let worked = (19.0 * 3600.0 + 6.0 * 60.0) / 86400.0 - (12.0 * 3600.0 + 30.0 * 60.0) / 86400.0;
+    let pay = worked * 24.0 * 1000.0;
+    assert_eq!(pay, 6599.999999999998);
+    exact(ev2("ROUNDDOWN", pay, 0.0), 6599.0);
+    exact(ev2("TRUNC", pay, 0.0), 6599.0);
+    exact(ev1("INT", pay), 6599.0);
+    exact(ev2("ROUNDUP", pay, 0.0), 6600.0);
+    exact(ev2("ROUND", pay, 0.0), 6600.0);
+    // The double just below 0.275 times 24 is 6.6 exactly, so its pay is 6600 in every reading.
+    exact(ev2("ROUNDDOWN", 0.27499999999999997 * 24.0 * 1000.0, 0.0), 6600.0);
+    // Noise past the 16th digit is still ignored: 28.999999999999996 reads as 29.
+    exact(ev2("ROUNDDOWN", 0.29 * 100.0, 0.0), 29.0);
+    exact(ev2("ROUNDUP", 3.0000000000000004, 0.0), 3.0);
+    exact(ev2("ROUNDDOWN", -6599.999999999998, 0.0), -6599.0);
+    exact(ev2("ROUNDUP", -0.001, 2.0), -0.01);
 }

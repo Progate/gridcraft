@@ -65,34 +65,42 @@ fn digits_arg(a: &[Arg], i: usize) -> R<i32> {
     Ok(d.clamp(-400.0, 400.0) as i32)
 }
 
-/// Rounds |x| scaled by 10^digits with `op` (ceil / floor), keeping sign.
+/// ROUNDUP / ROUNDDOWN / TRUNC: drops the decimal digits of |x| past `digits` (rounding away
+/// from zero when `up` and any dropped digit is non-zero), keeping the sign.
+///
+/// Excel reads `x` to 16 significant digits here, not to the 15 it displays and compares with,
+/// and not to the full binary value. So binary noise in the 17th digit is ignored
+/// (`ROUNDDOWN(0.29,2)` is 0.29 though 0.29 is stored as 0.28999999999999998; `ROUNDUP(0.1+0.2,1)`
+/// is 0.3), but a product one unit short in the 16th digit is not rounded up first: an hourly pay
+/// `=ROUNDDOWN((19:06-12:30)*24*1000,0)` computes 6599.999999999998 and is 6599 in Excel, while
+/// the cell shows 6600 at 15 digits. INT floors the binary value itself.
 fn round_dir(x: f64, digits: i32, up: bool) -> f64 {
     if x == 0.0 || !x.is_finite() {
         return x;
     }
-    let ax = clean(x.abs());
-    let (scaled, f, neg) = if digits >= 0 {
-        let f = 10f64.powi(digits);
-        (ax * f, f, false)
-    } else {
-        let f = 10f64.powi(-digits);
-        (ax / f, f, true)
-    };
-    if !scaled.is_finite() || scaled >= 1e17 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    // `{:.15e}` writes 16 significant digits: `d.ddddddddddddddde±x`.
+    let sci = format!("{:.15e}", x.abs());
+    let Some((mantissa, exp)) = sci.split_once('e') else { return x };
+    let Ok(exp) = exp.parse::<i64>() else { return x };
+    let sig: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    // Significant digits that stay: those before the decimal point plus `digits` after it.
+    let keep = exp + 1 + i64::from(digits);
+    if keep >= sig.len() as i64 {
         return x;
     }
-    let s = clean(scaled);
-    let r = if up { s.ceil() } else { s.floor() };
-    // Toward zero, r == 0 with an infinite scale would be 0 * inf = NaN (#NUM!); the result is simply
-    // zero. Away from zero the true result (10^309 or more) is not a number, so ROUNDUP stays #NUM!.
-    let out = if !neg {
-        clean(r / f)
-    } else if r == 0.0 && !up {
-        0.0
-    } else {
-        r * f
-    };
-    if x < 0.0 { -out } else { out }
+    let unit_exp = exp + 1 - keep;
+    if keep <= 0 {
+        // Every digit is dropped: toward zero that is 0; away from zero it is one unit at the
+        // rounding position (10^309 and beyond is not a number, so ROUNDUP stays #NUM!).
+        return if up { sign * format!("1e{unit_exp}").parse::<f64>().unwrap_or(f64::INFINITY) } else { 0.0 };
+    }
+    let (kept, dropped) = sig.split_at(usize::try_from(keep).unwrap_or(0));
+    let Ok(mut n) = kept.parse::<u64>() else { return x };
+    if up && dropped.bytes().any(|b| b != b'0') {
+        n += 1;
+    }
+    sign * format!("{n}e{unit_exp}").parse::<f64>().unwrap_or(x.abs())
 }
 
 // ---------------------------------------------------------------------------------------------
