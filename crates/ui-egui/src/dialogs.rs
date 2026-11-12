@@ -473,6 +473,29 @@ impl Dialog {
                 ],
                 json!({"on": true}),
             ),
+            "encryptPassword" => Dialog::form(
+                "encryptPassword",
+                "Encrypt Document",
+                "file.encryptWithPassword",
+                vec![
+                    Note("Encrypt the contents of this file".into()),
+                    Password { key: "password", label: "Password:" },
+                    Password { key: "confirmPassword", label: "Reenter password:" },
+                    Note("Caution: If you lose or forget the password, it cannot be recovered. Leave the password empty to remove it.".into()),
+                ],
+                json!({"password": "", "confirmPassword": ""}),
+            ),
+            "generalOptions" => Dialog::form(
+                "generalOptions",
+                "General Options",
+                "file.generalOptions",
+                vec![
+                    Password { key: "openPassword", label: "Password to open:" },
+                    Password { key: "modifyPassword", label: "Password to modify:" },
+                    Check { key: "readOnlyRecommended", label: "Read-only recommended" },
+                ],
+                json!({"openPassword": "", "modifyPassword": "", "readOnlyRecommended": p("readOnlyRecommended").as_bool().unwrap_or(false)}),
+            ),
             "unprotectWorkbook" => Dialog::form(
                 "unprotectWorkbook",
                 "Unprotect Workbook",

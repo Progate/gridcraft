@@ -230,6 +230,32 @@ pub fn write_xlsx(wb: &Workbook, kind: XlsxKind, functions: FunctionInfo) -> Res
     write_xlsx_named_with(wb, kind, None, functions)
 }
 
+/// `<fileSharing>` (after `<fileVersion>`): Always Open Read-Only / Read-only recommended and the
+/// General Options password to modify, as its hash with the user who set it. A legacy 16-bit
+/// hash goes in `reservationPassword`.
+fn file_sharing_xml(wb: &Workbook) -> String {
+    if !wb.read_only_recommended && wb.modify_password.is_none() {
+        return String::new();
+    }
+    let mut x = String::from("<fileSharing");
+    if wb.read_only_recommended {
+        x.push_str(" readOnlyRecommended=\"1\"");
+    }
+    if let Some(h) = &wb.modify_password {
+        if !wb.reservation_user.is_empty() {
+            let _ = write!(x, " userName=\"{}\"", esc_attr(&wb.reservation_user));
+        }
+        match h {
+            gridcraft_model::PasswordHash::Legacy(h) => {
+                let _ = write!(x, " reservationPassword=\"{h:04X}\"");
+            }
+            h => x.push_str(&crate::sheet_write::password_attrs(h, "")),
+        }
+    }
+    x.push_str("/>");
+    x
+}
+
 /// The `<workbookView>` attributes beyond `activeTab`: the window's display settings
 /// that differ from the format's defaults. An ordinary workbook gets none, so its file
 /// is unchanged; a workbook Excel saved with the sheet tabs or scroll bars hidden
@@ -316,6 +342,7 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     // only when appName is "xl" (#799). One without names GridCraft (#1699), and Excel recalculates it.
     let file_version = crate::passthrough::workbook_elements(wb, "fileVersion");
     w.push_str(if file_version.is_empty() { "<fileVersion appName=\"gridcraft\"/>" } else { &file_version });
+    w.push_str(&file_sharing_xml(wb));
     w.push_str("<workbookPr");
     match wb.show_objects {
         ShowObjects::All => {}
@@ -450,6 +477,7 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
         ("dc:creator", &author),
         ("cp:keywords", &p.keywords),
         ("dc:description", &p.description),
+        ("cp:contentStatus", &p.content_status),
     ] {
         if !v.is_empty() {
             let _ = write!(core, "<{tag}>{}</{tag}>", esc(v));

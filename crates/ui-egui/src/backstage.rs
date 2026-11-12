@@ -607,6 +607,37 @@ pub fn protect_workbook(app: &mut SheetApp) {
     }
 }
 
+/// File ▸ Info ▸ Protect Workbook's menu, in Excel's order: Always Open Read-Only, Encrypt with
+/// Password, Protect Current Sheet, Protect Workbook Structure, Mark as Final.
+fn protect_menu(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    let state = gridcraft_engine::cmd::file::protect::state(&app.session);
+    let (read_only, marked_final) = (state["readOnlyRecommended"].as_bool().unwrap_or(false), state["final"].as_bool().unwrap_or(false));
+    let mut ro = read_only;
+    if ui.checkbox(&mut ro, lang.tr("Always Open Read-Only")).clicked() {
+        app.run_or_alert("file.alwaysOpenReadOnly", json!({"on": ro}));
+        ui.close();
+    }
+    if ui.button(lang.tr("Encrypt with Password")).clicked() {
+        app.open_dialog("encryptPassword", json!({}));
+        ui.close();
+    }
+    if ui.button(lang.tr("Protect Current Sheet")).clicked() {
+        app.open_dialog("protectSheet", json!({}));
+        ui.close();
+    }
+    if ui.button(lang.tr("Protect Workbook Structure")).clicked() {
+        protect_workbook(app);
+        ui.close();
+    }
+    let mut fin = marked_final;
+    if ui.checkbox(&mut fin, lang.tr("Mark as Final")).clicked() {
+        // The Status property in the interface language: 最終版 in Japanese, as Excel writes it.
+        app.run_or_alert("file.markAsFinal", json!({"on": fin, "status": lang.tr("Final")}));
+        ui.close();
+    }
+}
+
 /// Shows the workbook title, path, sheet count and structure protection, plus editable document properties. Committing a changed field after it loses focus runs `file.properties`.
 fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
@@ -619,6 +650,9 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     let path = d.path.clone();
     let sheets = d.wb.sheets.len();
     let protected = d.wb.protected_structure;
+    let marked_final = gridcraft_engine::cmd::file::protect::state(&app.session)["final"].as_bool().unwrap_or(false);
+    let encrypted = d.wb.open_password.is_some();
+    let read_only = d.wb.read_only_recommended;
     let current: Vec<String> = {
         let pr = &d.wb.props;
         vec![pr.title.clone(), pr.subject.clone(), pr.author.clone(), pr.company.clone(), pr.keywords.clone(), pr.description.clone()]
@@ -636,19 +670,26 @@ fn info(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage) {
     });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
-        if square_button(ui, Icon::Lock, lang.tr("Protect Workbook")).clicked() {
-            protect_workbook(app);
-        }
+        let button = square_button(ui, Icon::Lock, lang.tr("Protect Workbook"));
+        egui::Popup::menu(&button).show(|ui| protect_menu(app, ui));
         ui.add_space(12.0);
         ui.vertical(|ui| {
             ui.add_space(14.0);
             ui.label(RichText::new(lang.tr("Protect Workbook")).font(theme::ui_bold(13.5)).color(t.text));
-            let text = if protected {
+            let text = if marked_final {
+                "This workbook has been marked as final to discourage editing."
+            } else if protected {
                 "Sheet structure is locked: sheets can't be added, moved, renamed or deleted."
             } else {
-                "Lock the sheet structure so sheets can't be added, moved, renamed or deleted."
+                "Control what types of changes people can make to this workbook."
             };
             dim(ui, lang.tr(text));
+            if encrypted {
+                dim(ui, lang.tr("A password is required to open this workbook."));
+            }
+            if read_only {
+                dim(ui, lang.tr("This workbook is set to open as read-only."));
+            }
         });
     });
     ui.add_space(22.0);
@@ -700,6 +741,14 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
             })
             .response
             .labelled_by(label.id);
+        // Excel's Save As dialog ▸ Tools ▸ General Options: passwords and read-only recommended.
+        let tools = ui.button(format!("{} ▾", lang.tr("Tools")));
+        egui::Popup::menu(&tools).show(|ui| {
+            if ui.button(lang.tr("General Options…")).clicked() {
+                app.run_or_alert("file.generalOptions", json!({}));
+                ui.close();
+            }
+        });
     });
     ui.add_space(14.0);
     // Desktop: the system Save dialog. Web: the file downloads.

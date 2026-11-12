@@ -237,6 +237,14 @@ fn read_workbook_properties(cx: &mut Ctx<'_>, wb: &mut Workbook, xml: &El) {
         wb.calc.precision_as_displayed = !c.flag("fullPrecision", true);
         wb.calc.r1c1 = c.attr("refMode") == Some("R1C1");
     }
+    if let Some(f) = xml.child("fileSharing") {
+        wb.read_only_recommended = f.flag("readOnlyRecommended", false);
+        wb.modify_password = match f.attr("reservationPassword") {
+            Some(h) => u16::from_str_radix(h.trim(), 16).ok().map(gridcraft_model::PasswordHash::Legacy),
+            None => crate::sheet_read::read_password(f, ""),
+        };
+        wb.reservation_user = f.attr("userName").unwrap_or("").to_string();
+    }
     if let Some(p) = xml.child("workbookProtection") {
         wb.protected_structure = p.flag("lockStructure", false);
         wb.structure_password = if wb.protected_structure { crate::sheet_read::read_password(p, "workbook") } else { None };
@@ -464,6 +472,7 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
         wb.props.author = get("creator");
         wb.props.keywords = get("keywords");
         wb.props.description = get("description");
+        wb.props.content_status = get("contentStatus");
     }
     if let Some(r) = find_rel(&root_rels, "extended-properties").cloned()
         && let Ok(Some(x)) = cx.pkg.read_xml(&r.target)

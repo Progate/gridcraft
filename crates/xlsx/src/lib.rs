@@ -19,6 +19,7 @@ mod crypto;
 mod csv;
 mod drawing;
 mod feature_bags;
+mod final_mark;
 mod fmla;
 mod ods;
 mod omml;
@@ -48,8 +49,9 @@ mod tests;
 use gridcraft_core::DateSystem;
 use gridcraft_model::Workbook;
 
-pub use crypto::{DecryptError, check_encryption, decrypt};
+pub use crypto::{DecryptError, check_encryption, decrypt, encrypt};
 pub use csv::{MAX_CSV_BYTES, decode_text, read_csv, read_csv_with_report, sniff_delimiter, write_csv, write_csv_limited};
+pub use final_mark::{is_marked_final, set_marked_final};
 pub use ods::read_ods;
 pub use package::MAX_PART;
 pub use passthrough::rebase_links;

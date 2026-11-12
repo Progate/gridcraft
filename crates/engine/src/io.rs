@@ -531,8 +531,17 @@ pub fn save_bytes_as(wb: &Workbook, path: &str, kind: FileKind) -> Result<Vec<u8
                 None => named,
             };
             let book = std::path::Path::new(path).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or_default();
-            gridcraft_xlsx::write_xlsx_named_with(named.as_ref().unwrap_or(wb), gridcraft_xlsx::XlsxKind::from_path(path), book, XLSX_FUNCTIONS)
-                .map_err(|e| EngineError::Other(e.to_string()))
+            let package =
+                gridcraft_xlsx::write_xlsx_named_with(named.as_ref().unwrap_or(wb), gridcraft_xlsx::XlsxKind::from_path(path), book, XLSX_FUNCTIONS)
+                    .map_err(|e| EngineError::Other(e.to_string()))?;
+            // Encrypt with Password / General Options ▸ Password to open: the package goes into
+            // an encrypted compound file, as Excel saves it.
+            match &wb.open_password {
+                Some(pw) => {
+                    gridcraft_xlsx::encrypt(&package, &pw.0).map_err(|e| EngineError::Other(format!("The workbook couldn't be encrypted ({e}).")))
+                }
+                None => Ok(package),
+            }
         }
         FileKind::Xls => {
             Err(EngineError::Other("Excel 97-2003 (.xls) is supported for import only. Save as .xlsx or another supported export format.".into()))

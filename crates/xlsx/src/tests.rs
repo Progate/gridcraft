@@ -11,6 +11,7 @@ mod chart_ref_offsets;
 mod chart_secondary_axis;
 mod controls_tests;
 mod csv_tests;
+mod doc_protection_tests;
 mod encrypted_tests;
 mod equation_tests;
 mod fixtures;

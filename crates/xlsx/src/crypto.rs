@@ -32,6 +32,13 @@ pub fn decrypt(bytes: &[u8], password: &str) -> Result<Vec<u8>, DecryptError> {
     craft_offcrypto::decrypt(bytes, Some(password)).map_err(DecryptError::from)
 }
 
+/// `package` (an `.xlsx` zip) as Excel's File ▸ Info ▸ Protect Workbook ▸ Encrypt with Password
+/// saves it: ECMA-376 Agile encryption (AES-256-CBC, SHA-512, spin count 100,000, with the data
+/// integrity HMAC) in a compound file holding `EncryptionInfo` and `EncryptedPackage`.
+pub fn encrypt(package: &[u8], password: &str) -> Result<Vec<u8>, DecryptError> {
+    craft_offcrypto::encrypt_with_spin_count(package, password, 100_000).map_err(DecryptError::from)
+}
+
 /// Whether the right password could decrypt this encrypted workbook, checked without one. An
 /// error names a scheme no password opens (RC4, rights management…) or damage, so callers can
 /// say so instead of asking for a password first.

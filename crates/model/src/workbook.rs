@@ -152,6 +152,20 @@ pub struct DocProps {
     pub company: String,
     pub keywords: String,
     pub description: String,
+    /// The Status property (`cp:contentStatus`); File ▸ Info ▸ Protect Workbook ▸ Mark as Final
+    /// sets it to "Final" (最終版 in Japanese Excel).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub content_status: String,
+}
+
+/// A password kept only in memory, never printed by `Debug` and never serialized.
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(..)")
+    }
 }
 
 /// One phonetic (furigana) run of a string item (`<rPh>`): the reading `text` and the range of the
@@ -222,6 +236,20 @@ pub struct Workbook {
     /// Password of the structure protection (XLSX `workbookProtection`), never the password.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structure_password: Option<crate::PasswordHash>,
+    /// File ▸ Info ▸ Protect Workbook ▸ Always Open Read-Only, also Save As ▸ Tools ▸ General
+    /// Options ▸ Read-only recommended: `<fileSharing readOnlyRecommended="1"/>`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub read_only_recommended: bool,
+    /// General Options ▸ Password to modify: its hash in `<fileSharing>`, never the password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modify_password: Option<crate::PasswordHash>,
+    /// `<fileSharing userName>`: who set the password to modify (the author, as Excel writes it).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reservation_user: String,
+    /// File ▸ Info ▸ Protect Workbook ▸ Encrypt with Password, or General Options ▸ Password to
+    /// open: the workbook is saved encrypted (ECMA-376 Agile encryption) with it. In memory only.
+    #[serde(skip)]
+    pub open_password: Option<Secret>,
     /// Custom fill lists (Options › Custom Lists) beyond the built-in ones.
     pub custom_lists: Vec<Vec<String>>,
     /// Named cell styles (Cell Styles gallery): name → style.
@@ -360,6 +388,10 @@ impl Workbook {
             props: DocProps::default(),
             protected_structure: false,
             structure_password: None,
+            read_only_recommended: false,
+            modify_password: None,
+            reservation_user: String::new(),
+            open_password: None,
             custom_lists: vec![],
             cell_styles: vec![],
             phonetics: vec![],

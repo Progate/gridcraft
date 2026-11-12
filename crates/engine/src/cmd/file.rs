@@ -5,6 +5,8 @@ use serde_json::{Value as Json, json};
 use super::{CommandSpec, Result, Session, always, bad, bool_param, cmd, edit, has_doc, ok, str_param, target_sheet, u32_param};
 use crate::DocState;
 
+pub mod protect;
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"budget\"|\"sales\"|\"grades\"}", always, new_workbook),
@@ -29,6 +31,9 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "window.close", "Close Window", ["Window"], None, "{window?, doc?, force?: bool} → {closed, document}: closes a window (the active one by default); its workbook closes with its last window, asking first when it has unsaved changes unless `force`", has_doc, close_window),
         cmd!(query "window.list", "Windows", ["Window"], None, "{} → [{window, doc, index, title, dirty, active, hidden}]", always, |s, _| Ok(s.window_list())),
     ]
+    .into_iter()
+    .chain(protect::specs())
+    .collect()
 }
 
 fn new_workbook(s: &mut Session, p: &Json) -> Result<Json> {
@@ -65,7 +70,14 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         None => gridcraft_xlsx::TextEncoding::Auto,
     };
     let text = crate::io::TextOpen { as_text: bool_param(p, "csvAsText").unwrap_or(false), encoding };
-    let (mut wb, warnings) = crate::io::open_bytes_text(&name, &bytes, str_param(p, "password"), text)?;
+    let (mut wb, mut warnings) = crate::io::open_bytes_text(&name, &bytes, str_param(p, "password"), text)?;
+    // Excel opens such a workbook with a message bar: marked as final, or read-only recommended.
+    if wb.read_only_recommended {
+        warnings.insert(0, protect::OPENED_READ_ONLY_RECOMMENDED.into());
+    }
+    if gridcraft_xlsx::is_marked_final(&wb) {
+        warnings.insert(0, protect::OPENED_FINAL.into());
+    }
     wb.source_dir = str_param(p, "path").and_then(crate::io::source_dir);
     // What `CELL("filename")` reports (#1489). A workbook opened from bytes knows its name but
     // never a folder, so it reports `[name]Sheet` with none; an import reports the file it came
@@ -99,7 +111,8 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let i = s.add_document(doc);
     // The decrypted-workbook notice is for the info bar, not a message box.
-    let shown: Vec<&str> = warnings.iter().map(String::as_str).filter(|w| *w != crate::io::DECRYPTED_NOTICE).collect();
+    let info_bar = [crate::io::DECRYPTED_NOTICE, protect::OPENED_FINAL, protect::OPENED_READ_ONLY_RECOMMENDED];
+    let shown: Vec<&str> = warnings.iter().map(String::as_str).filter(|w| !info_bar.contains(w)).collect();
     if !shown.is_empty() {
         let mut message = shown.iter().take(5).copied().collect::<Vec<_>>().join("\n\n");
         if shown.len() > 5 {

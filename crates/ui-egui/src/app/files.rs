@@ -66,10 +66,11 @@ impl SheetApp {
             };
             self.notice = Some(Notice { text: text.into(), kind: NoticeKind::Warning, action: Some(("What this means".into(), "macros".into())) });
         } else {
+            let lang = self.ui.language;
             let text = if msgs.len() == 1 {
-                msgs[0].to_string()
+                lang.tr(msgs[0]).to_string()
             } else {
-                format!("{} items in this file were handled differently. First: {}", msgs.len(), msgs[0])
+                format!("{} items in this file were handled differently. First: {}", msgs.len(), lang.tr(msgs[0]))
             };
             self.notice = Some(Notice { text, kind: NoticeKind::Info, action: None });
         }
