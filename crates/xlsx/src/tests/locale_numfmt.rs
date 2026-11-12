@@ -59,3 +59,51 @@ fn locale_independent_built_ins_keep_their_id() {
         assert_eq!(back, builtin_format(builtin).unwrap());
     }
 }
+
+/// Writes one date cell in `code` from a workbook in `region`; returns the cell format's
+/// `numFmtId`, the `styles.xml` and the code read back.
+fn round_trip_in(code: &str, region: &str) -> (u32, String, String) {
+    let mut wb = Workbook::new();
+    wb.region = gridcraft_core::region::lookup(region);
+    let style = wb.styles.derive(StyleId::DEFAULT, |s| s.num_fmt = NumFmt::new(code));
+    let mut sheet = Sheet::new("Sheet1");
+    sheet.cells.set(CellRef::new(0, 0), Cell { value: Value::Number(46336.0), formula: None, style, py: None });
+    wb.sheets = vec![Arc::new(sheet)];
+    let bytes = write_xlsx(&wb).unwrap();
+    let xml = styles_xml(&bytes);
+    let xfs = &xml[xml.find("<cellXfs").unwrap()..];
+    let id = xfs
+        .match_indices("numFmtId=\"")
+        .map(|(i, m)| xfs[i + m.len()..].split('"').next().unwrap().parse::<u32>().unwrap())
+        .find(|&id| id != 0)
+        .unwrap();
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let st = back.styles.get(back.sheet(0).unwrap().cell(CellRef::new(0, 0)).unwrap().style);
+    (id, xml, st.num_fmt.as_str().to_string())
+}
+
+#[test]
+fn japanese_date_formats_are_written_as_japanese_excel_writes_them() {
+    for (code, builtin) in [
+        ("m\"月\"d\"日\"", 56),
+        ("yyyy\"年\"m\"月\"d\"日\"", 31),
+        ("yyyy\"年\"m\"月\"", 55),
+        ("[$-411]ggge\"年\"m\"月\"d\"日\"", 58),
+        ("[$-411]ge.m.d", 57),
+        ("h\"時\"mm\"分\"", 32),
+        ("m/d/yyyy", 14),
+    ] {
+        // In the Japanese region: the built-in id alone, as Japanese Excel writes it.
+        let (id, xml, back) = round_trip_in(code, "ja-JP");
+        assert_eq!(id, builtin, "{code}");
+        assert!(!xml.contains("<numFmt "), "{code}: {xml}");
+        assert_eq!(back, code);
+        // Elsewhere: a custom format with its code, which every reader understands.
+        if builtin != 14 {
+            let (id, xml, back) = round_trip_in(code, "en-US");
+            assert!(id >= 164, "{code}");
+            assert!(xml.contains("<numFmt numFmtId=\"164\""), "{code}");
+            assert_eq!(back, code);
+        }
+    }
+}

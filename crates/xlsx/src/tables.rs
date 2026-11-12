@@ -42,8 +42,47 @@ const BUILTIN_FORMATS: [(u32, &str); 36] = [
     (49, "@"),
 ];
 
+/// The East Asian built-in date and time formats (27–36, 50–58) as Japanese Excel defines them.
+/// Japanese Excel writes these ids with no `numFmt` element (`11/10` typed is 56, `m"月"d"日"`),
+/// so a file from Japan reads them as dates rather than General. The first id for each code is
+/// the one written ([`builtin_id_ja`]): the ones Japanese Excel gives typed entries.
+const BUILTIN_FORMATS_JA: [(u32, &str); 19] = [
+    (31, "yyyy\"年\"m\"月\"d\"日\""),
+    (56, "m\"月\"d\"日\""),
+    (55, "yyyy\"年\"m\"月\""),
+    (57, "[$-411]ge.m.d"),
+    (58, "[$-411]ggge\"年\"m\"月\"d\"日\""),
+    (32, "h\"時\"mm\"分\""),
+    (33, "h\"時\"mm\"分\"ss\"秒\""),
+    (27, "[$-411]ge.m.d"),
+    (28, "[$-411]ggge\"年\"m\"月\"d\"日\""),
+    (29, "[$-411]ggge\"年\"m\"月\"d\"日\""),
+    (30, "m/d/yy"),
+    (34, "yyyy\"年\"m\"月\""),
+    (35, "m\"月\"d\"日\""),
+    (36, "[$-411]ge.m.d"),
+    (50, "[$-411]ge.m.d"),
+    (51, "[$-411]ggge\"年\"m\"月\"d\"日\""),
+    (52, "yyyy\"年\"m\"月\""),
+    (53, "m\"月\"d\"日\""),
+    (54, "[$-411]ggge\"年\"m\"月\"d\"日\""),
+];
+
 pub fn builtin_format(id: u32) -> Option<&'static str> {
     BUILTIN_FORMATS.iter().find(|(i, _)| *i == id).map(|(_, c)| *c)
+}
+
+/// A built-in format as read from a file: the en-US table, then the Japanese date formats
+/// 27–36 and 50–58.
+pub fn builtin_format_read(id: u32) -> Option<&'static str> {
+    builtin_format(id).or_else(|| BUILTIN_FORMATS_JA.iter().find(|(i, _)| *i == id).map(|(_, c)| *c))
+}
+
+/// Id Japanese Excel writes for one of its built-in date and time codes, with no `numFmt`
+/// element. Only used when the workbook is in the Japanese region: elsewhere these codes are
+/// written as custom formats, which every reader understands.
+pub fn builtin_id_ja(code: &str) -> Option<u32> {
+    BUILTIN_FORMATS_JA.iter().find(|(_, c)| *c == code).map(|(i, _)| *i)
 }
 
 /// Id to write for a format code when it is a locale-independent built-in. The currency formats
@@ -364,6 +403,14 @@ mod tests {
         assert_eq!(builtin_id("[H]:MM:SS"), None);
         assert_eq!(builtin_id("[h]:mm:ss"), Some(46));
         assert_eq!(builtin_id("#,##0.00_);(#,##0.00)"), None);
+        // Japanese: read every East Asian date id, write the ones Japanese Excel gives typed entries.
+        assert!((27..=36).chain(50..=58).all(|id| builtin_format_read(id).is_some()));
+        assert_eq!(builtin_format_read(14), Some("m/d/yyyy"));
+        assert_eq!(builtin_format_read(56), Some("m\"月\"d\"日\""));
+        assert_eq!(builtin_id_ja("m\"月\"d\"日\""), Some(56));
+        assert_eq!(builtin_id_ja("yyyy\"年\"m\"月\"d\"日\""), Some(31));
+        assert_eq!(builtin_id_ja("[$-411]ggge\"年\"m\"月\"d\"日\""), Some(58));
+        assert_eq!(builtin_id_ja("m/d/yyyy"), None);
         for id in 0..=60 {
             let Some(code) = builtin_format(id) else { continue };
             let expected = if matches!(id, 5..=8 | 42 | 44) { None } else { Some(id) };

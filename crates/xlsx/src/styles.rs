@@ -10,7 +10,7 @@ use gridcraft_model::{
     VAlign, VertAlign, Workbook, builtin_cell_style_id, builtin_cell_style_name,
 };
 
-use crate::tables::{INDEXED, builtin_format, builtin_id};
+use crate::tables::{INDEXED, builtin_format_read, builtin_id, builtin_id_ja};
 use crate::xml::{El, esc_attr, num};
 
 // ---------------------------------------------------------------- reading
@@ -297,7 +297,7 @@ fn num_fmt_code(id: u32, custom: &HashMap<u32, NumFmt>) -> NumFmt {
     if let Some(c) = custom.get(&id) {
         return c.clone();
     }
-    NumFmt::new(builtin_format(id).unwrap_or("General"))
+    NumFmt::new(builtin_format_read(id).unwrap_or("General"))
 }
 
 fn read_xf(xf: &El, fonts: &[Font], fills: &[Fill], borders: &[Borders], fmts: &HashMap<u32, NumFmt>, checkboxes: &[bool]) -> Style {
@@ -665,11 +665,19 @@ fn intern<T: Clone + Eq + std::hash::Hash>(list: &mut Vec<T>, map: &mut HashMap<
 struct NumFmts {
     custom: Vec<(u32, String)>,
     map: HashMap<String, u32>,
+    /// The workbook is in the Japanese region: its built-in date codes keep their ids.
+    ja: bool,
 }
 
 impl NumFmts {
     fn id(&mut self, code: &str) -> u32 {
         if let Some(id) = builtin_id(code) {
+            return id;
+        }
+        if self.ja
+            && let Some(id) = builtin_id_ja(code)
+        {
+            self.map.insert(code.to_string(), id);
             return id;
         }
         if let Some(&id) = self.map.get(code) {
@@ -687,7 +695,7 @@ impl NumFmts {
 /// `extra_fmts` are number formats used outside cell styles (PivotTable value fields); the
 /// returned map gives the id of every custom format written.
 pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (String, HashMap<String, u32>) {
-    let mut nf = NumFmts { custom: vec![], map: HashMap::new() };
+    let mut nf = NumFmts { custom: vec![], map: HashMap::new(), ja: wb.region.is_japanese() };
     let mut fonts: Vec<Font> = vec![];
     let mut font_map = HashMap::new();
     let mut fills: Vec<Fill> = vec![Fill::default(), Fill { pattern: PatternType::Gray125, fg: Color::Auto, bg: Color::Auto }];
