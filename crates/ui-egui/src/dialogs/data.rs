@@ -6,7 +6,15 @@ use super::{Dialog, Field, Icon, Json, SheetApp, json, vec2};
 /// Initial values of the Data Validation form: the rule stored on the active cell, so OK without
 /// edits keeps it; a plain list rule when the cell has none.
 pub(super) fn validation_defaults(app: &SheetApp) -> Json {
-    let mut v = json!({"type": "list", "operator": "between", "ignoreBlank": true, "dropdown": true, "errorStyle": "stop"});
+    let mut v = json!({
+        "type": "list",
+        "operator": "between",
+        "ignoreBlank": true,
+        "dropdown": true,
+        "showInputMessage": true,
+        "showErrorMessage": true,
+        "errorStyle": "stop"
+    });
     let Some(doc) = app.session.active() else { return v };
     let Some(dv) = doc.wb.active().and_then(|s| s.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(doc.selection.active)))) else {
         return v;
@@ -26,6 +34,8 @@ pub(super) fn validation_defaults(app: &SheetApp) -> Json {
     }
     v["ignoreBlank"] = json!(dv.allow_blank);
     v["dropdown"] = json!(dv.in_cell_dropdown);
+    v["showInputMessage"] = json!(dv.show_input);
+    v["showErrorMessage"] = json!(dv.show_error);
     v["inputTitle"] = json!(dv.input_title);
     v["inputMessage"] = json!(dv.input_message);
     v["errorTitle"] = json!(dv.error_title);
@@ -140,12 +150,17 @@ pub(super) fn data_validation_fields(kind: &str, operator: &str) -> Vec<Field> {
         }
         _ => {}
     }
+    // Excel's Input Message tab, then its Error Alert tab, in their order.
+    fields.push(Check { key: "showInputMessage", label: "Show input message when cell is selected" });
+    fields.push(Text { key: "inputTitle", label: "Input message title:" });
     fields.push(Text { key: "inputMessage", label: "Input message:" });
+    fields.push(Check { key: "showErrorMessage", label: "Show error alert after invalid data is entered" });
     fields.push(Choice {
         key: "errorStyle",
         label: "Error style",
         options: vec![("stop", "Stop"), ("warning", "Warning"), ("information", "Information")],
     });
+    fields.push(Text { key: "errorTitle", label: "Error alert title:" });
     fields.push(Text { key: "errorMessage", label: "Error message:" });
     fields
 }
@@ -326,5 +341,38 @@ mod data_validation_tests {
         assert_eq!(params["operator"], "lessOrEqual");
         assert_eq!(params["formula1"], "2026-10-12");
         assert!(params.get("formula2").is_none());
+    }
+
+    #[test]
+    fn message_tabs_follow_excel_order_with_titles_and_show_flags() {
+        let keys: Vec<&str> = data_validation_fields("whole", "greater")
+            .iter()
+            .filter_map(|f| match f {
+                Field::Text { key, .. } | Field::Check { key, .. } | Field::Choice { key, .. } => Some(*key),
+                _ => None,
+            })
+            .skip_while(|k| *k != "showInputMessage")
+            .collect();
+        assert_eq!(keys, ["showInputMessage", "inputTitle", "inputMessage", "showErrorMessage", "errorStyle", "errorTitle", "errorMessage"]);
+    }
+
+    #[test]
+    fn titles_and_show_flags_are_prefilled_from_the_rule_and_submitted() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let rule = json!({"range": "A1", "type": "whole", "operator": "greater", "formula1": "0", "inputTitle": "Quantity", "inputMessage": "Whole units",
+            "errorTitle": "Not a quantity", "errorMessage": "Type a whole number", "showInputMessage": false});
+        session.execute("data.validation", rule).unwrap();
+        let app = SheetApp::new(session, Default::default());
+        let v = validation_defaults(&app);
+        assert_eq!(v["inputTitle"], "Quantity");
+        assert_eq!(v["errorTitle"], "Not a quantity");
+        assert_eq!(v["showInputMessage"], false);
+        assert_eq!(v["showErrorMessage"], true);
+        let dialog = Dialog::form("dataValidation", "Data Validation", "data.validation", data_validation_fields("whole", "greater"), v);
+        let params = build_params(&dialog);
+        for key in ["inputTitle", "inputMessage", "errorTitle", "errorMessage", "showInputMessage", "showErrorMessage"] {
+            assert_eq!(params[key], dialog.values[key], "{key}");
+        }
     }
 }

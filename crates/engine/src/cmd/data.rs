@@ -93,7 +93,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Data Validation…",
             ["Data", "Data Tools"],
             None,
-            "{range?, type: any|whole|decimal|list|date|time|textLength|custom, operator?: between|notBetween|equal|notEqual|greater|less|greaterOrEqual|lessOrEqual, formula1, formula2?, ignoreBlank?, dropdown?, inputTitle?, inputMessage?, errorStyle?: stop|warning|information, errorTitle?, errorMessage?, clear?: bool}",
+            "{range?, type: any|whole|decimal|list|date|time|textLength|custom, operator?: between|notBetween|equal|notEqual|greater|less|greaterOrEqual|lessOrEqual, formula1, formula2?, ignoreBlank?, dropdown?, showInputMessage?: bool (default true), inputTitle?, inputMessage?, showErrorMessage?: bool (default true), errorStyle?: stop|warning|information, errorTitle?, errorMessage?, clear?: bool}",
             has_doc,
             validation
         ),

@@ -135,6 +135,25 @@ fn list_validation_without_formula1_is_an_error() {
 }
 
 #[test]
+fn validation_message_flags_default_on_and_can_be_turned_off() {
+    let mut s = Session::new();
+    s.new_workbook();
+    let rule = json!({"range": "A1", "type": "whole", "operator": "greater", "formula1": "0", "inputTitle": "Qty", "errorTitle": "Bad qty"});
+    s.execute("data.validation", rule.clone()).unwrap();
+    let dv = s.doc().unwrap().wb.active().unwrap().validations[0].clone();
+    assert!(dv.show_input && dv.show_error);
+    assert_eq!((dv.input_title.as_str(), dv.error_title.as_str()), ("Qty", "Bad qty"));
+    let mut off = rule;
+    off["showInputMessage"] = json!(false);
+    off["showErrorMessage"] = json!(false);
+    s.execute("data.validation", off).unwrap();
+    let dv = s.doc().unwrap().wb.active().unwrap().validations[0].clone();
+    assert!(!dv.show_input && !dv.show_error);
+    // With the error alert off, invalid input is accepted, as in Excel.
+    assert_eq!(s.execute("data.validate", json!({"cell": "A1", "input": "-5"})).unwrap()["ok"], json!(true));
+}
+
+#[test]
 fn partial_validation_edits_keep_the_rest_of_the_old_rule() {
     let mut s = Session::new();
     s.new_workbook();

@@ -166,11 +166,13 @@ pub(super) fn validation(s: &mut Session, p: &Json) -> Result<Json> {
         in_cell_dropdown: bool_param(p, "dropdown").unwrap_or(true),
         input_title: str_param(p, "inputTitle").unwrap_or("").into(),
         input_message: str_param(p, "inputMessage").unwrap_or("").into(),
-        show_input: true,
+        // Excel's "Show input message when cell is selected" / "Show error alert after invalid
+        // data is entered" (`showInputMessage`/`showErrorMessage`); on unless turned off.
+        show_input: bool_param(p, "showInputMessage").unwrap_or(true),
         error_title: str_param(p, "errorTitle").unwrap_or("").into(),
         error_message: str_param(p, "errorMessage").unwrap_or("").into(),
         error_style,
-        show_error: true,
+        show_error: bool_param(p, "showErrorMessage").unwrap_or(true),
     };
     edit(s, |cx| {
         let sh = cx.sheet_mut(sheet)?;
