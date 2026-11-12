@@ -356,22 +356,13 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
         if rel.kind == "chartsheet" {
             // A chart sheet whose chart GridCraft reads becomes a model chart sheet; any other is
             // kept as it is and written back in place (see `passthrough`).
-            match read_chart_sheet(&mut cx, &rel.target, &name) {
-                Ok(Some(mut sheet)) => {
-                    sheet.name = names.unique(&name, i);
-                    sheet.file_id = se.attr_u32("sheetId").unwrap_or(0);
-                    sheet.visibility = match se.attr("state") {
-                        Some("hidden") => Visibility::Hidden,
-                        Some("veryHidden") => Visibility::VeryHidden,
-                        _ => Visibility::Visible,
-                    };
+            match modelled_chart_sheet(&mut cx, &rel.target, se, &mut names, i)? {
+                Some(sheet) => {
                     legacy_formulas.push((wb.sheets.len(), vec![]));
                     file_to_model.push(Some(wb.sheets.len()));
                     wb.sheets.push(Arc::new(sheet));
                 }
-                Ok(None) => file_to_model.push(None),
-                Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),
-                Err(_) => file_to_model.push(None),
+                None => file_to_model.push(None),
             }
             continue;
         }
@@ -597,6 +588,25 @@ pub fn parse_print_titles(text: &str) -> (TitleSpan, TitleSpan) {
         }
     }
     (rows, cols)
+}
+
+/// The `<sheet>` entry `se` of a chart sheet as a model chart sheet, with its unique name, file
+/// id and visibility; `None` when it is to be kept as it is (see [`read_chart_sheet`]).
+fn modelled_chart_sheet(cx: &mut Ctx<'_>, part: &str, se: &El, names: &mut SheetNames, i: usize) -> Result<Option<Sheet>, IoError> {
+    let name = se.attr("name").unwrap_or("");
+    let mut sheet = match read_chart_sheet(cx, part, name) {
+        Ok(Some(sheet)) => sheet,
+        Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),
+        Ok(None) | Err(_) => return Ok(None),
+    };
+    sheet.name = names.unique(name, i);
+    sheet.file_id = se.attr_u32("sheetId").unwrap_or(0);
+    sheet.visibility = match se.attr("state") {
+        Some("hidden") => Visibility::Hidden,
+        Some("veryHidden") => Visibility::VeryHidden,
+        _ => Visibility::Visible,
+    };
+    Ok(Some(sheet))
 }
 
 /// A chart sheet as a model chart sheet: the first chart of its drawing. `None` (and none of the
