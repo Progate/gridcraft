@@ -350,3 +350,122 @@ fn symbol_font_draws_maths_in_its_own_encoding() {
     assert!(Font::TimesRoman.can_encode('x') && !Font::TimesRoman.can_encode('\u{2211}'));
     assert_eq!(text_width(Font::Symbol, 10.0, "\u{2211}"), 7.13);
 }
+
+/// A resolver answering every request with the font in `bytes`.
+fn resolver_with(bytes: &'static [u8]) -> FontResolver {
+    Box::new(move |_req: &FontRequest| EmbeddedFont::parse(bytes.to_vec(), 0))
+}
+
+#[test]
+fn text_outside_win_ansi_embeds_a_truetype_subset() -> Result<(), Box<dyn Error>> {
+    let mut doc = PdfDoc::new();
+    doc.set_font_resolver(resolver_with(epaint_default_fonts::UBUNTU_LIGHT));
+    let p = doc.add_page(612.0, 792.0);
+    p.text(10.0, 20.0, 10.0, Font::Helvetica, [0, 0, 0], "No. Привет");
+    let pdf = doc.finish();
+    check_xref(&pdf)?;
+    let s = String::from_utf8_lossy(&pdf);
+    // Latin stays in the standard font; the Cyrillic run uses the embedded subset by CID.
+    assert!(s.contains("(No. ) Tj"), "{s}");
+    assert!(s.contains("/E1 10 Tf\n<000100020003000400050006> Tj"), "{s}");
+    assert!(s.contains("/Subtype /Type0 /BaseFont /") && s.contains("+Ubuntu-Light /Encoding /Identity-H"));
+    assert!(s.contains("/Subtype /CIDFontType2") && s.contains("/CIDToGIDMap /Identity"));
+    assert!(s.contains("/FontFile2 "));
+    assert!(!s.contains("UniGB-UTF16-H"), "no glyph needed the predefined font");
+    // ToUnicode maps each CID back to its character, so the text can be extracted.
+    assert!(s.contains("6 beginbfchar\n<0001> <041F>\n<0002> <0440>"), "{s}");
+    // Widths are the font's own (Cyrillic is narrower than an em).
+    let w = s.split("/W [0 [").nth(1).and_then(|r| r.split(']').next()).ok_or_else(|| io::Error::other("no /W"))?;
+    let widths: Vec<u16> = w.split(' ').map(str::parse).collect::<Result<_, _>>()?;
+    assert_eq!(widths.len(), 7, "notdef plus six glyphs: {w}");
+    assert!(widths[1..].iter().all(|w| (300..900).contains(w)), "{w}");
+    // The subset is much smaller than the font.
+    assert!(pdf.len() < epaint_default_fonts::UBUNTU_LIGHT.len() / 3, "{} bytes", pdf.len());
+    Ok(())
+}
+
+#[test]
+fn glyphs_missing_from_every_font_use_the_predefined_cid_font() {
+    let mut doc = PdfDoc::new();
+    doc.set_font_resolver(resolver_with(epaint_default_fonts::UBUNTU_LIGHT));
+    let p = doc.add_page(612.0, 792.0);
+    // Ubuntu has Cyrillic but no Han characters.
+    p.text(10.0, 20.0, 10.0, Font::Helvetica, [0, 0, 0], "Да签字");
+    let pdf = doc.finish();
+    let s = String::from_utf8_lossy(&pdf);
+    assert!(s.contains("<00010002> Tj"), "{s}");
+    assert!(s.contains("<7B7E5B57> Tj"), "{s}");
+    assert!(s.contains("/Encoding /UniGB-UTF16-H"));
+    check_xref(&pdf).unwrap();
+}
+
+#[test]
+fn family_font_is_preferred_and_requests_are_asked_once() {
+    use std::sync::{Arc, Mutex};
+    let asked: Arc<Mutex<Vec<FontRequest>>> = Arc::default();
+    let log = Arc::clone(&asked);
+    let mut doc = PdfDoc::new();
+    doc.set_font_resolver(Box::new(move |req: &FontRequest| {
+        log.lock().unwrap().push(req.clone());
+        // Only the named family is installed.
+        matches!(req, FontRequest::Family { name, .. } if name == "Ubuntu")
+            .then(|| EmbeddedFont::parse(epaint_default_fonts::UBUNTU_LIGHT.to_vec(), 0))
+            .flatten()
+    }));
+    let p = doc.add_page(612.0, 792.0);
+    let style = TextStyle { font: Font::HelveticaBold, family: "Ubuntu", size: 12.0, color: [0x11, 0x22, 0x33] };
+    p.text_styled(Point::new(10.0, 20.0), 0.0, style, "Ж");
+    p.text_styled(Point::new(10.0, 40.0), 0.0, style, "Ж");
+    p.text(10.0, 60.0, 12.0, Font::Helvetica, [0, 0, 0], "plain");
+    let pdf = doc.finish();
+    let s = String::from_utf8_lossy(&pdf);
+    assert_eq!(*asked.lock().unwrap(), vec![FontRequest::Family { name: "Ubuntu".into(), bold: true, italic: false }]);
+    // Ubuntu Light has no bold face: the glyph is filled and stroked to look bold.
+    assert!(s.contains("2 Tr 0.36 w\n/E1 12 Tf\n<0001> Tj\n0 Tr"), "{s}");
+    check_xref(&pdf).unwrap();
+}
+
+#[test]
+fn unusable_font_data_is_rejected() {
+    assert!(EmbeddedFont::parse(b"not a font".to_vec(), 0).is_none());
+    assert!(EmbeddedFont::parse(epaint_default_fonts::UBUNTU_LIGHT.to_vec(), 7).is_none());
+    let mut truncated = epaint_default_fonts::UBUNTU_LIGHT.to_vec();
+    truncated.truncate(truncated.len() / 2);
+    let mut doc = PdfDoc::new();
+    doc.set_font_resolver(Box::new(move |_| EmbeddedFont::parse(truncated.clone(), 0)));
+    doc.add_page(100.0, 100.0).text(10.0, 20.0, 10.0, Font::Helvetica, [0, 0, 0], "Привет");
+    check_xref(&doc.finish()).unwrap();
+}
+
+/// A CFF-flavoured Japanese font, when one is installed (or named by `GRIDCRAFT_CJK_TEST_FONT`).
+fn cff_cjk_font() -> Option<Vec<u8>> {
+    let mut paths: Vec<String> = std::env::var("GRIDCRAFT_CJK_TEST_FONT").into_iter().collect();
+    paths.extend(
+        ["/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf", "/usr/share/fonts/opentype/noto/NotoSansCJKjp-Regular.otf"].map(String::from),
+    );
+    paths.iter().find_map(|p| std::fs::read(p).ok())
+}
+
+#[test]
+fn japanese_text_embeds_a_cff_subset_when_a_font_is_installed() -> Result<(), Box<dyn Error>> {
+    let Some(bytes) = cff_cjk_font() else {
+        eprintln!("skipped: no CFF Japanese font installed");
+        return Ok(());
+    };
+    let font = EmbeddedFont::parse(bytes.clone(), 0).ok_or_else(|| io::Error::other("font did not parse"))?;
+    assert!(font.has_char('日') && font.has_char('あ'));
+    let mut doc = PdfDoc::new();
+    doc.set_font_resolver(Box::new(move |_| EmbeddedFont::parse(bytes.clone(), 0)));
+    let p = doc.add_page(612.0, 792.0);
+    p.text(10.0, 20.0, 10.0, Font::Helvetica, [0, 0, 0], "日本語のテキスト 2026");
+    let pdf = doc.finish();
+    check_xref(&pdf)?;
+    let s = String::from_utf8_lossy(&pdf);
+    assert!(s.contains("/Subtype /CIDFontType0 "), "CFF outlines make a CIDFontType0");
+    assert!(s.contains("/Subtype /CIDFontType0C /Length"));
+    assert!(s.contains("/FontFile3 "));
+    assert!(s.contains("-Identity-H /Encoding /Identity-H"));
+    assert!(s.contains("<0001> <65E5>"), "ToUnicode maps 日");
+    assert!(pdf.len() < 200_000, "{} bytes: the font was not subset", pdf.len());
+    Ok(())
+}

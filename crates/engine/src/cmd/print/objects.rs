@@ -213,7 +213,8 @@ fn draw_shape(pg: &mut Page, wb: &Workbook, shp: &gridcraft_model::Shape, b: &Bl
             ShapeTextAlign::Center => x + (w - lw) / 2.0,
             ShapeTextAlign::Right => x + w - 2.0 * b.k - lw,
         };
-        pg.text(lx, yy, size, font, color, l);
+        let family = fm.font.as_deref().unwrap_or("");
+        pg.text_styled(gridcraft_pdf::Point::new(lx, yy), 0.0, gridcraft_pdf::TextStyle { font, family, size, color }, l);
         yy += size * 1.2;
     }
 }

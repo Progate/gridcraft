@@ -40,13 +40,16 @@ impl SheetApp {
             .fold((0u64, 0u64), |(uid, rev), d| (uid.wrapping_mul(31).wrapping_add(d.uid), rev.wrapping_mul(31).wrapping_add(d.revision)))
     }
 
-    /// Installs the text-width closure once, on the first frame.
+    /// Installs the text-width closure (and the font-file lookup PDF export uses) once, on the
+    /// first frame.
     pub(super) fn ensure_text_width(&mut self, ctx: &egui::Context) {
         if self.session.text_width.is_some() {
             return;
         }
         let ctx = ctx.clone();
         self.session.text_width = Some(std::sync::Arc::new(move |text, font, exact| theme::cell_text_width(&ctx, text, font, exact)));
+        // PDF export embeds a cell's own font when the catalog has it.
+        self.session.font_files = Some(std::sync::Arc::new(crate::fonts::files_for));
     }
 
     /// Applies the font gates: a language Han-order change, startup/prepared fonts and workbook

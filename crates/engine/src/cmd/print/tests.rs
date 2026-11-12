@@ -377,8 +377,41 @@ fn pdf_prints_cjk_text_instead_of_question_marks() {
     s.execute("range.setValues", json!({"range": "A1", "values": [["签字清单", 2]]})).unwrap();
     let (pdf, _) = pdf_of(&mut s, json!({}));
     assert!(!contains(&pdf, "(????) Tj"), "CJK cell printed as (????) Tj");
-    assert!(contains(&pdf, "<7B7E5B576E055355> Tj"));
+    // The predefined CID font by Unicode, or an installed font embedded with a ToUnicode entry.
+    assert!(contains(&pdf, "<7B7E5B576E055355> Tj") || contains(&pdf, "> <7B7E>"));
     assert!(contains(&pdf, "(2) Tj"));
+}
+
+/// A CFF-flavoured Japanese font file, when one is installed (or named by `GRIDCRAFT_CJK_TEST_FONT`).
+fn cjk_test_font() -> Option<std::path::PathBuf> {
+    let mut paths: Vec<std::path::PathBuf> = std::env::var_os("GRIDCRAFT_CJK_TEST_FONT").map(Into::into).into_iter().collect();
+    paths.push("/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf".into());
+    paths.into_iter().find(|p| p.is_file())
+}
+
+#[test]
+fn pdf_embeds_the_cell_font_for_japanese_text() {
+    let Some(font) = cjk_test_font() else {
+        eprintln!("skipped: no CFF Japanese font installed");
+        return;
+    };
+    let mut s = s();
+    let asked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = std::sync::Arc::clone(&asked);
+    s.font_files = Some(std::sync::Arc::new(move |name: &str, bold, _| {
+        log.lock().unwrap().push((name.to_string(), bold));
+        if name == "Noto Sans JP" { vec![(font.clone(), 0)] } else { Vec::new() }
+    }));
+    s.execute("range.setValues", json!({"range": "A1:B1", "values": [["日本語の請求書", "Total 合計"]]})).unwrap();
+    s.execute("home.fontName", json!({"range": "A1:B1", "name": "Noto Sans JP"})).unwrap();
+    let (pdf, _) = pdf_of(&mut s, json!({}));
+    assert_eq!(*asked.lock().unwrap(), vec![("Noto Sans JP".to_string(), false)], "asked once, for the cell's font");
+    assert!(contains(&pdf, "/Subtype /Type0 ") && contains(&pdf, "/Encoding /Identity-H"));
+    assert!(contains(&pdf, "/Subtype /CIDFontType0C"), "the CFF program is embedded");
+    assert!(contains(&pdf, "<0001> <65E5>"), "ToUnicode maps the first glyph back to 日");
+    assert!(contains(&pdf, "(Total ) Tj"), "Latin text stays in the standard font");
+    assert!(!contains(&pdf, "UniGB-UTF16-H"));
+    assert!(pdf.len() < 100_000, "the font is subset: {} bytes", pdf.len());
 }
 
 #[test]

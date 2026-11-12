@@ -16,7 +16,7 @@ use gridcraft_model::{
     Anchor, BorderLine, BorderStyle, Borders, Color, HAlign, Orientation, PageOrder, PatternType, PrintSettings, ShapeKind, Sheet, Style, StyleId,
     StyleTable, Underline, VAlign, Visibility, Workbook,
 };
-use gridcraft_pdf::{Font, Page, PdfDoc, Point, Rect, Rgb};
+use gridcraft_pdf::{Font, FontResolver, Page, PdfDoc, Point, Rect, Rgb};
 use serde_json::{Value as Json, json};
 
 use super::{CommandSpec, Result, Session, bad, bool_param, cmd, edit, f64_param, has_doc, split_sheet, str_param, target_sheet, u32_param};
@@ -151,9 +151,14 @@ pub(crate) const PX_TO_PT: f32 = 0.75;
 /// Most pages one export produces.
 pub const MAX_PAGES: usize = 2000;
 
-/// Renders laid-out sheets to a PDF.
-pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str) -> (Vec<u8>, usize) {
+/// Renders laid-out sheets to a PDF. `fonts` supplies the fonts embedded for text outside
+/// WinAnsiEncoding (Japanese and other scripts); without it that text uses a predefined,
+/// non-embedded CID font.
+pub fn render_pdf(wb: &Workbook, layouts: &[SheetLayout], file: &str, path: &str, fonts: Option<FontResolver>) -> (Vec<u8>, usize) {
     let mut doc = PdfDoc::new();
+    if let Some(fonts) = fonts {
+        doc.set_font_resolver(fonts);
+    }
     doc.info.title = if wb.props.title.is_empty() { file.to_string() } else { wb.props.title.clone() };
     doc.info.author = wb.props.author.clone();
     let total: usize = layouts.iter().map(|l| l.pages.len()).sum();
@@ -238,7 +243,8 @@ fn build_pdf(s: &Session, p: &Json, cmd: &str) -> Result<(Vec<u8>, usize)> {
     let d = s.doc()?;
     let lays = layouts(&d.wb, &opts);
     let path = d.path.clone().unwrap_or_default();
-    Ok(render_pdf(&d.wb, &lays, &d.display_title(), &path))
+    let fonts = crate::system_fonts::pdf_font_resolver(s.font_files.clone());
+    Ok(render_pdf(&d.wb, &lays, &d.display_title(), &path, Some(fonts)))
 }
 
 pub(crate) fn export_pdf(s: &mut Session, p: &Json) -> Result<Json> {

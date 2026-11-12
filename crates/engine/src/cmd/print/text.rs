@@ -1,5 +1,6 @@
 use super::draw::{Block, Look, rgb_of};
 use super::{CellRef, Color, Font, HAlign, MAX_COLS, Page, Point, RangeRef, Sheet, Style, StyleTable, Underline, VAlign, Value};
+use gridcraft_pdf::TextStyle;
 
 const PAD_PX: f32 = 2.0;
 
@@ -154,6 +155,7 @@ pub(super) fn draw_text(pg: &mut Page, b: &Block, placement: TextPlacement<'_>) 
     let st = &l.style;
     let mut size = st.font.size.clamp(1.0, 409.0) * b.scale;
     let font = font_for(st);
+    let family = st.font.name.as_str();
     let pad = PAD_PX * b.k;
     let indent = st.align.indent as f32 * 9.0 * b.k;
     let avail = (w - 2.0 * pad - indent).max(0.0);
@@ -237,7 +239,7 @@ pub(super) fn draw_text(pg: &mut Page, b: &Block, placement: TextPlacement<'_>) 
             } else {
                 (x + pad + (last - i) * line_h, y + pad + size * 0.8)
             };
-            pg.text_rotated(Point::new(ox, oy), size, font, color, t, angle);
+            pg.text_styled(Point::new(ox, oy), angle, TextStyle { font, family, size, color }, t);
         }
         pg.restore();
         return;
@@ -249,7 +251,7 @@ pub(super) fn draw_text(pg: &mut Page, b: &Block, placement: TextPlacement<'_>) 
         for ch in chars {
             let s = ch.to_string();
             let cw = gridcraft_pdf::text_width(font, size, &s);
-            pg.text(x + (w - cw) / 2.0, yy, size, font, color, &s);
+            pg.text_styled(Point::new(x + (w - cw) / 2.0, yy), 0.0, TextStyle { font, family, size, color }, &s);
             yy += line_h;
             if yy > y + h + line_h {
                 break;
@@ -269,7 +271,7 @@ pub(super) fn draw_text(pg: &mut Page, b: &Block, placement: TextPlacement<'_>) 
         if ly - size > y + h || ly < y - line_h {
             continue;
         }
-        pg.text(lx, ly, size, font, color, line);
+        pg.text_styled(Point::new(lx, ly), 0.0, TextStyle { font, family, size, color }, line);
         if st.font.underline != Underline::None {
             let uw = (size * 0.06).max(0.2);
             pg.stroke_line(lx, ly + size * 0.12, lx + lw, ly + size * 0.12, uw, color);

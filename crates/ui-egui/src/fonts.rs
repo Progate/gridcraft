@@ -260,6 +260,14 @@ fn faces_named(cat: &[Face], wanted: &str) -> Vec<Face> {
     v
 }
 
+/// The files of an installed family for PDF export to embed ([`gridcraft_engine::system_fonts::FontFiles`]):
+/// the face nearest the weight and slant first. Never blocks; empty until the scan finishes.
+pub fn files_for(family: &str, bold: bool, italic: bool) -> Vec<(PathBuf, u32)> {
+    let mut faces = faces_of(family);
+    faces.sort_by_key(|f| ((f.weight >= 600.0) != bold, f.italic != italic));
+    faces.into_iter().map(|f| (f.path, f.index)).collect()
+}
+
 /// The subset of `names` that is installed, sorted and deduped. These are the families whose files
 /// get bound for a workbook, under the name the workbook uses: that is the name
 /// [`cell_family`](crate::theme::cell_family) looks up, so `맑은 고딕` binds as `맑은 고딕`, not as

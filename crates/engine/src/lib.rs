@@ -24,6 +24,7 @@ pub mod recent;
 pub mod record;
 pub mod sample;
 pub mod selection;
+pub mod system_fonts;
 pub mod tables;
 pub mod windows;
 
@@ -548,6 +549,10 @@ pub struct Session {
     /// Measures cell text for AutoFit Column Width. Without it (CLI, MCP) AutoFit uses
     /// [`cmd::format::approx_text_width`].
     pub text_width: Option<TextWidth>,
+    /// Finds a cell font's installed files, so PDF export embeds the font a cell is formatted
+    /// with. Without it (CLI, MCP) export embeds the system CJK fonts only, by script
+    /// ([`system_fonts::pdf_font_resolver`]).
+    pub font_files: Option<system_fonts::FontFiles>,
 }
 
 impl Session {

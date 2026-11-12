@@ -2,22 +2,29 @@
 //!
 //! - The 14 standard fonts (no embedding) with WinAnsiEncoding, plus approximate width tables
 //!   ([`text_width`]) so callers can measure, align and wrap text. Characters outside
-//!   WinAnsiEncoding (CJK and other scripts) are set in a predefined, non-embedded Adobe-GB1 CID
-//!   font with the `UniGB-UTF16-H` CMap instead of being replaced by `?`. Symbol uses its own
-//!   built-in encoding ([`symbol_code`]), for Greek letters and mathematical operators.
+//!   WinAnsiEncoding (CJK and other scripts) are set in an embedded subset of an installed font
+//!   that has them, which the caller supplies through [`PdfDoc::set_font_resolver`] (see
+//!   [`EmbeddedFont`]). Without one, or when no font has the glyph, they are set in a predefined,
+//!   non-embedded Adobe-GB1 CID font with the `UniGB-UTF16-H` CMap instead of being replaced by
+//!   `?`. Symbol uses its own built-in encoding ([`symbol_code`]), for Greek letters and
+//!   mathematical operators.
 //! - Vector drawing: rectangles, lines (solid or dashed), polygons, circles (Bézier), clipping.
 //! - RGBA images as RGB image XObjects with a soft mask for alpha (run-length encoded).
 //! - Coordinates are points with a **top-left origin** (y grows down); text `y` is the baseline.
 //!
-//! Streams are written uncompressed (images use the trivial RunLengthDecode filter) so the crate
-//! needs no dependencies.
+//! Streams are written uncompressed (images use the trivial RunLengthDecode filter). The only
+//! dependencies are the font parser and subsetter that embedded fonts need.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod embed;
 mod metrics;
 mod symbol;
 
+pub use embed::{EmbeddedFont, FontRequest, FontResolver, MAX_FONT_BYTES, Script};
 pub use symbol::{symbol_code, symbol_width};
+
+use embed::{SharedFonts, Target};
 
 use std::fmt::Write as _;
 
@@ -140,6 +147,27 @@ impl Font {
             (Family::Mono, false, true) => Font::CourierOblique,
             (Family::Mono, true, true) => Font::CourierBoldOblique,
         }
+    }
+
+    /// Whether this is a bold face.
+    pub fn is_bold(self) -> bool {
+        matches!(
+            self,
+            Font::HelveticaBold | Font::HelveticaBoldOblique | Font::TimesBold | Font::TimesBoldItalic | Font::CourierBold | Font::CourierBoldOblique
+        )
+    }
+
+    /// Whether this is an italic or oblique face.
+    pub fn is_italic(self) -> bool {
+        matches!(
+            self,
+            Font::HelveticaOblique
+                | Font::HelveticaBoldOblique
+                | Font::TimesItalic
+                | Font::TimesBoldItalic
+                | Font::CourierOblique
+                | Font::CourierBoldOblique
+        )
     }
 
     /// Picks a standard family for a font name: serif faces map to Times, monospaced ones to
@@ -270,6 +298,17 @@ fn pdf_utf16_string(text: &str) -> String {
     s
 }
 
+/// A PDF hex string `< … >` of two-byte CIDs (the `Identity-H` encoding).
+fn pdf_cid_string(cids: &[u16]) -> String {
+    let mut s = String::with_capacity(cids.len() * 4 + 2);
+    s.push('<');
+    for cid in cids {
+        let _ = write!(s, "{cid:04X}");
+    }
+    s.push('>');
+    s
+}
+
 /// A PDF literal string `( … )` for `text` in WinAnsiEncoding.
 fn pdf_string(text: &str) -> String {
     pdf_string_in(text, false)
@@ -371,12 +410,39 @@ struct LinkAnnotation {
     target: LinkTarget,
 }
 
+/// How a run of text is set, for [`Page::text_styled`].
+#[derive(Clone, Copy, Debug)]
+pub struct TextStyle<'a> {
+    /// The standard font for the characters WinAnsiEncoding has; its weight and slant also pick
+    /// the face of `family`.
+    pub font: Font,
+    /// The family the text is formatted with (a cell's font name), embedded for the characters
+    /// outside WinAnsiEncoding when it is installed and has them. Empty: only the system fallback
+    /// fonts are tried.
+    pub family: &'a str,
+    pub size: f32,
+    pub color: Rgb,
+}
+
+/// Where one character of a text run goes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunKey {
+    /// The standard font, in WinAnsiEncoding.
+    Standard,
+    /// An embedded font (slot).
+    Embedded(usize),
+    /// The predefined CID font.
+    Predefined,
+}
+
 /// A page under construction. Obtain one with [`PdfDoc::add_page`].
 pub struct Page {
     width: f32,
     height: f32,
     content: String,
     fonts: [bool; FONT_SLOTS],
+    /// The document's embedded fonts.
+    embedded: SharedFonts,
     images: Vec<ImageData>,
     links: Vec<LinkAnnotation>,
     depth: u32,
@@ -607,10 +673,19 @@ impl Page {
     /// Text rotated by `angle` radians (clockwise on the page, like the y-down coordinate
     /// system) about its baseline origin.
     pub fn text_rotated(&mut self, origin: Point, size: f32, font: Font, color: Rgb, text: &str, angle: f32) {
+        self.text_styled(origin, angle, TextStyle { font, family: "", size, color }, text);
+    }
+
+    /// Text in `style`, rotated by `angle` radians like [`Page::text_rotated`]. Characters outside
+    /// WinAnsiEncoding are drawn with `style.family` when it is installed and has them, else with
+    /// a system font for their script (see [`PdfDoc::set_font_resolver`]).
+    pub fn text_styled(&mut self, origin: Point, angle: f32, style: TextStyle<'_>, text: &str) {
+        let TextStyle { font, family, size, color } = style;
         if text.is_empty() || !extent(size) || !finite(&[origin.x, origin.y]) {
             return;
         }
         let fi = font.index();
+        let outline = n(size.min(10_000.0) * 0.03);
         let size = n(size.min(10_000.0));
         let (sn, cs) = if angle.is_finite() { angle.sin_cos() } else { (0.0, 1.0) };
         // Clockwise in y-down = counter-clockwise negated in PDF's y-up space.
@@ -625,20 +700,58 @@ impl Page {
             self.op(&s);
             return;
         }
-        // Runs of WinAnsi text use `font`; runs it cannot encode use the CID font. Each `Tj`
-        // advances the text position, so the runs follow each other on the baseline.
-        let mut rest = text;
-        while let Some(first) = rest.chars().next() {
-            let cid = needs_cid(first);
-            let end = rest.char_indices().find(|(_, c)| needs_cid(*c) != cid).map_or(rest.len(), |(i, _)| i);
-            let (run, tail) = rest.split_at(end);
-            let (slot, string) = if cid { (CID_FONT, pdf_utf16_string(run)) } else { (fi, pdf_string(run)) };
-            if let Some(f) = self.fonts.get_mut(slot) {
-                *f = true;
+        // Runs of WinAnsi text use `font`; runs it cannot encode use an embedded font that has
+        // the glyphs, else the predefined CID font. Each `Tj` advances the text position, so the
+        // runs follow each other on the baseline.
+        let fonts = std::sync::Arc::clone(&self.embedded);
+        let mut set = text.chars().any(needs_cid).then(|| embed::lock(&fonts));
+        let (bold, italic) = (font.is_bold(), font.is_italic());
+        let mut route = |c: char| -> (RunKey, u16) {
+            match set.as_mut().filter(|_| needs_cid(c)) {
+                None if needs_cid(c) => (RunKey::Predefined, 0),
+                None => (RunKey::Standard, 0),
+                Some(set) => match set.target(family, bold, italic, c) {
+                    Target::Embedded(slot, cid) => (RunKey::Embedded(slot), cid),
+                    Target::Predefined => (RunKey::Predefined, 0),
+                },
             }
-            let _ = writeln!(s, "/F{} {} Tf\n{} Tj", slot + 1, size, string);
-            rest = tail;
+        };
+        let routed: Vec<(char, RunKey, u16)> = text
+            .chars()
+            .map(|c| {
+                let (key, cid) = route(c);
+                (c, key, cid)
+            })
+            .collect();
+        let mut i = 0;
+        while let Some(&(_, key, _)) = routed.get(i) {
+            let end = routed[i..].iter().position(|(_, k, _)| *k != key).map_or(routed.len(), |n| i + n);
+            let run = &routed[i..end];
+            i = end;
+            match key {
+                RunKey::Standard | RunKey::Predefined => {
+                    let text: String = run.iter().map(|(c, _, _)| *c).collect();
+                    let (slot, string) = if key == RunKey::Predefined { (CID_FONT, pdf_utf16_string(&text)) } else { (fi, pdf_string(&text)) };
+                    if let Some(f) = self.fonts.get_mut(slot) {
+                        *f = true;
+                    }
+                    let _ = writeln!(s, "/F{} {} Tf\n{} Tj", slot + 1, size, string);
+                }
+                RunKey::Embedded(slot) => {
+                    let cids: Vec<u16> = run.iter().map(|(_, _, cid)| *cid).collect();
+                    // A regular face asked to be bold is filled and stroked with a thin outline.
+                    let fake_bold = bold && set.as_ref().is_some_and(|set| set.needs_fake_bold(slot));
+                    if fake_bold {
+                        let _ = writeln!(s, "{}\n2 Tr {} w", rgb_op(color, true), outline);
+                    }
+                    let _ = writeln!(s, "/E{} {} Tf\n{} Tj", slot + 1, size, pdf_cid_string(&cids));
+                    if fake_bold {
+                        s.push_str("0 Tr\n");
+                    }
+                }
+            }
         }
+        drop(set);
         s.push_str("ET");
         self.op(&s);
     }
@@ -680,6 +793,8 @@ pub struct Info {
 pub struct PdfDoc {
     pages: Vec<Page>,
     pub info: Info,
+    /// Embedded fonts, shared with the pages that draw with them.
+    fonts: SharedFonts,
 }
 
 /// PackBits-style run-length encoding (PDF `RunLengthDecode`).
@@ -743,11 +858,28 @@ impl PdfDoc {
         PdfDoc::default()
     }
 
+    /// Sets where fonts for characters outside WinAnsiEncoding come from. The resolver is asked
+    /// lazily, the first time a text run needs a family or script, and each answer is subset to
+    /// the glyphs used and embedded. Without a resolver those characters use the predefined,
+    /// non-embedded CID font, which viewers without that font draw wrongly or not at all.
+    pub fn set_font_resolver(&mut self, resolver: FontResolver) {
+        embed::lock(&self.fonts).set_resolver(Some(resolver));
+    }
+
     /// Adds a page of `width_pt` × `height_pt` points and returns it for drawing.
     pub fn add_page(&mut self, width_pt: f32, height_pt: f32) -> &mut Page {
         let width = if width_pt.is_finite() { width_pt.clamp(3.0, 14_400.0) } else { 612.0 };
         let height = if height_pt.is_finite() { height_pt.clamp(3.0, 14_400.0) } else { 792.0 };
-        self.pages.push(Page { width, height, content: String::new(), fonts: [false; FONT_SLOTS], images: Vec::new(), links: Vec::new(), depth: 0 });
+        self.pages.push(Page {
+            width,
+            height,
+            content: String::new(),
+            fonts: [false; FONT_SLOTS],
+            embedded: std::sync::Arc::clone(&self.fonts),
+            images: Vec::new(),
+            links: Vec::new(),
+            depth: 0,
+        });
         let i = self.pages.len() - 1;
         &mut self.pages[i]
     }
@@ -818,6 +950,17 @@ impl PdfDoc {
                 let name = Font::ALL.get(i).copied().unwrap_or_default().base_name();
                 let enc = if name.starts_with("Symbol") { "" } else { " /Encoding /WinAnsiEncoding" };
                 objects.push((*id, format!("<< /Type /Font /Subtype /Type1 /BaseFont /{name}{enc} >>").into_bytes()));
+            }
+        }
+        {
+            let set = embed::lock(&self.fonts);
+            for slot in set.used().collect::<Vec<_>>() {
+                // A subset that fails here was checked when the font was loaded; its text then
+                // draws with no font resource rather than with wrong glyphs.
+                let Some(objs) = set.objects(slot, next) else { continue };
+                let _ = write!(font_dict, "/E{} {} 0 R ", slot + 1, next);
+                next += objs.len() as u32;
+                objects.extend(objs);
             }
         }
         for page in &mut self.pages {
