@@ -1268,6 +1268,44 @@ mod tests {
     }
 
     #[test]
+    fn data_validation_shows_stored_date_and_time_serials_as_dates() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let mut app = SheetApp::new(session, Default::default());
+        app.run("data.validation", json!({"range": "A1", "type": "date", "operator": "between", "formula1": "2026/4/1", "formula2": "=TODAY()"}))
+            .unwrap();
+        app.run("data.validation", json!({"range": "B1", "type": "time", "operator": "greater", "formula1": "9:00"})).unwrap();
+        app.ui.language = crate::i18n::Language::Ja;
+        let d = Dialog::open(&mut app, "dataValidation", json!({})).unwrap();
+        assert_eq!((d.values["formula1"].as_str(), d.values["formula2"].as_str()), (Some("2026/4/1"), Some("=TODAY()")));
+        // OK without edits stores the same rule.
+        app.run("data.validation", build_params(&d)).unwrap();
+        let a1 = gridcraft_engine::core::CellRef::new(0, 0);
+        let dv =
+            app.session.active().unwrap().wb.active().unwrap().validations.iter().find(|v| v.ranges.iter().any(|r| r.contains(a1))).cloned().unwrap();
+        assert_eq!((dv.f1.as_str(), dv.f2.as_deref()), ("46113", Some("TODAY()")));
+        app.ui.language = crate::i18n::Language::En;
+        let d = Dialog::open(&mut app, "dataValidation", json!({})).unwrap();
+        assert_eq!(d.values["formula1"], "4/1/2026");
+        app.run("selection.set", json!({"range": "B1"})).unwrap();
+        let d = Dialog::open(&mut app, "dataValidation", json!({})).unwrap();
+        assert_eq!(d.values["formula1"], "9:00");
+        // A list source formula reopens with its `=` and OK keeps it a formula; a literal list shows its items.
+        app.run("data.validation", json!({"range": "C1", "type": "list", "formula1": "=INDIRECT($D1)"})).unwrap();
+        app.run("data.validation", json!({"range": "C2", "type": "list", "formula1": "Open,\"Done\""})).unwrap();
+        for (cell, shown, stored) in [("C1", "=INDIRECT($D1)", "INDIRECT($D1)"), ("C2", "Open,\"Done\"", "\"Open,\"\"Done\"\"\"")] {
+            app.run("selection.set", json!({"range": cell})).unwrap();
+            let d = Dialog::open(&mut app, "dataValidation", json!({})).unwrap();
+            assert_eq!(d.values["formula1"], shown);
+            app.run("data.validation", build_params(&d)).unwrap();
+            let wb = &app.session.active().unwrap().wb;
+            let at = gridcraft_engine::core::CellRef::parse(cell).unwrap();
+            let dv = wb.active().unwrap().validations.iter().find(|v| v.ranges.iter().any(|r| r.contains(at))).unwrap();
+            assert_eq!(dv.f1, stored, "{cell}");
+        }
+    }
+
+    #[test]
     fn remove_duplicates_with_only_the_cursor_prefills_the_current_region() {
         let mut session = gridcraft_engine::Session::default();
         session.new_workbook();

@@ -28,9 +28,10 @@ pub(super) fn validation_defaults(app: &SheetApp) -> Json {
     v["type"] = json!(camel(json!(dv.kind)));
     v["operator"] = json!(camel(json!(dv.op)));
     v["errorStyle"] = json!(camel(json!(dv.error_style)));
-    v["formula1"] = json!(dv.f1);
+    let shown = |f: &str| bound_text(dv.kind, f, app.ui.language, doc.wb.date_system);
+    v["formula1"] = json!(shown(&dv.f1));
     if let Some(f2) = &dv.f2 {
-        v["formula2"] = json!(f2);
+        v["formula2"] = json!(shown(f2));
     }
     v["ignoreBlank"] = json!(dv.allow_blank);
     v["dropdown"] = json!(dv.in_cell_dropdown);
@@ -41,6 +42,44 @@ pub(super) fn validation_defaults(app: &SheetApp) -> Json {
     v["errorTitle"] = json!(dv.error_title);
     v["errorMessage"] = json!(dv.error_message);
     v
+}
+
+/// A Date or Time rule's bound as the Data Validation dialog shows it: the serial number a file
+/// stores (`46113`, `0.375`) as the date or time Excel shows (`2026/4/1` in Japanese, `4/1/2026`
+/// otherwise; `9:00`), which OK reads back to the same serial. A formula is shown as one (`=TODAY()`),
+/// a quoted list source as its items; other rules show the stored text.
+fn bound_text(
+    kind: gridcraft_engine::model::ValidationKind,
+    f: &str,
+    lang: crate::i18n::Language,
+    sys: gridcraft_engine::core::DateSystem,
+) -> String {
+    use gridcraft_engine::model::ValidationKind;
+    let date = kind == ValidationKind::Date;
+    if kind == ValidationKind::List || kind == ValidationKind::Custom {
+        // A literal list shows as typed (`a,b`), a source formula with its `=` (`=INDIRECT($D2)`):
+        // shown bare, OK took `INDIRECT($D2)` for a one-item literal list.
+        return match f.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
+            Some(body) if kind == ValidationKind::List => body.replace("\"\"", "\""),
+            _ if f.is_empty() || f.starts_with('=') => f.to_string(),
+            _ => format!("={f}"),
+        };
+    }
+    if !date && kind != ValidationKind::Time {
+        return f.to_string();
+    }
+    let Ok(n) = f.trim().parse::<f64>() else {
+        return if f.is_empty() { String::new() } else { format!("={f}") };
+    };
+    let day = if lang == crate::i18n::Language::Ja { "yyyy/m/d" } else { "m/d/yyyy" };
+    let seconds = ((n * 86_400.0).round() as i64) % 60 != 0;
+    let time = if seconds { "h:mm:ss" } else { "h:mm" };
+    let code = match (date, n.fract() != 0.0, n >= 1.0) {
+        (true, false, _) => day.to_string(),
+        (true, true, _) | (false, _, true) => format!("{day} {time}"),
+        (false, _, false) => time.to_string(),
+    };
+    gridcraft_engine::numfmt::text_function(&gridcraft_engine::core::Value::Number(n), &code, sys).unwrap_or_else(|_| f.to_string())
 }
 
 /// The range Remove Duplicates starts with. A block selection is used as given; with only the

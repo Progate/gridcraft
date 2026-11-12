@@ -154,14 +154,15 @@ pub(super) fn validation(s: &mut Session, p: &Json) -> Result<Json> {
         Some("information") => ErrorStyle::Information,
         Some(other) => return Err(bad("data.validation", format!("unknown errorStyle `{other}` (stop, warning, information)"))),
     };
+    let sys = s.doc()?.wb.date_system;
     let f1 = str_param(p, "formula1").unwrap_or("");
-    let f1 = if kind == ValidationKind::List { list_source(f1) } else { f1.trim_start_matches('=').to_string() };
+    let f1 = if kind == ValidationKind::List { list_source(f1) } else { bound(kind, f1, sys) };
     let dv = Validation {
         ranges: ranges.clone(),
         kind,
         op: op_param(str_param(p, "operator")),
         f1,
-        f2: str_param(p, "formula2").map(|f| f.trim_start_matches('=').to_string()),
+        f2: str_param(p, "formula2").map(|f| bound(kind, f, sys)),
         allow_blank: bool_param(p, "ignoreBlank").unwrap_or(true),
         in_cell_dropdown: bool_param(p, "dropdown").unwrap_or(true),
         input_title: str_param(p, "inputTitle").unwrap_or("").into(),
@@ -182,12 +183,45 @@ pub(super) fn validation(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
-/// Whether a list rule's source is a literal list (`"a,b"`, or `a,b` typed without quotes) rather
-/// than a reference or a name to evaluate.
-fn is_literal_list(f: &str) -> bool {
+/// A bound of a rule as a file stores it: a formula (`=TODAY()`, `=$A$1`) without its `=`, and a
+/// date or time typed into a Date or Time rule (`2026/4/1`, `4/1/2026`, `9:00`) as its serial
+/// number (`46113`, `0.375`), as Excel saves it. Stored as typed, `2026/4/1` read back as the
+/// formula 2026÷4÷1.
+fn bound(kind: ValidationKind, f: &str, sys: gridcraft_core::DateSystem) -> String {
+    let t = f.trim();
+    if let Some(formula) = t.strip_prefix('=') {
+        return formula.to_string();
+    }
+    if matches!(kind, ValidationKind::Date | ValidationKind::Time)
+        && let Some(n) = gridcraft_core::parse::parse_number_text_in(t, sys)
+    {
+        return n.to_string();
+    }
+    f.trim_start_matches('=').to_string()
+}
+
+/// Whether a list source typed without `=` is a literal list (`a,b`) rather than a reference or a
+/// name GridCraft takes as one (`$A$1:$A$3`, `Items`).
+fn is_typed_literal_list(f: &str) -> bool {
     f.starts_with('"')
         || (!f.contains('!')
             && gridcraft_formula::parse(f).map(|e| !matches!(e, gridcraft_formula::Expr::Ref(_) | gridcraft_formula::Expr::Name(_))).unwrap_or(true))
+}
+
+/// Whether a stored list source is a literal list (`"a,b"`, or text that is no formula) rather
+/// than a formula to evaluate. Excel stores every source formula without its `=`, so a function
+/// call (`INDIRECT($D2)`, `OFFSET($A$1,0,0,5)`) is a formula like a reference or a name: read as
+/// a literal, a dependent dropdown listed the formula's own text.
+fn is_literal_list(f: &str) -> bool {
+    use gridcraft_formula::Expr;
+    if f.starts_with('"') {
+        return true;
+    }
+    match gridcraft_formula::parse(f) {
+        Ok(Expr::Number(_) | Expr::Text(_) | Expr::Bool(_) | Expr::Error(_) | Expr::Array(_) | Expr::Unary(..)) => true,
+        Ok(_) => false,
+        Err(_) => !f.contains('!'),
+    }
 }
 
 /// A list rule's source as a file stores it. A literal list typed without quotes, as in Excel's
@@ -196,7 +230,7 @@ fn is_literal_list(f: &str) -> bool {
 /// formula. A formula (`=…`), a reference, a name or an already quoted list is kept as before.
 fn list_source(f: &str) -> String {
     let t = f.trim();
-    if t.is_empty() || t.starts_with('=') || t.starts_with('"') || !is_literal_list(t) {
+    if t.is_empty() || t.starts_with('=') || t.starts_with('"') || !is_typed_literal_list(t) {
         return f.trim_start_matches('=').to_string();
     }
     format!("\"{}\"", t.replace('"', "\"\""))

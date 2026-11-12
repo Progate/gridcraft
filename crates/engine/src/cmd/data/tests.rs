@@ -576,3 +576,75 @@ fn a_rule_with_an_unknown_type_operator_or_error_style_is_refused() {
     assert_eq!(sh.validations.len(), 3);
     assert!(check_validation(&s.doc().unwrap().wb, 0, CellRef::parse("A2").unwrap(), "0").is_some());
 }
+
+#[test]
+fn a_list_source_formula_is_evaluated_per_cell_like_a_dependent_dropdown() {
+    // `=INDIRECT($D2)` on E2:E5 is the classic dependent dropdown: E3 lists the name typed in D3.
+    // A function call used to be taken for a literal list and listed its own text.
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("range.setValues", json!({"range": "A1:B3", "values": [["果物", "野菜"], ["りんご", "にんじん"], ["みかん", "だいこん"]]})).unwrap();
+    s.execute("formulas.defineName", json!({"name": "果物", "refersTo": "=Sheet1!$A$2:$A$3"})).unwrap();
+    s.execute("formulas.defineName", json!({"name": "野菜", "refersTo": "=Sheet1!$B$2:$B$3"})).unwrap();
+    s.execute("range.setValues", json!({"range": "D2:D3", "values": [["果物"], ["野菜"]]})).unwrap();
+    for (range, source) in [
+        ("E2:E3", "=INDIRECT($D2)"),
+        ("G2:G3", "=果物"),
+        ("H2:H3", "=OFFSET($A$2,0,0,2,1)"),
+        ("I2:I3", "=INDIRECT(\"果物\")"),
+        ("J2:J3", "=OFFSET($A$2,0,ROW()-2,2,1)"),
+    ] {
+        s.execute("data.validation", json!({"range": range, "type": "list", "formula1": source})).unwrap();
+    }
+    let wb = s.doc().unwrap().wb.clone();
+    let sh = wb.active().unwrap();
+    let items = |cell: &str| {
+        let at = CellRef::parse(cell).unwrap();
+        let dv = sh.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(at))).unwrap();
+        list_items(&wb, 0, at, dv)
+    };
+    let fruit = ["りんご", "みかん"];
+    let veg = ["にんじん", "だいこん"];
+    assert_eq!(items("E2"), fruit);
+    assert_eq!(items("E3"), veg);
+    assert_eq!(items("G3"), fruit);
+    assert_eq!(items("H3"), fruit);
+    assert_eq!(items("I3"), fruit);
+    assert_eq!(items("J2"), fruit);
+    assert_eq!(items("J3"), veg);
+    let ok = |cell: &str, v: &str| check_validation(&wb, 0, CellRef::parse(cell).unwrap(), v).is_none();
+    assert!(ok("E2", "りんご") && !ok("E2", "にんじん"));
+    assert!(ok("E3", "にんじん") && !ok("E3", "りんご"));
+    assert!(ok("H3", "みかん") && ok("I3", "みかん"));
+    // The source is saved as Excel writes it: the formula of the top-left cell, without `=`.
+    assert_eq!(sh.validations[0].f1, "INDIRECT($D2)");
+}
+
+#[test]
+fn date_and_time_bounds_are_stored_as_serials_like_excel() {
+    // Excel saves a typed date as its serial (`46113`); stored as typed, `2026/4/1` read back as
+    // 2026÷4÷1. Formulas stay formulas.
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("data.validation", json!({"range": "A1:A5", "type": "date", "operator": "between", "formula1": "2026/4/1", "formula2": "4/30/2026"}))
+        .unwrap();
+    s.execute("data.validation", json!({"range": "B1:B5", "type": "time", "operator": "between", "formula1": "9:00", "formula2": "17:30"})).unwrap();
+    s.execute("data.validation", json!({"range": "C1:C5", "type": "date", "operator": "greaterOrEqual", "formula1": "=TODAY()"})).unwrap();
+    s.execute("data.validation", json!({"range": "D1:D5", "type": "date", "operator": "lessOrEqual", "formula1": "2026-04-01"})).unwrap();
+    let wb = &s.doc().unwrap().wb;
+    let dvs = &wb.active().unwrap().validations;
+    assert_eq!((dvs[0].f1.as_str(), dvs[0].f2.as_deref()), ("46113", Some("46142")));
+    assert_eq!((dvs[1].f1.as_str(), dvs[1].f2.as_deref()), ("0.375", Some("0.7291666666666666")));
+    assert_eq!(dvs[2].f1, "TODAY()");
+    assert_eq!(dvs[3].f1, "46113");
+    let ok = |cell: &str, v: &str| check_validation(wb, 0, CellRef::parse(cell).unwrap(), v).is_none();
+    assert!(ok("A2", "2026/4/15") && ok("A2", "2026/4/1") && !ok("A2", "2026/3/31") && !ok("A2", "2026/5/1"));
+    assert!(ok("B2", "9:00") && ok("B2", "12:15") && !ok("B2", "8:59") && !ok("B2", "18:00"));
+    assert!(ok("D2", "2026/3/1") && !ok("D2", "2026/4/2"));
+    let bytes = gridcraft_xlsx::write_xlsx(wb).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut xml).unwrap();
+    assert!(xml.contains("<formula1>46113</formula1><formula2>46142</formula2>"), "{xml}");
+    assert!(xml.contains("<formula1>0.375</formula1>"), "{xml}");
+}
