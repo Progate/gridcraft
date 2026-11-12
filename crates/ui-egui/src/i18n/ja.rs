@@ -1566,10 +1566,97 @@ pub(super) const EXTRA: &[(&str, &str)] = &[
     ("No functions match.", "一致する関数がありません。"),
 ];
 
+/// The AutoFilter dropdown's Text, Number and Date Filters submenus and the Custom AutoFilter and
+/// Top 10 AutoFilter dialogs, in Excel's Japanese wording. Kept apart from the lists above and
+/// never overlapping them.
+pub(super) const AUTOFILTER: &[(&str, &str)] = &[
+    ("Text Filters", "テキスト フィルター"),
+    ("Number Filters", "数値フィルター"),
+    ("Date Filters", "日付フィルター"),
+    ("AutoFilter|Equals…", "指定の値に等しい..."),
+    ("AutoFilter|Does Not Equal…", "指定の値に等しくない..."),
+    ("AutoFilter|Begins With…", "指定の値で始まる..."),
+    ("AutoFilter|Ends With…", "指定の値で終わる..."),
+    ("AutoFilter|Contains…", "指定の値を含む..."),
+    ("AutoFilter|Does Not Contain…", "指定の値を含まない..."),
+    ("AutoFilter|Custom Filter…", "ユーザー設定フィルター..."),
+    ("AutoFilter|Greater Than…", "指定の値より大きい..."),
+    ("AutoFilter|Greater Than Or Equal To…", "指定の値以上..."),
+    ("AutoFilter|Less Than…", "指定の値より小さい..."),
+    ("AutoFilter|Less Than Or Equal To…", "指定の値以下..."),
+    ("AutoFilter|Between…", "指定の範囲内..."),
+    ("AutoFilter|Top 10…", "トップテン..."),
+    ("AutoFilter|Above Average", "平均より上"),
+    ("AutoFilter|Below Average", "平均より下"),
+    ("AutoFilter|Before…", "指定の値より前..."),
+    ("AutoFilter|After…", "指定の値より後..."),
+    ("AutoFilter|Tomorrow", "明日"),
+    ("AutoFilter|Today", "今日"),
+    ("AutoFilter|Yesterday", "昨日"),
+    ("AutoFilter|Next Week", "来週"),
+    ("AutoFilter|This Week", "今週"),
+    ("AutoFilter|Last Week", "先週"),
+    ("AutoFilter|Next Month", "来月"),
+    ("AutoFilter|This Month", "今月"),
+    ("AutoFilter|Last Month", "先月"),
+    ("AutoFilter|Next Quarter", "来四半期"),
+    ("AutoFilter|This Quarter", "今四半期"),
+    ("AutoFilter|Last Quarter", "前四半期"),
+    ("AutoFilter|Next Year", "来年"),
+    ("AutoFilter|This Year", "今年"),
+    ("AutoFilter|Last Year", "昨年"),
+    ("AutoFilter|Year to Date", "今年の初めから今日まで"),
+    ("AutoFilter|All Dates in the Period", "期間内の全日付"),
+    ("AutoFilter|Quarter 1", "第 1 四半期"),
+    ("AutoFilter|Quarter 2", "第 2 四半期"),
+    ("AutoFilter|Quarter 3", "第 3 四半期"),
+    ("AutoFilter|Quarter 4", "第 4 四半期"),
+    ("AutoFilter|January", "1 月"),
+    ("AutoFilter|February", "2 月"),
+    ("AutoFilter|March", "3 月"),
+    ("AutoFilter|April", "4 月"),
+    ("AutoFilter|May", "5 月"),
+    ("AutoFilter|June", "6 月"),
+    ("AutoFilter|July", "7 月"),
+    ("AutoFilter|August", "8 月"),
+    ("AutoFilter|September", "9 月"),
+    ("AutoFilter|October", "10 月"),
+    ("AutoFilter|November", "11 月"),
+    ("AutoFilter|December", "12 月"),
+    ("Custom AutoFilter", "ユーザー設定オートフィルター"),
+    ("Show rows where:", "抽出条件の指定:"),
+    ("Custom AutoFilter|And", "AND"),
+    ("Custom AutoFilter|Or", "OR"),
+    ("Use ? to represent any single character", "? を使って、任意の 1 文字を表すことができます。"),
+    ("Use * to represent any series of characters", "* を使って、任意の文字列を表すことができます。"),
+    ("equals", "と等しい"),
+    ("does not equal", "と等しくない"),
+    ("is greater than", "より大きい"),
+    ("is greater than or equal to", "以上"),
+    ("is less than", "より小さい"),
+    ("is less than or equal to", "以下"),
+    ("begins with", "で始まる"),
+    ("does not begin with", "で始まらない"),
+    ("ends with", "で終わる"),
+    ("does not end with", "で終わらない"),
+    ("contains", "を含む"),
+    ("does not contain", "を含まない"),
+    ("is after", "より後"),
+    ("is after or equal to", "以降"),
+    ("is before", "より前"),
+    ("is before or equal to", "以前"),
+    ("Top 10 AutoFilter", "トップテン オートフィルター"),
+    ("Top 10|Show", "表示"),
+    ("Top 10|Top", "上位"),
+    ("Top 10|Bottom", "下位"),
+    ("Top 10|Items", "項目"),
+    ("Top 10|Percent", "パーセント"),
+];
+
 /// Translates an interface label; `None` for a label the catalog does not know, so `i18n.rs` can
 /// fall back to English. Dialog strings come first, the shared core second.
 pub(super) fn translate(text: &str) -> Option<&'static str> {
-    DIALOGS.iter().chain(CORE).chain(EXTRA).find(|(english, _)| *english == text).map(|(_, translated)| *translated)
+    DIALOGS.iter().chain(CORE).chain(EXTRA).chain(AUTOFILTER).find(|(english, _)| *english == text).map(|(_, translated)| *translated)
 }
 
 #[cfg(test)]
@@ -1600,6 +1687,18 @@ mod tests {
             assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
             assert!(!catalog.contains(english), "{english:?} is already in CORE or DIALOGS");
             assert!(seen.insert(*english), "duplicate EXTRA key: {english:?}");
+            assert_eq!(translate(english), Some(*japanese));
+        }
+    }
+
+    #[test]
+    fn autofilter_labels_do_not_overlap_the_other_lists() {
+        let other: HashSet<&str> = catalog_keys().chain(EXTRA.iter().map(|(english, _)| *english)).collect();
+        let mut seen = HashSet::new();
+        for (english, japanese) in AUTOFILTER {
+            assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
+            assert!(!other.contains(english), "{english:?} is already in another list");
+            assert!(seen.insert(*english), "duplicate AUTOFILTER key: {english:?}");
             assert_eq!(translate(english), Some(*japanese));
         }
     }

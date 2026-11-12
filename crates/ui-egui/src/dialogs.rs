@@ -15,6 +15,7 @@ use crate::theme;
 
 mod about;
 mod analysis;
+mod autofilter;
 mod charts;
 mod command_search;
 mod cond_format_rules;
@@ -693,6 +694,8 @@ impl Dialog {
             "equation" => return crate::equation::open_editor(app, &params),
             "goalSeek" => Dialog::custom("goalSeek", "Goal Seek", json!({"set": active, "to": "0", "changing": ""})),
             "scenarioManager" => scenarios::open(app),
+            "customAutoFilter" => autofilter::open_custom(app, &params)?,
+            "top10AutoFilter" => autofilter::open_top10(app, &params)?,
             "forecastSheet" => Dialog::form(
                 "forecastSheet",
                 "Create Forecast Worksheet",

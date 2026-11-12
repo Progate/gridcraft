@@ -41,6 +41,7 @@ pub(super) fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_
     let on_button = ui.ctx().memory(|m| m.focused()).is_some_and(|f| buttons.contains(&f));
     let enter = !on_button && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
     let mut close = false;
+    let mut pick: Option<ConditionPick> = None;
     let area = egui::Area::new(egui::Id::unique("filter_menu")).fixed_pos(at + vec2(-180.0, 10.0)).order(egui::Order::Foreground);
     let response = area.show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
@@ -56,6 +57,8 @@ pub(super) fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_
                 let _ = app.run("data.sortDescending", json!({"column": col_to_letters(col)}));
                 close = true;
             }
+            ui.separator();
+            condition_submenu(ui, &wb, si, col, &mut pick);
             ui.separator();
             ui.label(egui::RichText::new(lang.tr("Filter")).strong());
             let mut checks: Vec<(String, bool)> = ui.ctx().data_mut(|d| d.get_temp::<Vec<(String, bool)>>(key)).unwrap_or(values.clone());
@@ -114,7 +117,20 @@ pub(super) fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_
             });
         });
     });
-    if close || popup_dismissed(&response.response, was_open) {
+    if let Some(pick) = pick {
+        close = true;
+        match pick {
+            ConditionPick::Dialog(name, params) => app.open_dialog(name, params),
+            ConditionPick::Run(params) => app.run_or_alert("data.filterBy", params),
+        }
+    }
+    // A click in the condition submenu lands on its own popup layer, not elsewhere.
+    let layer = response.response.layer_id;
+    let in_submenu = ui
+        .input(|i| i.pointer.interact_pos())
+        .and_then(|p| ui.ctx().layer_id_at(p))
+        .is_some_and(|l| l != layer && l.order >= egui::Order::Foreground);
+    if close || (popup_dismissed(&response.response, was_open) && !in_submenu) {
         ui.ctx().data_mut(|d| {
             d.remove::<Vec<(String, bool)>>(key);
             d.remove::<String>(search_key);
@@ -122,6 +138,175 @@ pub(super) fn filter_menu(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_
         });
         app.grid.filter_menu = None;
     }
+}
+
+/// What a Text, Number or Date Filters item does: open a condition dialog or filter at once.
+enum ConditionPick {
+    Dialog(&'static str, serde_json::Value),
+    Run(serde_json::Value),
+}
+
+/// The relative date periods of Date Filters, in Excel's order, with the `dynamic` type each sets
+/// (`None` draws a separator).
+const DATE_PERIODS: &[Option<(&str, &str)>] = &[
+    Some(("AutoFilter|Tomorrow", "tomorrow")),
+    Some(("AutoFilter|Today", "today")),
+    Some(("AutoFilter|Yesterday", "yesterday")),
+    None,
+    Some(("AutoFilter|Next Week", "nextWeek")),
+    Some(("AutoFilter|This Week", "thisWeek")),
+    Some(("AutoFilter|Last Week", "lastWeek")),
+    None,
+    Some(("AutoFilter|Next Month", "nextMonth")),
+    Some(("AutoFilter|This Month", "thisMonth")),
+    Some(("AutoFilter|Last Month", "lastMonth")),
+    None,
+    Some(("AutoFilter|Next Quarter", "nextQuarter")),
+    Some(("AutoFilter|This Quarter", "thisQuarter")),
+    Some(("AutoFilter|Last Quarter", "lastQuarter")),
+    None,
+    Some(("AutoFilter|Next Year", "nextYear")),
+    Some(("AutoFilter|This Year", "thisYear")),
+    Some(("AutoFilter|Last Year", "lastYear")),
+    None,
+    Some(("AutoFilter|Year to Date", "yearToDate")),
+];
+
+/// All Dates in the Period: the quarters and months, whatever their year.
+const PERIODS: &[Option<(&str, &str)>] = &[
+    Some(("AutoFilter|Quarter 1", "Q1")),
+    Some(("AutoFilter|Quarter 2", "Q2")),
+    Some(("AutoFilter|Quarter 3", "Q3")),
+    Some(("AutoFilter|Quarter 4", "Q4")),
+    None,
+    Some(("AutoFilter|January", "M1")),
+    Some(("AutoFilter|February", "M2")),
+    Some(("AutoFilter|March", "M3")),
+    Some(("AutoFilter|April", "M4")),
+    Some(("AutoFilter|May", "M5")),
+    Some(("AutoFilter|June", "M6")),
+    Some(("AutoFilter|July", "M7")),
+    Some(("AutoFilter|August", "M8")),
+    Some(("AutoFilter|September", "M9")),
+    Some(("AutoFilter|October", "M10")),
+    Some(("AutoFilter|November", "M11")),
+    Some(("AutoFilter|December", "M12")),
+];
+
+/// The items of the Text, Number or Date Filters submenu: (label, what it does). A `custom`
+/// operator pair opens Custom AutoFilter with it; `top10` opens Top 10 AutoFilter; a `dynamic`
+/// type filters at once. An empty label is a separator.
+fn condition_items(kind: gridcraft_engine::cmd::data::FilterColumnKind) -> Vec<(&'static str, &'static str)> {
+    use gridcraft_engine::cmd::data::FilterColumnKind as K;
+    match kind {
+        K::Text => vec![
+            ("AutoFilter|Equals…", "custom:="),
+            ("AutoFilter|Does Not Equal…", "custom:<>"),
+            ("", ""),
+            ("AutoFilter|Begins With…", "custom:beginsWith"),
+            ("AutoFilter|Ends With…", "custom:endsWith"),
+            ("", ""),
+            ("AutoFilter|Contains…", "custom:contains"),
+            ("AutoFilter|Does Not Contain…", "custom:notContains"),
+            ("", ""),
+            ("AutoFilter|Custom Filter…", "custom"),
+        ],
+        K::Number => vec![
+            ("AutoFilter|Equals…", "custom:="),
+            ("AutoFilter|Does Not Equal…", "custom:<>"),
+            ("", ""),
+            ("AutoFilter|Greater Than…", "custom:>"),
+            ("AutoFilter|Greater Than Or Equal To…", "custom:>="),
+            ("AutoFilter|Less Than…", "custom:<"),
+            ("AutoFilter|Less Than Or Equal To…", "custom:<="),
+            ("AutoFilter|Between…", "custom:>=:<="),
+            ("", ""),
+            ("AutoFilter|Top 10…", "top10"),
+            ("AutoFilter|Above Average", "dynamic:aboveAverage"),
+            ("AutoFilter|Below Average", "dynamic:belowAverage"),
+            ("", ""),
+            ("AutoFilter|Custom Filter…", "custom"),
+        ],
+        K::Date => vec![
+            ("AutoFilter|Equals…", "custom:="),
+            ("", ""),
+            ("AutoFilter|Before…", "custom:<"),
+            ("AutoFilter|After…", "custom:>"),
+            ("AutoFilter|Between…", "custom:>=:<="),
+            ("", ""),
+            ("dates", ""),
+            ("", ""),
+            ("AutoFilter|All Dates in the Period", "periods"),
+            ("", ""),
+            ("AutoFilter|Custom Filter…", "custom"),
+        ],
+    }
+}
+
+/// What a submenu item's action string does for column `col`.
+fn condition_pick(action: &str, col: u32) -> Option<ConditionPick> {
+    let mut parts = action.split(':');
+    match parts.next()? {
+        "custom" => {
+            let mut p = json!({"col": col});
+            if let Some(op) = parts.next() {
+                p["op"] = json!(op);
+                p["op2"] = json!(parts.next().unwrap_or(""));
+                p["and"] = json!(true);
+            }
+            Some(ConditionPick::Dialog("customAutoFilter", p))
+        }
+        "top10" => Some(ConditionPick::Dialog("top10AutoFilter", json!({"col": col}))),
+        "dynamic" => Some(ConditionPick::Run(json!({"column": col_to_letters(col), "dynamic": parts.next()?}))),
+        _ => None,
+    }
+}
+
+/// The Text, Number or Date Filters submenu of a filter dropdown, chosen by the column's values as
+/// in Excel; it is ticked while the column has a condition filter (not a list of values).
+fn condition_submenu(ui: &mut egui::Ui, wb: &gridcraft_engine::model::Workbook, si: usize, col: u32, pick: &mut Option<ConditionPick>) {
+    use gridcraft_engine::cmd::data::{FilterColumnKind, filter_column_kind, filter_criterion_at};
+    let lang = crate::i18n::current(ui.ctx());
+    let kind = filter_column_kind(wb, si, col);
+    let title = match kind {
+        FilterColumnKind::Text => "Text Filters",
+        FilterColumnKind::Number => "Number Filters",
+        FilterColumnKind::Date => "Date Filters",
+    };
+    let active = filter_criterion_at(wb, si, col).is_some_and(|c| !matches!(c, gridcraft_engine::model::FilterCriterion::Values { .. }));
+    let label = format!("{}{}", if active { "✓ " } else { "" }, lang.tr(title));
+    let periods = |ui: &mut egui::Ui, list: &[Option<(&str, &str)>], pick: &mut Option<ConditionPick>| {
+        for item in list {
+            match item {
+                Some((label, dynamic)) => {
+                    if ui.button(lang.tr(label)).clicked() {
+                        *pick = Some(ConditionPick::Run(json!({"column": col_to_letters(col), "dynamic": dynamic})));
+                    }
+                }
+                None => {
+                    ui.separator();
+                }
+            }
+        }
+    };
+    ui.menu_button(label, |ui| {
+        for (label, action) in condition_items(kind) {
+            match (label, action) {
+                ("", _) => {
+                    ui.separator();
+                }
+                ("dates", _) => periods(ui, DATE_PERIODS, pick),
+                (label, "periods") => {
+                    ui.menu_button(lang.tr(label), |ui| periods(ui, PERIODS, pick));
+                }
+                (label, action) => {
+                    if ui.button(lang.tr(label)).clicked() {
+                        *pick = condition_pick(action, col);
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Draws and dispatches the cell context menu, including Show Details when offered, clipboard and insert/format actions; closes on Esc or an outside press.
@@ -588,4 +773,36 @@ fn insert_copied_item(app: &SheetApp) -> Option<(&'static str, &'static str)> {
 pub(super) fn is_checkbox(sh: &Sheet, app: &SheetApp) -> bool {
     let Some(d) = app.session.active() else { return false };
     d.wb.styles.get(sh.style_id(d.selection.active)).num_fmt.as_str() == "checkbox"
+}
+
+#[cfg(test)]
+mod tests {
+    use gridcraft_engine::cmd::data::FilterColumnKind;
+
+    use super::*;
+    use crate::i18n::Language;
+
+    #[test]
+    fn every_condition_menu_label_has_excels_japanese_wording() {
+        let kinds = [FilterColumnKind::Text, FilterColumnKind::Number, FilterColumnKind::Date];
+        let items = kinds.into_iter().flat_map(condition_items).map(|(label, _)| label).filter(|l| !l.is_empty() && *l != "dates");
+        let periods = DATE_PERIODS.iter().chain(PERIODS).flatten().map(|(label, _)| *label);
+        for label in items.chain(periods).chain(["Text Filters", "Number Filters", "Date Filters"]) {
+            let shown = Language::Ja.tr(label);
+            assert!(!shown.is_ascii(), "{label:?} has no Japanese label: {shown:?}");
+        }
+        assert_eq!(Language::Ja.tr("AutoFilter|Greater Than Or Equal To…"), "指定の値以上...");
+        assert_eq!(Language::Ja.tr("AutoFilter|Year to Date"), "今年の初めから今日まで");
+        assert_eq!(Language::En.tr("AutoFilter|Between…"), "Between…");
+    }
+
+    #[test]
+    fn submenu_items_open_the_dialog_or_filter_at_once() {
+        assert!(
+            matches!(condition_pick("custom:>=:<=", 1), Some(ConditionPick::Dialog("customAutoFilter", p)) if p == json!({"col": 1, "op": ">=", "op2": "<=", "and": true}))
+        );
+        assert!(matches!(condition_pick("custom", 1), Some(ConditionPick::Dialog("customAutoFilter", p)) if p == json!({"col": 1})));
+        assert!(matches!(condition_pick("top10", 2), Some(ConditionPick::Dialog("top10AutoFilter", _))));
+        assert!(matches!(condition_pick("dynamic:M3", 2), Some(ConditionPick::Run(p)) if p == json!({"column": "C", "dynamic": "M3"})));
+    }
 }
