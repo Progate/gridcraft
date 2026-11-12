@@ -118,6 +118,7 @@ fn workbook() -> Workbook {
         calculated_fields: vec![],
         values_on_rows: false,
         values_position: None,
+        lang: String::new(),
     };
     // Pivot 2: table source, date grouping on two levels, show-values-as, multi-select page
     // filter and a hidden-items filter on a column field.
@@ -132,15 +133,9 @@ fn workbook() -> Workbook {
                 date_group: PivotDateGroup::Years,
                 sort: PivotSort::None,
                 collapsed_items: vec!["2024".into()],
-                range_group: None,
+                ..PivotField::default()
             },
-            PivotField {
-                source_col: "Date".into(),
-                date_group: PivotDateGroup::Months,
-                sort: PivotSort::Asc,
-                collapsed_items: vec![],
-                range_group: None,
-            },
+            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, ..PivotField::default() },
         ],
         columns: vec![PivotField { sort: PivotSort::Desc, ..field("Product") }],
         values: vec![
@@ -190,6 +185,7 @@ fn workbook() -> Workbook {
         calculated_fields: vec![],
         values_on_rows: false,
         values_position: None,
+        lang: String::new(),
     };
     // Pivot 3: defaults, defined-name source, compact.
     let p3 = PivotTable {
@@ -913,4 +909,85 @@ fn numeric_range_grouping_round_trips() {
         cache.contains("<rangePr startNum=\"3\" endNum=\"98\" groupInterval=\"20\"/><groupItems count=\"7\"><s v=\"&lt;3\"/><s v=\"3-22\"/>"),
         "{cache}"
     );
+}
+
+/// Date, Sales: the first of each month of the April 2025 – March 2026 fiscal year.
+fn fiscal_workbook(rows: Vec<PivotField>, lang: &str) -> Workbook {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.cells.set(at("A1"), Cell::value(Value::text("日付")));
+    s.cells.set(at("B1"), Cell::value(Value::text("売上")));
+    for (k, (y, m)) in (4..=12).map(|m| (2025, m)).chain((1..=3).map(|m| (2026, m))).enumerate() {
+        s.cells.set(CellRef::new(k as u32 + 1, 0), Cell::value(Value::number(date(y, m, 1))));
+        s.cells.set(CellRef::new(k as u32 + 1, 1), Cell::value(Value::number(10.0)));
+    }
+    s.pivots.push(PivotTable {
+        id: 1,
+        source: "Sheet1!$A$1:$B$13".into(),
+        anchor: at("D3"),
+        rows,
+        values: vec![PivotValue { source_col: "売上".into(), name: "合計 / 売上".into(), ..PivotValue::default() }],
+        last_range: Some(rr("D3:E25")),
+        lang: lang.into(),
+        ..PivotTable::default()
+    });
+    wb
+}
+
+fn level(by: PivotDateGroup) -> PivotField {
+    PivotField { source_col: "日付".into(), date_group: by, ..PivotField::default() }
+}
+
+// Years + Quarters + Months as Japanese Excel saves them: the date field grouped by months, with
+// `par` pointing at the next coarser level, and 四半期 / 年 as fields of their own (`databaseField="0"`).
+#[test]
+fn date_levels_write_and_read_like_japanese_excel() {
+    let wb = fiscal_workbook(vec![level(PivotDateGroup::Years), level(PivotDateGroup::Quarters), level(PivotDateGroup::Months)], "ja");
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts = unzip(&bytes);
+    let c = String::from_utf8(parts.get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    let months: String = (1..=12).map(|m| format!("<s v=\"{m}月\"/>")).collect();
+    assert!(
+        c.contains(&format!(
+            "<fieldGroup par=\"2\" base=\"0\"><rangePr groupBy=\"months\" startDate=\"2025-04-01T00:00:00\" endDate=\"2026-03-02T00:00:00\"/><groupItems count=\"14\"><s v=\"&lt;2025/4/1\"/>{months}<s v=\"&gt;2026/3/2\"/></groupItems></fieldGroup>"
+        )),
+        "{c}"
+    );
+    assert!(
+        c.contains("<cacheField name=\"四半期\" numFmtId=\"0\" databaseField=\"0\"><fieldGroup par=\"3\" base=\"0\"><rangePr groupBy=\"quarters\""),
+        "{c}"
+    );
+    assert!(c.contains("<s v=\"第1四半期\"/><s v=\"第2四半期\"/><s v=\"第3四半期\"/><s v=\"第4四半期\"/>"), "{c}");
+    assert!(c.contains("<cacheField name=\"年\" numFmtId=\"0\" databaseField=\"0\"><fieldGroup base=\"0\"><rangePr groupBy=\"years\""), "{c}");
+    assert!(
+        c.contains("<groupItems count=\"4\"><s v=\"&lt;2025/4/1\"/><s v=\"2025年\"/><s v=\"2026年\"/><s v=\"&gt;2026/3/2\"/></groupItems>"),
+        "{c}"
+    );
+    let t = String::from_utf8(parts.get("xl/pivotTables/pivotTable1.xml").unwrap().clone()).unwrap();
+    assert!(t.contains("<rowFields count=\"3\"><field x=\"3\"/><field x=\"2\"/><field x=\"0\"/></rowFields>"), "{t}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let p = &back.sheet(0).unwrap().pivots[0];
+    assert_eq!(p.lang, "ja");
+    let levels: Vec<_> = p.rows.iter().map(|f| (f.source_col.as_str(), f.date_group)).collect();
+    assert_eq!(levels, [("日付", PivotDateGroup::Years), ("日付", PivotDateGroup::Quarters), ("日付", PivotDateGroup::Months)]);
+}
+
+// A typed Starting at / Ending at and Number of days round-trip as `autoStart="0"`, `autoEnd="0"`
+// and `groupInterval`; the end is saved as the day after Ending at.
+#[test]
+fn date_group_range_and_interval_round_trip() {
+    let mut days = level(PivotDateGroup::Days);
+    days.date_start = Some(date(2025, 4, 1));
+    days.date_end = Some(date(2025, 12, 31));
+    days.date_days = 7;
+    let wb = fiscal_workbook(vec![days.clone()], "");
+    let bytes = write_xlsx(&wb).unwrap();
+    let c = String::from_utf8(unzip(&bytes).get("xl/pivotCache/pivotCacheDefinition1.xml").unwrap().clone()).unwrap();
+    assert!(
+        c.contains("<rangePr autoStart=\"0\" autoEnd=\"0\" groupBy=\"days\" startDate=\"2025-04-01T00:00:00\" endDate=\"2026-01-01T00:00:00\" groupInterval=\"7\"/>"),
+        "{c}"
+    );
+    assert!(c.contains("<s v=\"&lt;4/1/2025\"/><s v=\"4/1/2025 - 4/7/2025\"/>"), "{c}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    assert_eq!(back.sheet(0).unwrap().pivots[0].rows, vec![days]);
 }

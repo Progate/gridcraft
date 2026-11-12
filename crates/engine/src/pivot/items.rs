@@ -1,4 +1,4 @@
-use super::{CellError, HashMap, MONTHS, Ordering, PivotDateGroup, PivotField, PivotFunc, PivotSort, Source, Value, Workbook, datetime_from_serial};
+use super::{CellError, DateGrouping, HashMap, Ordering, PivotDateGroup, PivotField, PivotFunc, PivotSort, PivotTable, Source, Value, Workbook};
 use gridcraft_model::RangeBins;
 
 // ---------------------------------------------------------------- grouping
@@ -8,20 +8,23 @@ use gridcraft_model::RangeBins;
 pub enum Grouping {
     #[default]
     None,
-    Date(PivotDateGroup),
+    Date(DateGrouping),
     Range(RangeBins),
 }
 
 impl From<PivotDateGroup> for Grouping {
     fn from(g: PivotDateGroup) -> Self {
-        if g == PivotDateGroup::None { Grouping::None } else { Grouping::Date(g) }
+        if g == PivotDateGroup::None { Grouping::None } else { Grouping::Date(g.into()) }
     }
 }
 
 /// A field's grouping over source column `col`. A numeric grouping's automatic bounds come from the
 /// column's numbers; one that can't be made (no numbers, too many ranges) leaves the field ungrouped.
-pub fn field_grouping(src: &Source, col: usize, f: &PivotField) -> Grouping {
-    let Some(g) = &f.range_group else { return f.date_group.into() };
+/// Date captions follow the table's language ([`super::is_ja`]).
+pub fn field_grouping(wb: &Workbook, pt: &PivotTable, src: &Source, col: usize, f: &PivotField) -> Grouping {
+    let Some(g) = &f.range_group else {
+        return if f.date_group == PivotDateGroup::None { Grouping::None } else { Grouping::Date(DateGrouping::of(wb, pt, f)) };
+    };
     let (mut min, mut max, mut integers, mut any) = (f64::INFINITY, f64::NEG_INFINITY, true, false);
     for v in src.rows.iter().filter_map(|r| r.get(col)) {
         if let Value::Number(n) = v.scalar() {
@@ -81,18 +84,8 @@ fn make_item(wb: &Workbook, v: &Value, group: Grouping, fmt: &str, first: usize)
                 return (format!("r{i}"), it(Value::text(label.as_str()), label, 0, i as f64, false));
             }
             if let Grouping::Date(group) = group
-                && let Some(dt) = datetime_from_serial(wb.date_system, *n)
+                && let Some((key, label)) = date_item(wb, *n, group)
             {
-                let mon = MONTHS.get(dt.month.saturating_sub(1) as usize).copied().unwrap_or("Jan");
-                let (label, key) = match group {
-                    PivotDateGroup::Years => (dt.year.to_string(), dt.year as f64),
-                    PivotDateGroup::Quarters => {
-                        let q = (dt.month.saturating_sub(1)) / 3 + 1;
-                        (format!("Qtr{q}"), q as f64)
-                    }
-                    PivotDateGroup::Months => (mon.to_string(), dt.month as f64),
-                    _ => (format!("{}-{mon}", dt.day), (dt.month * 100 + dt.day) as f64),
-                };
                 return (format!("g{key}"), it(Value::text(label.as_str()), label, 0, key, false));
             }
             let label = crate::display::format(v, fmt, wb).text;
@@ -106,6 +99,38 @@ fn make_item(wb: &Workbook, v: &Value, group: Grouping, fmt: &str, first: usize)
         Value::Error(e) => (format!("e{}", e.as_str()), it(v.clone(), e.as_str().into(), 3, 0.0, false)),
         Value::Array(_) => make_item(wb, &v.scalar(), group, fmt, first),
     }
+}
+
+/// (sort key, caption) of a date serial's group item: `<start` and `>end` items sort first and last.
+fn date_item(wb: &Workbook, n: f64, g: DateGrouping) -> Option<(f64, String)> {
+    let sys = wb.date_system;
+    let whole = g.by.rank() <= PivotDateGroup::Days.rank();
+    if let Some(s) = g.start
+        && n < s
+    {
+        return Some((f64::NEG_INFINITY, format!("<{}", gridcraft_model::date_group_date(sys, s, g.ja))));
+    }
+    if let Some(e) = g.end
+        && (if whole { n.floor() > e.floor() } else { n > e })
+    {
+        return Some((f64::INFINITY, format!(">{}", gridcraft_model::date_group_date(sys, g.end_caption_serial(e), g.ja))));
+    }
+    let (label, key) = gridcraft_model::date_group_item(sys, n, g.by, g.ja, g.start.unwrap_or(n), g.days)?;
+    Some((key, label))
+}
+
+/// The earliest and latest date serials of a source column (numbers only).
+pub(crate) fn source_date_range(src: &Source, col: usize) -> Option<(f64, f64)> {
+    let mut r: Option<(f64, f64)> = None;
+    for row in &src.rows {
+        if let Some(Value::Number(n)) = row.get(col).map(Value::scalar).as_ref() {
+            r = Some(match r {
+                Some((a, b)) => (a.min(*n), b.max(*n)),
+                None => (*n, *n),
+            });
+        }
+    }
+    r
 }
 
 impl FieldItems {

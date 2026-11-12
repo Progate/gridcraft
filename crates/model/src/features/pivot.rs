@@ -33,6 +33,9 @@ pub enum PivotDateGroup {
     Quarters,
     Months,
     Days,
+    Hours,
+    Minutes,
+    Seconds,
 }
 
 /// Grouping of a numeric field into equal ranges, as Excel's Grouping dialog sets it (Starting at,
@@ -133,6 +136,13 @@ pub struct PivotField {
     pub range_group: Option<PivotRangeGroup>,
     /// Item labels whose detail is hidden (collapsed).
     pub collapsed_items: Vec<String>,
+    /// Grouping › Starting at (a date serial; `None` = Auto, the earliest date). Earlier dates
+    /// fall in a `<start` item. Every level of one date field carries the same range.
+    pub date_start: Option<f64>,
+    /// Grouping › Ending at (`None` = Auto). Later dates fall in a `>end` item.
+    pub date_end: Option<f64>,
+    /// Grouping › Number of days, for Days grouping (0 or 1 = one item per day of the year).
+    pub date_days: u32,
 }
 
 /// Summarize-values-by function.
@@ -235,6 +245,10 @@ pub struct PivotTable {
     /// Position of Σ Values among the row fields (`None` = after the last). Only used with
     /// `values_on_rows`: in Columns Σ Values always comes after the last column field.
     pub values_position: Option<usize>,
+    /// Language of the captions grouping generates (`"ja"`: 2025年, 第1四半期, 1月 and fields 年,
+    /// 四半期; otherwise Excel's English: 2025, Qtr1, Jan, Years, Quarters), as the Excel that
+    /// grouped the field names them.
+    pub lang: String,
 }
 
 /// A calculated field: a formula over other fields (`=Sales*0.1`, `='Unit Price'*Units`). As in
@@ -270,8 +284,164 @@ impl Default for PivotTable {
             calculated_fields: vec![],
             values_on_rows: false,
             values_position: None,
+            lang: String::new(),
         }
     }
+}
+
+// ---------------------------------------------------------------- date grouping
+
+const MONTHS_EN: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+impl PivotDateGroup {
+    /// Coarse to fine, the order Excel places the levels of one date field in.
+    pub const LEVELS: [PivotDateGroup; 7] = [
+        PivotDateGroup::Years,
+        PivotDateGroup::Quarters,
+        PivotDateGroup::Months,
+        PivotDateGroup::Days,
+        PivotDateGroup::Hours,
+        PivotDateGroup::Minutes,
+        PivotDateGroup::Seconds,
+    ];
+
+    /// Rank in [`Self::LEVELS`] (`None` last).
+    pub fn rank(self) -> usize {
+        Self::LEVELS.iter().position(|g| *g == self).unwrap_or(Self::LEVELS.len())
+    }
+
+    /// The `rangePr groupBy` / command name.
+    pub fn name(self) -> &'static str {
+        match self {
+            PivotDateGroup::None => "none",
+            PivotDateGroup::Years => "years",
+            PivotDateGroup::Quarters => "quarters",
+            PivotDateGroup::Months => "months",
+            PivotDateGroup::Days => "days",
+            PivotDateGroup::Hours => "hours",
+            PivotDateGroup::Minutes => "minutes",
+            PivotDateGroup::Seconds => "seconds",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        Some(match s.trim().to_ascii_lowercase().as_str() {
+            "years" | "year" => PivotDateGroup::Years,
+            "quarters" | "quarter" => PivotDateGroup::Quarters,
+            "months" | "month" => PivotDateGroup::Months,
+            "days" | "day" => PivotDateGroup::Days,
+            "hours" | "hour" => PivotDateGroup::Hours,
+            "minutes" | "minute" => PivotDateGroup::Minutes,
+            "seconds" | "second" => PivotDateGroup::Seconds,
+            "none" | "ungroup" => PivotDateGroup::None,
+            _ => return None,
+        })
+    }
+
+    /// The name Excel gives the extra field a coarser level becomes (`Years`; ja Excel: `年`).
+    pub fn caption(self, ja: bool) -> &'static str {
+        match (self, ja) {
+            (PivotDateGroup::Years, false) => "Years",
+            (PivotDateGroup::Quarters, false) => "Quarters",
+            (PivotDateGroup::Months, false) => "Months",
+            (PivotDateGroup::Days, false) => "Days",
+            (PivotDateGroup::Hours, false) => "Hours",
+            (PivotDateGroup::Minutes, false) => "Minutes",
+            (PivotDateGroup::Seconds, false) => "Seconds",
+            (PivotDateGroup::None, false) => "Group",
+            (PivotDateGroup::Years, true) => "年",
+            (PivotDateGroup::Quarters, true) => "四半期",
+            (PivotDateGroup::Months, true) => "月",
+            (PivotDateGroup::Days, true) => "日",
+            (PivotDateGroup::Hours, true) => "時",
+            (PivotDateGroup::Minutes, true) => "分",
+            (PivotDateGroup::Seconds, true) => "秒",
+            (PivotDateGroup::None, true) => "グループ",
+        }
+    }
+}
+
+/// A date as the group boundary items show it: `4/1/2025`, ja `2025/4/1`.
+pub fn date_group_date(sys: gridcraft_core::DateSystem, serial: f64, ja: bool) -> String {
+    match gridcraft_core::date::datetime_from_serial(sys, serial) {
+        Some(d) if ja => format!("{}/{}/{}", d.year, d.month, d.day),
+        Some(d) => format!("{}/{}/{}", d.month, d.day, d.year),
+        None => gridcraft_core::number_to_text(serial),
+    }
+}
+
+/// (caption, sort key) of a date serial's group item, as Excel captions it (en / ja Excel).
+/// Days with `days` > 1 count `days`-day ranges from `start`. Boundaries are not handled here.
+pub fn date_group_item(sys: gridcraft_core::DateSystem, serial: f64, by: PivotDateGroup, ja: bool, start: f64, days: u32) -> Option<(String, f64)> {
+    let dt = gridcraft_core::date::datetime_from_serial(sys, serial)?;
+    let mi = dt.month.saturating_sub(1) as usize;
+    Some(match by {
+        PivotDateGroup::None => return None,
+        PivotDateGroup::Years => (if ja { format!("{}年", dt.year) } else { dt.year.to_string() }, dt.year as f64),
+        PivotDateGroup::Quarters => {
+            let q = mi / 3 + 1;
+            (if ja { format!("第{q}四半期") } else { format!("Qtr{q}") }, q as f64)
+        }
+        PivotDateGroup::Months => {
+            (if ja { format!("{}月", dt.month) } else { MONTHS_EN.get(mi).copied().unwrap_or("Jan").to_string() }, dt.month as f64)
+        }
+        PivotDateGroup::Days if days > 1 => {
+            let k = ((serial.floor() - start.floor()) / days as f64).floor().max(0.0);
+            let a = start.floor() + k * days as f64;
+            (format!("{} - {}", date_group_date(sys, a, ja), date_group_date(sys, a + days as f64 - 1.0, ja)), k)
+        }
+        PivotDateGroup::Days => {
+            let label =
+                if ja { format!("{}月{}日", dt.month, dt.day) } else { format!("{}-{}", dt.day, MONTHS_EN.get(mi).copied().unwrap_or("Jan")) };
+            (label, (dt.month * 100 + dt.day) as f64)
+        }
+        PivotDateGroup::Hours => (hour_caption(dt.hour, ja), dt.hour as f64),
+        PivotDateGroup::Minutes => (if ja { format!("{:02}分", dt.minute) } else { format!(":{:02}", dt.minute) }, dt.minute as f64),
+        PivotDateGroup::Seconds => (if ja { format!("{:02}秒", dt.second) } else { format!(":{:02}", dt.second) }, dt.second as f64),
+    })
+}
+
+fn hour_caption(h: u32, ja: bool) -> String {
+    if ja {
+        return format!("{h}時");
+    }
+    let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+    format!("{h12} {}", if h < 12 { "AM" } else { "PM" })
+}
+
+/// Every group item of a level, as Excel lists them in `groupItems`: `<start`, the items, `>end`.
+pub fn date_group_items(sys: gridcraft_core::DateSystem, by: PivotDateGroup, ja: bool, start: f64, end: f64, days: u32) -> Vec<String> {
+    let mut v = vec![format!("<{}", date_group_date(sys, start, ja))];
+    match by {
+        PivotDateGroup::Years => {
+            let y = |s: f64| gridcraft_core::date::datetime_from_serial(sys, s).map(|d| d.year);
+            let y0 = y(start).unwrap_or(1900);
+            let y1 = y(end - 1.0).unwrap_or(y0).max(y0);
+            v.extend((y0..=y1.min(y0 + 10_000)).map(|y| if ja { format!("{y}年") } else { y.to_string() }));
+        }
+        PivotDateGroup::Quarters => v.extend((1..=4).map(|q| if ja { format!("第{q}四半期") } else { format!("Qtr{q}") })),
+        PivotDateGroup::Months => v.extend((1..=12).map(|m| if ja { format!("{m}月") } else { MONTHS_EN[m - 1].to_string() })),
+        PivotDateGroup::Days if days > 1 => {
+            let n = ((end.floor() - start.floor()) / days as f64).ceil().clamp(1.0, 100_000.0) as usize;
+            for k in 0..n {
+                let a = start.floor() + (k as u32 * days) as f64;
+                v.push(format!("{} - {}", date_group_date(sys, a, ja), date_group_date(sys, a + days as f64 - 1.0, ja)));
+            }
+        }
+        PivotDateGroup::Days | PivotDateGroup::None => {
+            const DAYS: [u32; 12] = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+            for (m, n) in DAYS.iter().enumerate() {
+                for d in 1..=*n {
+                    v.push(if ja { format!("{}月{d}日", m + 1) } else { format!("{d}-{}", MONTHS_EN[m]) });
+                }
+            }
+        }
+        PivotDateGroup::Hours => v.extend((0..24).map(|h| hour_caption(h, ja))),
+        PivotDateGroup::Minutes => v.extend((0..60).map(|m| if ja { format!("{m:02}分") } else { format!(":{m:02}") })),
+        PivotDateGroup::Seconds => v.extend((0..60).map(|m| if ja { format!("{m:02}秒") } else { format!(":{m:02}") })),
+    }
+    v.push(format!(">{}", date_group_date(sys, end, ja)));
+    v
 }
 
 #[cfg(test)]

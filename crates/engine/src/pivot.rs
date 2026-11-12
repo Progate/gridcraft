@@ -8,7 +8,6 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
-use gridcraft_core::date::datetime_from_serial;
 pub use gridcraft_core::quote_sheet;
 use gridcraft_core::{CellError, CellRef, MAX_COLS, MAX_ROWS, RangeRef, Value, split_sheet};
 use gridcraft_model::{
@@ -27,7 +26,10 @@ use charts::rebind_charts;
 pub use charts::{chart_link, chart_series, clear_output, links_to, parse_chart_link};
 use compute::compute_from;
 pub use compute::{NOT_A_VALUE_CELL, detail_cells, detail_records};
-pub use items::{CAPTIONS_EN, CAPTIONS_JA, Captions, Grouping, captions, distinct_labels, field_grouping, func_caption, func_caption_ja, item_label, value_name};
+pub(crate) use items::source_date_range;
+pub use items::{
+    CAPTIONS_EN, CAPTIONS_JA, Captions, Grouping, captions, distinct_labels, field_grouping, func_caption, func_caption_ja, item_label, value_name,
+};
 #[cfg(test)]
 use output::data_cols_exceed_sheet;
 pub use output::{CellKind, OutCell, Output, RowKind};
@@ -42,7 +44,67 @@ pub const MAX_AXIS_FIELDS: usize = 32;
 /// Most fields in the Values area.
 pub const MAX_VALUE_FIELDS: usize = 256;
 
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/// How an axis field groups dates, with the language its captions are in.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct DateGrouping {
+    pub by: PivotDateGroup,
+    pub start: Option<f64>,
+    pub end: Option<f64>,
+    pub days: u32,
+    pub ja: bool,
+}
+
+impl DateGrouping {
+    pub fn of(wb: &Workbook, pt: &PivotTable, f: &PivotField) -> Self {
+        DateGrouping { by: f.date_group, start: f.date_start, end: f.date_end, days: f.date_days, ja: is_ja(wb, pt) }
+    }
+    /// The `>end` item's date: Excel names it after the day after Ending at for day-based levels.
+    pub fn end_caption_serial(self, end: f64) -> f64 {
+        if self.by.rank() <= PivotDateGroup::Days.rank() { end.floor() + 1.0 } else { end }
+    }
+}
+
+impl From<PivotDateGroup> for DateGrouping {
+    fn from(by: PivotDateGroup) -> Self {
+        DateGrouping { by, ..DateGrouping::default() }
+    }
+}
+
+/// Whether the table's group captions are Japanese: its [`PivotTable::lang`] when set (as read
+/// from a file Japanese Excel grouped), else the workbook's region (ja-JP), as Excel's captions
+/// follow its own language.
+pub fn is_ja(wb: &Workbook, pt: &PivotTable) -> bool {
+    let l = pt.lang.to_ascii_lowercase();
+    if l.is_empty() { wb.region.is_japanese() } else { l == "ja" || l.starts_with("ja-") }
+}
+
+/// Whether `f` is a coarser level of a date field also on an axis at a finer level: Excel turns
+/// those into fields of their own (`Years`, `Quarters`), while the finest keeps the source name.
+fn is_extra_level(pt: &PivotTable, f: &PivotField) -> bool {
+    f.date_group != PivotDateGroup::None
+        && pt.rows.iter().chain(pt.columns.iter()).any(|o| {
+            o.source_col.eq_ignore_ascii_case(&f.source_col) && o.date_group != PivotDateGroup::None && o.date_group.rank() > f.date_group.rank()
+        })
+}
+
+/// The name an axis field shows (headers, field list): `Years` / `年` for a coarser date level,
+/// else its source field.
+pub fn field_caption(wb: &Workbook, pt: &PivotTable, f: &PivotField) -> String {
+    if is_extra_level(pt, f) { f.date_group.caption(is_ja(wb, pt)).to_string() } else { f.source_col.clone() }
+}
+
+/// Where the axis field named `name` is: (in Rows, index). A level caption (`Years`, `年`) names
+/// that level; a source field name names its finest level.
+pub fn axis_position(pt: &PivotTable, name: &str) -> Option<(bool, usize)> {
+    let name = name.trim();
+    let all = || pt.rows.iter().map(|f| (true, f)).chain(pt.columns.iter().map(|f| (false, f))).enumerate();
+    let index = |rows: bool, k: usize| if rows { k } else { k - pt.rows.len() };
+    // Either language's caption (`Years` or `年`) names the level.
+    let level =
+        all().find(|(_, (_, f))| is_extra_level(pt, f) && [false, true].iter().any(|ja| f.date_group.caption(*ja).eq_ignore_ascii_case(name)));
+    let found = level.or_else(|| all().find(|(_, (_, f))| f.source_col.eq_ignore_ascii_case(name) && !is_extra_level(pt, f)));
+    found.map(|(k, (rows, _))| (rows, index(rows, k)))
+}
 
 // ---------------------------------------------------------------- source
 

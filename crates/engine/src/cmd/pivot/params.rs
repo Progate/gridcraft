@@ -86,13 +86,7 @@ pub(super) fn layout_name(l: PivotLayout) -> &'static str {
 }
 
 pub(super) fn group_name(g: PivotDateGroup) -> &'static str {
-    match g {
-        PivotDateGroup::None => "none",
-        PivotDateGroup::Years => "years",
-        PivotDateGroup::Quarters => "quarters",
-        PivotDateGroup::Months => "months",
-        PivotDateGroup::Days => "days",
-    }
+    g.name()
 }
 
 pub(super) fn sort_name(o: PivotSort) -> &'static str {
@@ -110,12 +104,5 @@ pub(super) fn position_param(p: &Json) -> Option<usize> {
 }
 
 pub(super) fn group_param(v: Option<&str>) -> Option<PivotDateGroup> {
-    Some(match v?.to_ascii_lowercase().as_str() {
-        "years" | "year" => PivotDateGroup::Years,
-        "quarters" | "quarter" => PivotDateGroup::Quarters,
-        "months" | "month" => PivotDateGroup::Months,
-        "days" | "day" => PivotDateGroup::Days,
-        "none" | "ungroup" => PivotDateGroup::None,
-        _ => return None,
-    })
+    PivotDateGroup::from_name(v?)
 }

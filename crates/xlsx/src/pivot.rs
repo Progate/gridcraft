@@ -19,7 +19,7 @@ use gridcraft_core::{CellRef, DateSystem, RangeRef, Value, number_to_text};
 use gridcraft_formula::quote_sheet;
 use gridcraft_model::{
     PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotRangeGroup, PivotShowAs, PivotSort, PivotTable, PivotValue,
-    RangeBins, Workbook,
+    RangeBins, Workbook, date_group_items,
 };
 
 use crate::IoError;
@@ -49,8 +49,6 @@ const MAX_FIELDS: usize = 16_384;
 const EXT_X14_DATA_FIELD: &str = "{E15A36E0-9728-4e99-A89B-3F7291B0FE68}";
 const EXT_X14_PIVOT_TABLE: &str = "{962EF5D1-5CA2-4c93-8EF4-DBF5C05439D2}";
 const NS_X14: &str = "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main";
-
-const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // ================================================================ shared helpers
 
@@ -119,38 +117,17 @@ fn func_caption(f: PivotFunc) -> &'static str {
     }
 }
 
-fn group_by_name(g: PivotDateGroup) -> &'static str {
-    match g {
-        PivotDateGroup::Years => "years",
-        PivotDateGroup::Quarters => "quarters",
-        PivotDateGroup::Months => "months",
-        PivotDateGroup::Days => "days",
-        PivotDateGroup::None => "range",
-    }
-}
-
-fn group_caption(g: PivotDateGroup) -> &'static str {
-    match g {
-        PivotDateGroup::Years => "Years",
-        PivotDateGroup::Quarters => "Quarters",
-        PivotDateGroup::Months => "Months",
-        PivotDateGroup::Days => "Days",
-        PivotDateGroup::None => "Group",
-    }
+/// Whether the table's group captions are Japanese (as ja Excel writes them): its `lang` when set,
+/// else the workbook's region.
+fn is_ja(wb: &Workbook, pt: &PivotTable) -> bool {
+    let l = pt.lang.to_ascii_lowercase();
+    if l.is_empty() { wb.region.is_japanese() } else { l == "ja" || l.starts_with("ja-") }
 }
 
 /// `2024-03-05T00:00:00` for a date serial.
 fn iso(sys: DateSystem, serial: f64) -> Option<String> {
     let d = datetime_from_serial(sys, serial)?;
     Some(format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}", d.year, d.month, d.day, d.hour, d.minute, d.second))
-}
-
-/// `3/5/2024` for a date serial (group boundary captions).
-fn mdy(sys: DateSystem, serial: f64) -> String {
-    match datetime_from_serial(sys, serial) {
-        Some(d) => format!("{}/{}/{}", d.month, d.day, d.year),
-        None => number_to_text(serial),
-    }
 }
 
 // ================================================================ writing

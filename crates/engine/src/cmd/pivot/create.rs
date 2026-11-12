@@ -1,4 +1,5 @@
 use super::fields::{AreaPlacement, add_to_area, in_axes};
+use super::layout::set_date_levels;
 use super::params::{func_name, func_param, group_name, group_param, layout_name, show_as_name, sort_name};
 use super::{
     Arc, Cell, CellRef, Ctx, EngineError, Json, NumFmt, PivotDateGroup, PivotTable, RangeRef, Result, Session, Sheet, StyleId, Workbook, bad,
@@ -100,6 +101,7 @@ pub(super) fn insert_pivot(s: &mut Session, p: &Json) -> Result<Json> {
         return Err(other("The workbook is protected and cannot be changed."));
     }
     let replace = bool_param(p, "replace").unwrap_or(false);
+    let lang = str_param(p, "lang").unwrap_or_default().to_string();
     let rows = field_list(p.get("rows"));
     let columns = field_list(p.get("columns"));
     let values = field_list(p.get("values"));
@@ -115,7 +117,7 @@ pub(super) fn insert_pivot(s: &mut Session, p: &Json) -> Result<Json> {
                 (at, CellRef::new(2, 0))
             }
         };
-        let mut pt = PivotTable { id, name: name.clone(), source: source.clone(), anchor, ..Default::default() };
+        let mut pt = PivotTable { id, name: name.clone(), source: source.clone(), anchor, lang: lang.clone(), ..Default::default() };
         let add = |pt: &mut PivotTable, list: &[Json], area: &str| -> Result<()> {
             for f in list {
                 match f {
@@ -135,13 +137,20 @@ pub(super) fn insert_pivot(s: &mut Session, p: &Json) -> Result<Json> {
                             &src,
                             AreaPlacement { cmd: "insert.pivotTable", field: n, area, func, name: str_param(f, "name"), position: None },
                         )?;
-                        let by = group_param(str_param(f, "group"));
-                        if let Some(by) = by.filter(|b| *b != PivotDateGroup::None)
+                        // `group`: one level or several (`["years", "months"]`), coarse to fine.
+                        let mut levels: Vec<PivotDateGroup> = match f.get("group") {
+                            Some(Json::Array(a)) => a.iter().filter_map(|g| group_param(g.as_str())).collect(),
+                            _ => group_param(str_param(f, "group")).into_iter().collect(),
+                        };
+                        levels.retain(|b| *b != PivotDateGroup::None);
+                        levels.sort_by_key(|g| g.rank());
+                        levels.dedup();
+                        if !levels.is_empty()
                             && matches!(area, "rows" | "columns")
                             && src.col(n).and_then(|c| src.numeric.get(c).copied()).unwrap_or(false)
-                            && let Some(af) = pt.rows.iter_mut().chain(pt.columns.iter_mut()).find(|x| x.source_col.eq_ignore_ascii_case(n))
+                            && let Some((rows, i)) = pv::axis_position(pt, n)
                         {
-                            af.date_group = by;
+                            set_date_levels(pt, rows, i, &levels, (None, None, 0));
                         }
                     }
                     _ => return Err(bad("insert.pivotTable", "fields are names or {field, func?, name?}")),
@@ -327,8 +336,8 @@ pub(super) fn summarize_table(s: &mut Session, p: &Json) -> Result<Json> {
 
 // ---------------------------------------------------------------- queries
 
-fn axis_json(f: &gridcraft_model::PivotField) -> Json {
-    let mut j = json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items});
+fn axis_json(wb: &Workbook, pt: &PivotTable, f: &gridcraft_model::PivotField) -> Json {
+    let mut j = json!({"field": f.source_col, "name": pv::field_caption(wb, pt, f), "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items});
     if let (Some(g), Some(m)) = (f.range_group, j.as_object_mut()) {
         m.insert("group".into(), json!("range"));
         m.insert("range".into(), json!({"start": g.start, "end": g.end, "interval": g.interval, "autoStart": g.auto_start, "autoEnd": g.auto_end}));
@@ -344,8 +353,8 @@ pub(super) fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "anchor": pt.anchor.a1(),
         "range": pt.last_range.map(|r| r.a1()),
         "source": pt.source,
-        "rows": pt.rows.iter().map(axis_json).collect::<Vec<_>>(),
-        "columns": pt.columns.iter().map(axis_json).collect::<Vec<_>>(),
+        "rows": pt.rows.iter().map(|f| axis_json(wb, pt, f)).collect::<Vec<_>>(),
+        "columns": pt.columns.iter().map(|f| axis_json(wb, pt, f)).collect::<Vec<_>>(),
         "values": pt.values.iter().map(|v| json!({"field": v.source_col, "func": func_name(v.func), "name": v.name, "showAs": show_as_name(v.show_as), "numberFormat": v.number_format})).collect::<Vec<_>>(),
         "filters": pt.filters.iter().map(|f| json!({"field": f.source_col, "selected": f.selected, "report": !in_axes(pt, &f.source_col)})).collect::<Vec<_>>(),
         "layout": layout_name(pt.layout),
@@ -358,5 +367,6 @@ pub(super) fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "valuesOnRows": pt.values_on_rows,
         "valuesPosition": pt.values_position,
         "enableShowDetails": pt.enable_show_details,
+        "lang": pt.lang,
     })
 }

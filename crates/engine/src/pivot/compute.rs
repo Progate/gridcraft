@@ -3,8 +3,8 @@ use super::output::{
     AggMap, CellKind, ColKind, ColSpec, Ctx, Grid, Line, LineKind, Output, RowKind, ValSrc, caption, data_cols_exceed_sheet, flatten_cols,
 };
 use super::{
-    CalcSet, CellError, CellRef, HashMap, HashSet, MAX_AXIS_FIELDS, MAX_COLS, MAX_VALUE_FIELDS, PivotField, PivotFilter, PivotFunc, PivotLayout,
-    PivotShowAs, PivotTable, PivotValue, Source, Value, Workbook, read_source,
+    CalcSet, CellError, CellRef, HashMap, HashSet, MAX_AXIS_FIELDS, MAX_COLS, MAX_VALUE_FIELDS, PivotDateGroup, PivotField, PivotFilter, PivotFunc,
+    PivotLayout, PivotShowAs, PivotTable, PivotValue, Source, Value, Workbook, read_source,
 };
 
 /// Why Show Details turns a cell down when it isn't a value cell of a PivotTable (the front end
@@ -181,6 +181,8 @@ fn aggregate_source(input: AggregateInput<'_>, probe: &mut Option<&mut Probe>) -
 }
 
 struct HeaderInput<'a> {
+    wb: &'a Workbook,
+    pt: &'a PivotTable,
     vals: &'a [(ValSrc, &'a PivotValue)],
     row_fields: &'a [&'a PivotField],
     col_fields: &'a [&'a PivotField],
@@ -200,6 +202,8 @@ struct HeaderInput<'a> {
 
 fn write_headers(g: &mut Grid, input: HeaderInput<'_>) -> Result<(), String> {
     let HeaderInput {
+        wb,
+        pt,
         vals,
         row_fields,
         col_fields,
@@ -225,9 +229,9 @@ fn write_headers(g: &mut Grid, input: HeaderInput<'_>) -> Result<(), String> {
             g.set(r, 0, Value::text(cap.row_labels), CellKind::Header, 0, None);
         } else {
             // One column per row field, Σ Values ("Values") at its place.
-            let mut names: Vec<&str> = row_fields.iter().map(|f| f.source_col.as_str()).collect();
+            let mut names: Vec<String> = row_fields.iter().map(|f| super::field_caption(wb, pt, f)).collect();
             if let Some(p) = vpos {
-                names.insert(p.min(names.len()), cap.values);
+                names.insert(p.min(names.len()), cap.values.to_string());
             }
             for (i, name) in names.into_iter().enumerate() {
                 g.set(r, i, Value::text(name), CellKind::Header, 0, None);
@@ -253,7 +257,8 @@ fn write_headers(g: &mut Grid, input: HeaderInput<'_>) -> Result<(), String> {
             g.set(cap_row, 0, Value::text(val_name(0)), CellKind::Header, 0, None);
         }
         if headers_on {
-            let caption = if compact { cap.column_labels.to_string() } else { col_fields.first().map(|f| f.source_col.clone()).unwrap_or_default() };
+            let caption =
+                if compact { cap.column_labels.to_string() } else { col_fields.first().map(|f| super::field_caption(wb, pt, f)).unwrap_or_default() };
             g.set(cap_row, l, Value::text(caption), CellKind::Header, 0, None);
         }
         let levels = col_fields.len() + usize::from(k > 1 && !on_rows);
@@ -505,13 +510,15 @@ fn show_value(definition: &PivotValue, raw: Value, lookup: &ValueLookup<'_>, con
 
 type ReportFilter<'a> = (usize, &'a PivotFilter, Grouping, bool);
 
-fn report_filters<'a>(pt: &'a PivotTable, src: &Source) -> (Vec<ReportFilter<'a>>, Vec<ReportFilter<'a>>) {
+fn report_filters<'a>(wb: &Workbook, pt: &'a PivotTable, src: &Source) -> (Vec<ReportFilter<'a>>, Vec<ReportFilter<'a>>) {
+    // A field on several date levels filters on its finest one, the level its name refers to.
     let axis_group = |name: &str, column: usize| {
         pt.rows
             .iter()
             .chain(pt.columns.iter())
-            .find(|field| field.source_col.eq_ignore_ascii_case(name))
-            .map(|field| field_grouping(src, column, field))
+            .filter(|field| field.source_col.eq_ignore_ascii_case(name))
+            .max_by_key(|field| if field.date_group == PivotDateGroup::None { 0 } else { field.date_group.rank() + 1 })
+            .map(|field| field_grouping(wb, pt, src, column, field))
     };
     let filters: Vec<_> = pt
         .filters
@@ -591,7 +598,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
     if vals.len() > MAX_VALUE_FIELDS {
         return Err(format!("A PivotTable can have at most {MAX_VALUE_FIELDS} value fields."));
     }
-    let (filters, shown_filters) = report_filters(pt, src);
+    let (filters, shown_filters) = report_filters(wb, pt, src);
 
     let k = vals.len();
     let empty = rows.is_empty() && cols.is_empty() && vals.is_empty();
@@ -607,8 +614,8 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
         filters.iter().map(|(_, field, _, _)| field.selected.as_ref().map(|s| s.iter().map(|v| v.to_ascii_lowercase()).collect())).collect();
     let row_fmts: Vec<String> = rows.iter().map(|(c, _)| fmt_of(*c)).collect();
     let col_fmts: Vec<String> = cols.iter().map(|(c, _)| fmt_of(*c)).collect();
-    let row_groups: Vec<Grouping> = rows.iter().map(|(c, f)| field_grouping(src, *c, f)).collect();
-    let col_groups: Vec<Grouping> = cols.iter().map(|(c, f)| field_grouping(src, *c, f)).collect();
+    let row_groups: Vec<Grouping> = rows.iter().map(|(c, f)| field_grouping(wb, pt, src, *c, f)).collect();
+    let col_groups: Vec<Grouping> = cols.iter().map(|(c, f)| field_grouping(wb, pt, src, *c, f)).collect();
     let aggregate = aggregate_source(
         AggregateInput {
             wb,
@@ -733,6 +740,8 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
     write_headers(
         &mut g,
         HeaderInput {
+            wb,
+            pt,
             vals: &vals,
             row_fields: &row_fields,
             col_fields: &col_fields,

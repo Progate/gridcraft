@@ -61,6 +61,11 @@ struct Group {
     par: Option<usize>,
     start: f64,
     end: f64,
+    /// Starting at / Ending at were typed (`autoStart="0"` / `autoEnd="0"`).
+    auto_start: bool,
+    auto_end: bool,
+    /// Number of days (Days grouping), written as `groupInterval` when above 1.
+    interval: u32,
     /// Group item captions, including the `<start` and `>end` items.
     items: Vec<String>,
 }
@@ -285,7 +290,7 @@ fn cache_fields(sh: &gridcraft_model::Sheet, r: RangeRef) -> Vec<CField> {
     fields
 }
 
-fn group_cache_fields(fields: &mut Vec<CField>, axis: &[&PivotField], date_system: DateSystem) {
+fn group_cache_fields(fields: &mut Vec<CField>, axis: &[&PivotField], date_system: DateSystem, ja: bool) {
     let find = |fields: &[CField], name: &str| fields.iter().position(|f| f.col.is_some() && same(&f.name, name));
     let groupable = |f: &CField| {
         let s = &f.stats;
@@ -313,38 +318,53 @@ fn group_cache_fields(fields: &mut Vec<CField>, axis: &[&PivotField], date_syste
                 par: None,
                 start: bins.start,
                 end: bins.end,
+                auto_start: g.auto_start,
+                auto_end: g.auto_end,
+                interval: 0,
                 items: bins.labels(),
             });
         }
     }
-    // (base column field, groupings fine → coarse)
-    let mut groupings: Vec<(usize, Vec<PivotDateGroup>)> = Vec::new();
+    // (base column field, its levels' first axis field, groupings fine → coarse)
+    let mut groupings: Vec<(usize, &PivotField, Vec<PivotDateGroup>)> = Vec::new();
     for pf in axis {
         let Some(b) = find(fields, &pf.source_col) else { continue };
         if pf.date_group == PivotDateGroup::None || pf.range_group.is_some() || !fields.get(b).is_some_and(groupable) {
             continue;
         }
-        match groupings.iter_mut().find(|(x, _)| *x == b) {
-            Some((_, v)) => {
+        match groupings.iter_mut().find(|(x, _, _)| *x == b) {
+            Some((_, _, v)) => {
                 if !v.contains(&pf.date_group) {
                     v.push(pf.date_group);
                 }
             }
-            None => groupings.push((b, vec![pf.date_group])),
+            None => groupings.push((b, pf, vec![pf.date_group])),
         }
     }
-    let fineness = |g: &PivotDateGroup| match g {
-        PivotDateGroup::Days => 0,
-        PivotDateGroup::Months => 1,
-        PivotDateGroup::Quarters => 2,
-        PivotDateGroup::Years => 3,
-        PivotDateGroup::None => 4,
-    };
-    for (b, list) in groupings.iter_mut() {
-        list.sort_by_key(fineness);
+    for (b, pf, list) in groupings.iter_mut() {
+        list.sort_by_key(|g| std::cmp::Reverse(g.rank()));
         let (min, max) = fields.get(*b).map(|f| (f.stats.min, f.stats.max)).unwrap_or((0.0, 0.0));
-        let (start, end) = (min.floor(), max.floor() + 1.0);
-        let make = |by: PivotDateGroup| Group { by, range: None, base: *b, par: None, start, end, items: group_items(date_system, by, start, end) };
+        // Excel saves day-based ranges as whole days, the end as the day after the last date.
+        let whole = list.first().is_some_and(|g| g.rank() <= PivotDateGroup::Days.rank());
+        let start = pf.date_start.map(|s| if whole { s.floor() } else { s }).unwrap_or(min.floor());
+        let end = match pf.date_end {
+            Some(e) if whole => e.floor() + 1.0,
+            Some(e) => e,
+            None => max.floor() + 1.0,
+        };
+        let interval = if list.as_slice() == [PivotDateGroup::Days] { pf.date_days } else { 0 };
+        let make = |by: PivotDateGroup| Group {
+            by,
+            range: None,
+            base: *b,
+            par: None,
+            start,
+            end,
+            auto_start: pf.date_start.is_none(),
+            auto_end: pf.date_end.is_none(),
+            interval: if by == PivotDateGroup::Days { interval } else { 0 },
+            items: date_group_items(date_system, by, ja, start, end, if by == PivotDateGroup::Days { interval } else { 0 }),
+        };
         let mut prev = *b;
         for (k, by) in list.iter().enumerate() {
             if k == 0 {
@@ -354,7 +374,7 @@ fn group_cache_fields(fields: &mut Vec<CField>, axis: &[&PivotField], date_syste
                 continue;
             }
             let new = fields.len();
-            let caption = group_caption(*by);
+            let caption = by.caption(ja);
             let mut n = caption.to_string();
             let mut i = 2;
             while fields.iter().any(|f| same(&f.name, &n)) {
@@ -409,7 +429,7 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
     // takes the finest grouping and coarser ones become extra (non-database) fields chained
     // through `par`, as Excel lays them out.
     let axis: Vec<&PivotField> = pt.rows.iter().chain(pt.columns.iter()).collect();
-    group_cache_fields(&mut fields, &axis, wb.date_system);
+    group_cache_fields(&mut fields, &axis, wb.date_system, is_ja(wb, pt));
     let mut axis_map: Vec<Option<usize>> = Vec::with_capacity(axis.len());
     for pf in &axis {
         let Some(b) = find(&fields, &pf.source_col) else {
@@ -507,31 +527,6 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
     Some(Cache { fields, axis_map, source_xml, records })
 }
 
-fn group_items(sys: DateSystem, by: PivotDateGroup, start: f64, end: f64) -> Vec<String> {
-    let mut v = vec![format!("<{}", mdy(sys, start))];
-    match by {
-        PivotDateGroup::Years => {
-            let y0 = datetime_from_serial(sys, start).map(|d| d.year).unwrap_or(1900);
-            let y1 = datetime_from_serial(sys, end - 1.0).map(|d| d.year).unwrap_or(y0).max(y0);
-            for y in y0..=y1.min(y0 + 10_000) {
-                v.push(y.to_string());
-            }
-        }
-        PivotDateGroup::Quarters => v.extend((1..=4).map(|q| format!("Qtr{q}"))),
-        PivotDateGroup::Months => v.extend(MONTHS.iter().map(ToString::to_string)),
-        PivotDateGroup::Days | PivotDateGroup::None => {
-            const DAYS: [u32; 12] = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-            for (m, n) in MONTHS.iter().zip(DAYS) {
-                for d in 1..=n {
-                    v.push(format!("{d}-{m}"));
-                }
-            }
-        }
-    }
-    v.push(format!(">{}", mdy(sys, end)));
-    v
-}
-
 /// A cache value element (`<n>`, `<s>`, `<m>`…); `date` writes numbers as `<d>`.
 fn item_xml(v: &Value, sys: DateSystem, date: bool) -> String {
     match v {
@@ -561,7 +556,8 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
     let _ = write!(s, "<cacheSource type=\"worksheet\">{}</cacheSource>", c.source_xml);
     let _ = write!(s, "<cacheFields count=\"{}\">", c.fields.len());
     for f in &c.fields {
-        let fmt = if f.is_date_group() { 14 } else { 0 };
+        // Excel gives the date field its date format; the extra level fields (Years…) have none.
+        let fmt = if f.is_date_group() && f.col.is_some() { 14 } else { 0 };
         let _ = write!(s, "<cacheField name=\"{}\" numFmtId=\"{fmt}\"", esc_attr(&f.name));
         if let Some(formula) = &f.formula {
             let _ = write!(s, " formula=\"{}\"", esc_attr(formula));
@@ -621,22 +617,25 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
                 let _ = write!(s, " par=\"{p}\"");
             }
             let _ = write!(s, " base=\"{}\">", g.base);
-            if let Some((rg, bins)) = &g.range {
-                // `groupBy` defaults to `range`; the bounds the user typed turn the automatic ones off.
-                s.push_str("<rangePr");
-                if !rg.auto_start {
-                    s.push_str(" autoStart=\"0\"");
-                }
-                if !rg.auto_end {
-                    s.push_str(" autoEnd=\"0\"");
-                }
+            s.push_str("<rangePr");
+            if !g.auto_start {
+                s.push_str(" autoStart=\"0\"");
+            }
+            if !g.auto_end {
+                s.push_str(" autoEnd=\"0\"");
+            }
+            if let Some((_, bins)) = &g.range {
+                // `groupBy` defaults to `range`.
                 let num = crate::xml::num;
                 let _ = write!(s, " startNum=\"{}\" endNum=\"{}\" groupInterval=\"{}\"", num(bins.start), num(bins.end), num(bins.interval));
             } else {
-                let _ = write!(s, "<rangePr groupBy=\"{}\"", group_by_name(g.by));
+                let _ = write!(s, " groupBy=\"{}\"", g.by.name());
                 if let (Some(a), Some(b)) = (iso(sys, g.start), iso(sys, g.end)) {
                     let _ = write!(s, " startDate=\"{a}\" endDate=\"{b}\"");
                 }
+            }
+            if g.interval > 1 {
+                let _ = write!(s, " groupInterval=\"{}\"", g.interval);
             }
             let _ = write!(s, "/><groupItems count=\"{}\">", g.items.len());
             for it in &g.items {
@@ -666,7 +665,15 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
     let mut hidden: HashMap<usize, &PivotFilter> = HashMap::new();
     let mut pages: Vec<(usize, &PivotFilter)> = Vec::new();
     for f in &pt.filters {
-        let axis_pos = pt.rows.iter().chain(pt.columns.iter()).position(|a| same(&a.source_col, &f.source_col));
+        // A field on several date levels keeps its hidden items on the finest (its own) level.
+        let axis_pos = pt
+            .rows
+            .iter()
+            .chain(pt.columns.iter())
+            .enumerate()
+            .filter(|(_, a)| same(&a.source_col, &f.source_col))
+            .max_by_key(|(_, a)| if a.date_group == PivotDateGroup::None { 0 } else { a.date_group.rank() + 1 })
+            .map(|(p, _)| p);
         match axis_pos {
             Some(p) => {
                 if let Some(Some(i)) = c.axis_map.get(p) {
@@ -804,7 +811,7 @@ fn write_pivot_fields(s: &mut String, pt: &PivotTable, c: &Cache, layout: &Pivot
             PivotLayout::Outline => s.push_str(" compact=\"0\""),
             PivotLayout::Tabular => s.push_str(" compact=\"0\" outline=\"0\""),
         }
-        if f.is_date_group() {
+        if f.is_date_group() && f.col.is_some() {
             s.push_str(" numFmtId=\"14\"");
         }
         let filter = layout.hidden_fields.get(&i).copied();

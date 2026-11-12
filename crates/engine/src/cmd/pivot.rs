@@ -38,7 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "PivotTable",
             ["Insert", "Tables"],
             None,
-            "{source?: \"Sheet1!$A$1:$E$200\" | table name (default: the table or current region of the selection), destination?: \"new\" (default: new sheet before the current one, report at A3) | \"Sheet1!H3\", name?, rows?: [field | {field, group?: years|quarters|months|days}], columns?: [..], values?: [field | {field, func?, name?}], filters?: [field], replace?: bool} → {id, name, sheet, anchor, fields}",
+            "{source?: \"Sheet1!$A$1:$E$200\" | table name (default: the table or current region of the selection), destination?: \"new\" (default: new sheet before the current one, report at A3) | \"Sheet1!H3\", name?, rows?: [field | {field, group?: years|quarters|months|days | [years, quarters, months]}], columns?: [..], values?: [field | {field, func?, name?}], filters?: [field], lang?: \"ja\" (Japanese group captions), replace?: bool} → {id, name, sheet, anchor, fields}",
             has_doc,
             insert_pivot
         ),
@@ -124,7 +124,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Group Field",
             ["PivotTable Analyze", "Group"],
             None,
-            "{pivot?, field, by: years|quarters|months|days|range|none (none = Ungroup), start?: number | \"auto\" (range; default: the smallest value), end?: number | \"auto\" (default: the largest), interval?: number (range By, default 10), replace?} → {start, end, interval, autoStart, autoEnd} for ranges",
+            "{pivot?, field (default: the field whose label the active cell shows; a date level such as Years / 年 by its name), by: years|quarters|months|days|hours|minutes|seconds|range|none or a list of date levels (coarse ones become fields Years, Quarters…; none = Ungroup), start?: number or date | \"auto\", end?: number or date | \"auto\", autoStart?, autoEnd?, interval?: number (range By, default 10), days?: n (Days only: Number of days), lang?: \"ja\" (captions; default: the workbook region), replace?} — with only the field: the Grouping dialog. → {start, end, interval, autoStart, autoEnd} for ranges, {levels} for dates",
             has_doc,
             group
         ),

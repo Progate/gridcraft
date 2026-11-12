@@ -23,6 +23,9 @@ struct FieldIn {
     group: Option<(Option<usize>, Option<GroupBy>, Vec<String>)>,
     /// A calculated field's formula.
     formula: Option<String>,
+    /// Date grouping's typed Starting at / Ending at (`autoStart="0"`, `autoEnd="0"`; serials
+    /// as the Grouping dialog shows them) and Number of days.
+    range: (Option<f64>, Option<f64>, u32),
 }
 
 impl FieldIn {
@@ -120,6 +123,9 @@ fn read_cache(cx: &mut Ctx<'_>, part: &str, sheet_name: &str) -> Option<CacheIn>
                     Some("quarters") => Some(GroupBy::Date(PivotDateGroup::Quarters)),
                     Some("months") => Some(GroupBy::Date(PivotDateGroup::Months)),
                     Some("days") => Some(GroupBy::Date(PivotDateGroup::Days)),
+                    Some("hours") => Some(GroupBy::Date(PivotDateGroup::Hours)),
+                    Some("minutes") => Some(GroupBy::Date(PivotDateGroup::Minutes)),
+                    Some("seconds") => Some(GroupBy::Date(PivotDateGroup::Seconds)),
                     // Numeric ranges (a `range` grouping of dates counts days: not modelled).
                     Some("range") => range.filter(|r| r.attr("startDate").is_none() && r.attr("endDate").is_none()).and_then(range_group),
                     _ => None,
@@ -127,12 +133,29 @@ fn read_cache(cx: &mut Ctx<'_>, part: &str, sheet_name: &str) -> Option<CacheIn>
                 let gi = g.child("groupItems").map(|gi| gi.children.iter().map(|e| item_label_el(e, sys)).collect()).unwrap_or_default();
                 (base, by, gi)
             });
+            let date_by = group.as_ref().and_then(|g| match g.1 {
+                Some(GroupBy::Date(by)) => Some(by),
+                _ => None,
+            });
+            let range = match (f.child("fieldGroup").and_then(|g| g.child("rangePr")), date_by) {
+                (Some(r), Some(by)) => {
+                    let date = |k: &str| r.attr(k).and_then(|v| crate::sheet_read::parse_iso_datetime(v, sys));
+                    let days = if by == PivotDateGroup::Days { r.attr_u32("groupInterval").unwrap_or(1) } else { 0 };
+                    // Excel saves day-based levels' end as the day after Ending at.
+                    let whole = by.rank() <= PivotDateGroup::Days.rank();
+                    let start = if !r.flag("autoStart", true) || days > 1 { date("startDate") } else { None };
+                    let end = if r.flag("autoEnd", true) { None } else { date("endDate").map(|e| if whole { e - 1.0 } else { e }) };
+                    (start, end, days)
+                }
+                _ => (None, None, 0),
+            };
             fields.push(FieldIn {
                 name: f.attr("name").unwrap_or("").to_string(),
                 database: f.flag("databaseField", true),
                 items,
                 group,
                 formula: f.attr("formula").map(str::to_string),
+                range,
             });
         }
     }
@@ -283,7 +306,8 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
             let i = i as usize;
             let Some((name, group)) = field_ref(cx, cache, i) else { continue };
             let labels = cache.fields.get(i).map(|f| f.labels().to_vec()).unwrap_or_default();
-            let mut f = PivotField { source_col: name.clone(), sort: PivotSort::None, ..PivotField::default() };
+            let (date_start, date_end, date_days) = cache.fields.get(i).map(|f| f.range).unwrap_or_default();
+            let mut f = PivotField { source_col: name.clone(), sort: PivotSort::None, date_start, date_end, date_days, ..PivotField::default() };
             match group {
                 Some(GroupBy::Date(g)) => f.date_group = g,
                 Some(GroupBy::Range(g)) => f.range_group = Some(g),
@@ -335,6 +359,15 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     let (columns, cols_values) = axis(cx, &col_x, &mut axis_filters);
     pt.rows = rows;
     pt.columns = columns;
+    // Group captions in Japanese (2025年, 第1四半期, 1月) were written by a Japanese Excel.
+    let ja_groups = cache.fields.iter().any(|f| {
+        f.group
+            .as_ref()
+            .is_some_and(|(_, by, items)| matches!(by, Some(GroupBy::Date(_))) && items.iter().any(|l| !l.starts_with(['<', '>']) && !l.is_ascii()))
+    });
+    if ja_groups {
+        pt.lang = "ja".into();
+    }
     // Σ Values: where its `-2` entry is, else `dataOnRows` and `dataPosition`; after the last
     // field by default. In Columns it always comes last, as the column layout puts it there.
     pt.values_on_rows = rows_values.is_some() || (cols_values.is_none() && x.flag("dataOnRows", false));

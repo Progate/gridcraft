@@ -1218,5 +1218,121 @@ fn group_from_a_label_cell_opens_the_grouping_dialog() {
     s.execute("pivot.addField", json!({"field": "Date", "area": "rows"})).unwrap();
     s.execute("pivot.group", json!({"field": "Date"})).unwrap();
     let Some(crate::UiRequest::Dialog(_, params)) = s.ui_requests.last() else { panic!("no dialog") };
-    assert_eq!((params["kind"].as_str(), params["by"].as_str()), (Some("date"), Some("months")));
+    assert_eq!((params["kind"].as_str(), &params["by"]), (Some("date"), &json!(["months"])));
+}
+
+/// Date, Sales — one record per month of the April 2025 – March 2026 fiscal year, in that order.
+fn fiscal() -> Session {
+    let mut s = Session::new();
+    s.new_workbook();
+    let mut rows = vec![json!(["Date", "Sales"])];
+    for (k, (y, m)) in (4..=12).map(|m| (2025, m)).chain((1..=3).map(|m| (2026, m))).enumerate() {
+        let day = if (y, m) == (2026, 3) { 31 } else { 1 };
+        rows.push(json!([format!("{m}/{day}/{y}"), (k + 1) * 10]));
+    }
+    s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+    s.execute("selection.set", json!({"range": "A1"})).unwrap();
+    s
+}
+
+/// The report's first column from A4 down, until the grand total.
+fn row_labels(s: &Session) -> Vec<String> {
+    let last = pt(s).last_range.unwrap();
+    (3..last.end.row).map(|r| text(s, &CellRef::new(r, 0).a1())).collect()
+}
+
+#[test]
+fn date_grouping_on_years_quarters_and_months_nests_them_like_excel() {
+    let mut s = fiscal();
+    s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
+    let r = s.execute("pivot.group", json!({"field": "Date", "by": ["months", "years", "quarters"]})).unwrap();
+    assert_eq!(r["levels"], json!(["years", "quarters", "months"]));
+    let p = pt(&s);
+    let levels: Vec<_> = p.rows.iter().map(|f| (f.source_col.as_str(), f.date_group)).collect();
+    use gridcraft_model::PivotDateGroup as G;
+    assert_eq!(levels, [("Date", G::Years), ("Date", G::Quarters), ("Date", G::Months)]);
+    // Months run Jan → Dec within each year: the April-start year shows 2025: Apr…Dec, 2026: Jan…Mar.
+    assert_eq!(
+        row_labels(&s),
+        ["2025", "Qtr2", "Apr", "May", "Jun", "Qtr3", "Jul", "Aug", "Sep", "Qtr4", "Oct", "Nov", "Dec", "2026", "Qtr1", "Jan", "Feb", "Mar"]
+    );
+    let info = s.execute("pivot.fields", json!({})).unwrap();
+    let names: Vec<&str> = info["rows"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["Years", "Quarters", "Date"]);
+    // Outline headers name the levels.
+    s.execute("pivot.layout", json!({"layout": "outline"})).unwrap();
+    assert_eq!([text(&s, "A3"), text(&s, "B3"), text(&s, "C3")], ["Years", "Quarters", "Date"]);
+    // A level moves and goes by its caption.
+    s.execute("pivot.removeField", json!({"field": "Quarters"})).unwrap();
+    s.execute("pivot.layout", json!({"layout": "compact"})).unwrap();
+    assert_eq!(row_labels(&s)[..4], ["2025", "Apr", "May", "Jun"]);
+    s.execute("pivot.moveField", json!({"field": "Years", "from": "rows", "to": "columns"})).unwrap();
+    assert_eq!(pt(&s).columns.len(), 1);
+    assert_eq!(pt(&s).rows.len(), 1);
+    // Ungroup: the extra fields go, the dates come back.
+    s.execute("pivot.group", json!({"field": "Date", "by": "none"})).unwrap();
+    assert_eq!(pt(&s).rows.len() + pt(&s).columns.len(), 1);
+    assert_eq!(pt(&s).rows[0].date_group, G::None);
+}
+
+#[test]
+fn japanese_date_group_captions() {
+    let mut s = fiscal();
+    s.execute("insert.pivotTable", json!({"rows": [{"field": "Date", "group": ["years", "quarters", "months"]}], "values": ["Sales"], "lang": "ja"}))
+        .unwrap();
+    assert_eq!(row_labels(&s)[..4], ["2025年", "第2四半期", "4月", "5月"]);
+    let info = s.execute("pivot.fields", json!({})).unwrap();
+    let names: Vec<&str> = info["rows"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["年", "四半期", "Date"]);
+    s.execute("pivot.collapse", json!({"field": "年", "items": ["2025年"]})).unwrap();
+    assert_eq!(pt(&s).rows[0].collapsed_items, ["2025年"]);
+}
+
+#[test]
+fn date_group_captions_follow_a_japanese_region() {
+    let mut s = fiscal();
+    s.execute("app.region.set", json!({"region": "ja-JP"})).unwrap();
+    s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
+    s.execute("pivot.group", json!({"field": "Date", "by": ["years", "quarters", "months"]})).unwrap();
+    assert_eq!(row_labels(&s)[..3], ["2025年", "第2四半期", "4月"]);
+    assert_eq!(text(&s, "A3"), "行ラベル");
+    // An explicit lang overrides the region.
+    s.execute("pivot.group", json!({"field": "Date", "by": ["years", "months"], "lang": "en"})).unwrap();
+    assert_eq!(row_labels(&s)[..2], ["2025", "Apr"]);
+}
+
+#[test]
+fn date_grouping_range_and_number_of_days() {
+    let mut s = fiscal();
+    s.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
+    s.execute("pivot.group", json!({"field": "Date", "by": ["years", "months"], "start": "2025/6/1", "end": "2025-12-31"})).unwrap();
+    let labels = row_labels(&s);
+    assert_eq!(labels.first().map(String::as_str), Some("<6/1/2025"));
+    assert_eq!(labels.last().map(String::as_str), Some(">1/1/2026"));
+    // As in Excel, both levels show the boundary item.
+    assert_eq!(labels[..4], ["<6/1/2025", "<6/1/2025", "2025", "Jun"]);
+    assert!(s.execute("pivot.group", json!({"field": "Date", "by": "months", "start": "2026/1/1", "end": "2025/1/1"})).is_err());
+    // Days by 7 days counts weeks from the first date.
+    s.execute("pivot.group", json!({"field": "Date", "by": "days", "days": 7, "start": "auto", "end": "auto"})).unwrap();
+    assert_eq!(pt(&s).rows[0].date_days, 7);
+    assert_eq!(text(&s, "A4"), "4/1/2025 - 4/7/2025");
+    // Hours on dates without times: one 12 AM item.
+    s.execute("pivot.group", json!({"field": "Date", "by": "hours"})).unwrap();
+    assert_eq!(text(&s, "A4"), "12 AM");
+}
+
+#[test]
+fn group_without_settings_opens_the_grouping_dialog() {
+    let mut s = fiscal();
+    s.execute("insert.pivotTable", json!({"rows": [{"field": "Date", "group": ["years", "months"]}], "values": ["Sales"]})).unwrap();
+    s.ui_requests.clear();
+    s.execute("pivot.group", json!({"field": "Years"})).unwrap();
+    let Some(crate::UiRequest::Dialog(name, params)) = s.ui_requests.last() else { panic!("no dialog") };
+    assert_eq!(name, "pivotGroup");
+    assert_eq!(params["kind"], "date");
+    assert_eq!(params["field"], "Date");
+    assert_eq!(params["by"], json!(["years", "months"]));
+    assert_eq!(params["start"], "4/1/2025");
+    assert_eq!(params["end"], "4/1/2026");
+    assert_eq!(params["autoStart"], true);
 }

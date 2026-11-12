@@ -53,7 +53,7 @@ fn take_from_axes(pt: &mut PivotTable, field: &str) -> Option<PivotField> {
 }
 
 /// Inserts `f` into Rows (`rows`) or Columns at `position` (default: the end).
-fn insert_axis_field(pt: &mut PivotTable, rows: bool, f: PivotField, position: Option<usize>) {
+pub(super) fn insert_axis_field(pt: &mut PivotTable, rows: bool, f: PivotField, position: Option<usize>) {
     let list = if rows { &mut pt.rows } else { &mut pt.columns };
     let at = position.unwrap_or(list.len()).min(list.len());
     list.insert(at, f);
@@ -173,14 +173,17 @@ fn remove_from_area(cmd: &str, pt: &mut PivotTable, field: &str, area: &str) -> 
     match area {
         "rows" | "columns" => {
             let rows = area == "rows";
-            let list = if rows { &mut pt.rows } else { &mut pt.columns };
-            let i = list
-                .iter()
-                .position(|f| f.source_col.eq_ignore_ascii_case(field))
+            let i = pv::axis_position(pt, field)
+                .filter(|(r, _)| *r == rows)
+                .map(|(_, i)| i)
                 .ok_or_else(|| bad(cmd, format!("`{field}` isn't in the {area} area")))?;
+            let list = if rows { &mut pt.rows } else { &mut pt.columns };
             let f = list.remove(i);
             shift_values(pt, rows, i, false);
-            pt.filters.retain(|x| !x.source_col.eq_ignore_ascii_case(&f.source_col));
+            // Another date level of the same field keeps its hidden items.
+            if !in_axes(pt, &f.source_col) {
+                pt.filters.retain(|x| !x.source_col.eq_ignore_ascii_case(&f.source_col));
+            }
             Ok(f.source_col)
         }
         "values" => {
@@ -419,11 +422,11 @@ pub(super) fn move_field(s: &mut Session, p: &Json) -> Result<Json> {
             match from {
                 "rows" | "columns" => {
                     let rows = from == "rows";
-                    let list = if rows { &mut pt.rows } else { &mut pt.columns };
-                    let i = list
-                        .iter()
-                        .position(|f| f.source_col.eq_ignore_ascii_case(&field))
+                    let i = pv::axis_position(pt, &field)
+                        .filter(|(r, _)| *r == rows)
+                        .map(|(_, i)| i)
                         .ok_or_else(|| bad(C, format!("`{field}` isn't in the {from} area")))?;
+                    let list = if rows { &mut pt.rows } else { &mut pt.columns };
                     let f = list.remove(i);
                     shift_values(pt, rows, i, false);
                     insert_axis_field(pt, rows, f, pos);
@@ -451,6 +454,21 @@ pub(super) fn move_field(s: &mut Session, p: &Json) -> Result<Json> {
                 }
             }
             return Ok(json!({}));
+        }
+        // One level of a date field on several levels (Years, Quarters…) moves on its own between
+        // Rows and Columns, as in Excel.
+        let level = pv::axis_position(pt, &field).filter(|(r, _)| *r == (from == "rows"));
+        let col = level.and_then(|(r, i)| (if r { &pt.rows } else { &pt.columns }).get(i)).map(|f| f.source_col.clone()).unwrap_or_default();
+        let levels = pt.rows.iter().chain(pt.columns.iter()).filter(|f| f.source_col.eq_ignore_ascii_case(&col)).count();
+        if matches!(to, "rows" | "columns")
+            && levels > 1
+            && let Some((rows, i)) = level
+        {
+            let f = (if rows { &mut pt.rows } else { &mut pt.columns }).remove(i);
+            shift_values(pt, rows, i, false);
+            let src_field = f.source_col.clone();
+            insert_axis_field(pt, to == "rows", f, pos);
+            return Ok(json!({"field": src_field, "to": to}));
         }
         // Keep axis settings (sort, grouping) when moving between rows and columns.
         let kept = pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(&field)).cloned();
