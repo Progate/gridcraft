@@ -114,7 +114,15 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         s.close_document(0);
     }
     // Someone else may have made the file: its active content asks before it runs.
-    let mut doc = DocState::new(wb, path, title, crate::Trust::FromFile);
+    // A workbook saved with manual calculation opens with the values it was saved with, as in
+    // Excel: F9 (Calculate Now) recalculates. One that asks for a full calculation on load gets it.
+    let keep_values = wb.calc.mode == gridcraft_model::CalcMode::Manual && !wb.calc.full_calc_on_load && !imported;
+    wb.calc.full_calc_on_load = false;
+    let mut doc = if keep_values {
+        DocState::from_saved(wb, path, title, crate::Trust::FromFile)
+    } else {
+        DocState::new(wb, path, title, crate::Trust::FromFile)
+    };
     if crate::io::FileKind::from_path(&name).is_none() && gridcraft_xlsx::sniff(&bytes) == gridcraft_xlsx::Format::Xlsx {
         doc.content_kind = Some(crate::io::FileKind::Xlsx);
     }

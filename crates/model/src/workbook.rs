@@ -83,7 +83,7 @@ impl WorkbookView {
 }
 
 /// File › Options › Formulas › Calculation options, stored per workbook (`<calcPr>`).
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CalcSettings {
     pub mode: CalcMode,
     /// Enable iterative calculation: circular references are calculated repeatedly instead of
@@ -99,6 +99,23 @@ pub struct CalcSettings {
     /// GridCraft itself shows and takes A1 references.
     #[serde(default)]
     pub r1c1: bool,
+    /// The file asked to be recalculated when it opens (`<calcPr fullCalcOnLoad="1"/>`): read so
+    /// a manually calculated workbook that asks for it is calculated anyway. Opening clears it.
+    #[serde(skip)]
+    pub full_calc_on_load: bool,
+}
+
+/// Settings are equal when they calculate alike: `full_calc_on_load` is a request the file made
+/// for the moment it opens, not a setting the workbook keeps.
+impl PartialEq for CalcSettings {
+    fn eq(&self, o: &Self) -> bool {
+        self.mode == o.mode
+            && self.iterative == o.iterative
+            && self.max_iterations == o.max_iterations
+            && self.max_change == o.max_change
+            && self.precision_as_displayed == o.precision_as_displayed
+            && self.r1c1 == o.r1c1
+    }
 }
 
 impl Default for CalcSettings {
@@ -110,6 +127,7 @@ impl Default for CalcSettings {
             max_change: Self::DEFAULT_CHANGE,
             precision_as_displayed: false,
             r1c1: false,
+            full_calc_on_load: false,
         }
     }
 }

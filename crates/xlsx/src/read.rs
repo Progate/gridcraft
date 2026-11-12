@@ -236,6 +236,7 @@ fn read_workbook_properties(cx: &mut Ctx<'_>, wb: &mut Workbook, xml: &El) {
         }
         wb.calc.precision_as_displayed = !c.flag("fullPrecision", true);
         wb.calc.r1c1 = c.attr("refMode") == Some("R1C1");
+        wb.calc.full_calc_on_load = c.flag("fullCalcOnLoad", false);
     }
     if let Some(f) = xml.child("fileSharing") {
         wb.read_only_recommended = f.flag("readOnlyRecommended", false);
