@@ -29,6 +29,23 @@ pub fn build_params(d: &Dialog) -> Json {
                 m.remove("text");
             }
         }
+        "pivotGroup" => {
+            if let Some(m) = v.as_object_mut() {
+                // Typing a bound turns its Auto box off, as in Excel's Grouping dialog.
+                for (key, auto, original) in [("start", "autoStart", "originalStart"), ("end", "autoEnd", "originalEnd")] {
+                    let typed = m.get(key).and_then(Json::as_str).map(str::trim).map(str::to_string);
+                    let before = m.remove(original);
+                    if typed.as_deref() != before.as_ref().and_then(Json::as_str) {
+                        m.insert(auto.into(), json!(false));
+                    }
+                }
+                if m.remove("kind").and_then(|k| k.as_str().map(str::to_string)).as_deref() == Some("date") {
+                    for k in ["autoStart", "autoEnd", "start", "end", "interval"] {
+                        m.remove(k);
+                    }
+                }
+            }
+        }
         "pivotValueSettings" => {
             if let Some(m) = v.as_object_mut() {
                 // An unchanged caption is not sent: renaming a field to its own caption is refused when

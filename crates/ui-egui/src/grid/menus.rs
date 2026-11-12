@@ -359,6 +359,13 @@ pub(super) fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                 items.insert(i + 1, ("-", ""));
                 items.insert(i + 2, ("Show Details", "pivot.showDetails"));
             }
+            // In a PivotTable report, Group… and Ungroup… act on the field of the label under the
+            // active cell (the command finds it and opens the Grouping dialog).
+            if in_pivot_report(app)
+                && let Some(i) = items.iter().position(|(_, id)| *id == "data.sortDescending")
+            {
+                items.splice(i + 1..i + 1, [("-", ""), ("PivotTable|Group…", "ui:pivotGroup"), ("PivotTable|Ungroup…", "ui:pivotUngroup")]);
+            }
             let lang = crate::i18n::current(ui.ctx());
             for (label, id) in items {
                 if label == "-" {
@@ -383,6 +390,8 @@ pub(super) fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                             }
                         }
                         "ui:pickList" => app.open_dialog("pickList", json!({})),
+                        "ui:pivotGroup" => app.run_or_alert("pivot.group", json!({})),
+                        "ui:pivotUngroup" => app.run_or_alert("pivot.group", json!({"by": "none"})),
                         "ui:filterValue" => {
                             if let Some(d) = app.session.active() {
                                 let a = d.selection.active;
@@ -418,6 +427,14 @@ pub(super) fn context_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     {
         app.grid.context_menu = None;
     }
+}
+
+/// Whether the active cell is in a PivotTable report on the active sheet.
+fn in_pivot_report(app: &SheetApp) -> bool {
+    app.session.active().is_some_and(|d| {
+        let at = d.selection.active;
+        d.wb.active().is_some_and(|sh| sh.pivots.iter().any(|pt| pt.last_range.is_some_and(|r| r.contains(at))))
+    })
 }
 
 /// Whether the cell menu offers Show Details (Excel's right-click › Show Details): the active cell

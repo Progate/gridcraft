@@ -148,6 +148,10 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                                         app.run_or_alert("pivot.sort", json!({"pivot": name, "field": f, "order": o}));
                                     }
                                 }
+                                // Only the field: the command opens the Grouping dialog on it.
+                                if ui.button(lang.tr("PivotTable|Group…")).clicked() {
+                                    app.run_or_alert("pivot.group", json!({"pivot": name, "field": f}));
+                                }
                                 for (g, l) in [
                                     ("years", "Group by Years"),
                                     ("quarters", "Group by Quarters"),

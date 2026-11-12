@@ -1685,6 +1685,23 @@ pub(super) const AUTOFILTER: &[(&str, &str)] = &[
     ("Top 10|Bottom", "下位"),
     ("Top 10|Items", "項目"),
     ("Top 10|Percent", "パーセント"),
+    // PivotTable ▸ Group… (Excel's Grouping dialog)
+    ("PivotTable|Group…", "グループ化..."),
+    ("PivotTable|Ungroup…", "グループ解除..."),
+    ("PivotTable|Grouping", "グループ化"),
+    ("Grouping|Starting at:", "先頭の値:"),
+    ("Grouping|Ending at:", "末尾の値:"),
+    ("Grouping|By:", "単位:"),
+    ("Grouping|By", "単位"),
+    ("Grouping|Days", "日"),
+    ("Grouping|Months", "月"),
+    ("Grouping|Quarters", "四半期"),
+    ("Grouping|Years", "年"),
+    ("Cannot group that selection.", "選択対象をグループ化することはできません。"),
+    ("Select a row or column label of the PivotTable to group.", "グループ化するピボットテーブルの行ラベルまたは列ラベルを選択してください。"),
+    ("The ending number must be greater than the starting number.", "末尾の値は先頭の値より大きくする必要があります。"),
+    ("The By value must be greater than zero.", "単位には 0 より大きい値を指定してください。"),
+    ("Too many groups: increase the By value.", "グループが多すぎます。単位を大きくしてください。"),
 ];
 
 /// Translates an interface label; `None` for a label the catalog does not know, so `i18n.rs` can

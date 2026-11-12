@@ -1,9 +1,9 @@
 use super::create::source_param;
 use super::fields::{canonical, in_axes, shift_values, update};
-use super::params::{group_param, layout_name};
+use super::params::{group_name, group_param, layout_name};
 use super::{
     Chart, Json, PivotDateGroup, PivotField, PivotFilter, PivotLayout, PivotRangeGroup, PivotSort, PivotTable, Result, Session, bad, bool_param,
-    edit, find_pivot, json, other, pv, str_param,
+    edit, find_pivot, json, ok, other, pv, str_param,
 };
 
 pub(super) fn filter(s: &mut Session, p: &Json) -> Result<Json> {
@@ -90,10 +90,20 @@ fn num_or_auto(cmd: &str, p: &Json, key: &str) -> Result<Option<f64>> {
     }
 }
 
+/// Settings `pivot.group` takes; a call with none of them (only which field) opens the Grouping dialog.
+const GROUP_SETTINGS: [&str; 6] = ["by", "start", "end", "interval", "autoStart", "autoEnd"];
+
 pub(super) fn group(s: &mut Session, p: &Json) -> Result<Json> {
     const C: &str = "pivot.group";
-    let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
-    let range = str_param(p, "by").is_some_and(|b| b.eq_ignore_ascii_case("range")) || (p.get("by").is_none() && p.get("interval").is_some());
+    let field = match str_param(p, "field") {
+        Some(f) => f.to_string(),
+        None => field_at_active_cell(s, p)?,
+    };
+    if !GROUP_SETTINGS.iter().any(|k| p.get(*k).is_some()) {
+        return group_dialog(s, p, &field);
+    }
+    let range = str_param(p, "by").is_some_and(|b| b.eq_ignore_ascii_case("range"))
+        || (p.get("by").is_none() && GROUP_SETTINGS.iter().skip(1).any(|k| p.get(*k).is_some()));
     if range {
         return group_range(s, p, field);
     }
@@ -114,11 +124,90 @@ pub(super) fn group(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
+/// The row or column field whose item (or, in Outline and Tabular layouts, whose header) the active
+/// cell shows: what right-click ▸ Group… and Ungroup… act on.
+fn field_at_active_cell(s: &Session, p: &Json) -> Result<String> {
+    const NOT_A_LABEL: &str = "Select a row or column label of the PivotTable to group.";
+    let (si, pi) = find_pivot(s, p)?;
+    let d = s.doc()?;
+    let sh = d.wb.sheet(si).ok_or_else(|| other("There's no such sheet."))?;
+    let pt = sh.pivots.get(pi).ok_or_else(|| other("There's no such PivotTable."))?;
+    let at = d.selection.active;
+    let origin = pt.last_range.filter(|r| r.contains(at)).map(|r| r.start).ok_or_else(|| other(NOT_A_LABEL))?;
+    let out = pv::compute(&d.wb, pt, si).map_err(other)?;
+    let kind = out.grid.get((at.row - origin.row) as usize).and_then(|line| line.get((at.col - origin.col) as usize)).map(|c| c.kind);
+    let fields: Vec<&PivotField> = match kind {
+        Some(pv::CellKind::RowLabel) => pt.rows.iter().collect(),
+        Some(pv::CellKind::ColLabel) => pt.columns.iter().collect(),
+        Some(pv::CellKind::Header) => pt.rows.iter().chain(pt.columns.iter()).collect(),
+        _ => vec![],
+    };
+    let text = crate::display::cell_text(&d.wb, sh, at);
+    if let Some(f) = fields.iter().find(|f| f.source_col.eq_ignore_ascii_case(text.trim())) {
+        return Ok(f.source_col.clone());
+    }
+    let src = pv::read_source(&d.wb, &pt.source, si).map_err(other)?;
+    for f in fields {
+        let Some(c) = src.col(&f.source_col) else { continue };
+        if pv::distinct_labels(&d.wb, &src, c, pv::field_grouping(&src, c, f), 100_000).iter().any(|l| l.eq_ignore_ascii_case(&text)) {
+            return Ok(f.source_col.clone());
+        }
+    }
+    Err(other(NOT_A_LABEL))
+}
+
+/// Menu-style Group…: the Grouping dialog on `field`, with Starting at / Ending at / By for numbers
+/// (filled in with the current grouping, else the smallest and largest values by 10) and By for dates.
+fn group_dialog(s: &mut Session, p: &Json, field: &str) -> Result<Json> {
+    const C: &str = "pivot.group";
+    let (si, pi) = find_pivot(s, p)?;
+    let d = s.doc()?;
+    let pt = d.wb.sheet(si).and_then(|sh| sh.pivots.get(pi)).ok_or_else(|| other("There's no such PivotTable."))?;
+    let src = pv::read_source(&d.wb, &pt.source, si).map_err(other)?;
+    let c = src.col(field).ok_or_else(|| bad(C, format!("no field `{field}` in the source data")))?;
+    let f = pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(field));
+    let f = f.ok_or_else(|| bad(C, format!("`{field}` isn't in the rows or columns area")))?;
+    if !src.numeric.get(c).copied().unwrap_or(false) {
+        return Err(other("Cannot group that selection."));
+    }
+    let mut params = json!({"pivot": pt.name, "field": f.source_col});
+    if src.dates.get(c).copied().unwrap_or(false) && f.range_group.is_none() {
+        let by = if f.date_group == PivotDateGroup::None { "months" } else { group_name(f.date_group) };
+        params["kind"] = json!("date");
+        params["by"] = json!(by);
+    } else {
+        let (mut min, mut max) = (f64::INFINITY, f64::NEG_INFINITY);
+        for v in src.rows.iter().filter_map(|r| r.get(c)) {
+            if let gridcraft_core::Value::Number(n) = v.scalar() {
+                min = min.min(n);
+                max = max.max(n);
+            }
+        }
+        if !min.is_finite() {
+            return Err(other("Cannot group that selection."));
+        }
+        let g = f.range_group.unwrap_or(PivotRangeGroup { start: min, end: max, ..PivotRangeGroup::default() });
+        let (start, end) = (if g.auto_start { min } else { g.start }, if g.auto_end { max } else { g.end });
+        let t = gridcraft_core::number_to_text;
+        params["kind"] = json!("number");
+        params["autoStart"] = json!(g.auto_start);
+        params["autoEnd"] = json!(g.auto_end);
+        params["start"] = json!(t(start));
+        params["end"] = json!(t(end));
+        params["originalStart"] = json!(t(start));
+        params["originalEnd"] = json!(t(end));
+        params["interval"] = json!(t(g.interval));
+    }
+    s.ui_requests.push(crate::UiRequest::Dialog("pivotGroup".into(), params));
+    ok()
+}
+
 /// Grouping ▸ Starting at / Ending at / By for a numeric field: ranges such as `0-9`, `10-19`.
 fn group_range(s: &mut Session, p: &Json, field: String) -> Result<Json> {
     const C: &str = "pivot.group";
-    let start = num_or_auto(C, p, "start")?;
-    let end = num_or_auto(C, p, "end")?;
+    // A ticked Auto box wins over the number beside it, as in the Grouping dialog.
+    let start = if bool_param(p, "autoStart") == Some(true) { None } else { num_or_auto(C, p, "start")? };
+    let end = if bool_param(p, "autoEnd") == Some(true) { None } else { num_or_auto(C, p, "end")? };
     let interval = num_or_auto(C, p, "interval")?.unwrap_or(10.0);
     if interval <= 0.0 {
         return Err(other("The By value must be greater than zero."));

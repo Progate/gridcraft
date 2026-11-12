@@ -1183,3 +1183,40 @@ fn numeric_range_grouping_and_ungroup() {
     assert!(pt(&s).rows[0].range_group.is_none());
     assert_eq!(text(&s, "A5"), "1");
 }
+
+#[test]
+fn group_from_a_label_cell_opens_the_grouping_dialog() {
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Units"], "columns": ["Region"], "values": ["Sales"]})).unwrap();
+    // A6 is a Units item: Group… with no settings asks for them.
+    s.execute("selection.set", json!({"range": "A6"})).unwrap();
+    s.execute("pivot.group", json!({})).unwrap();
+    let Some(crate::UiRequest::Dialog(name, params)) = s.ui_requests.last() else { panic!("no dialog") };
+    assert_eq!(name, "pivotGroup");
+    assert_eq!(params["field"], "Units");
+    assert_eq!(params["kind"], "number");
+    assert_eq!((params["start"].as_str(), params["end"].as_str(), params["interval"].as_str()), (Some("1"), Some("12"), Some("10")));
+    assert_eq!(params["autoStart"], true);
+    // The dialog's OK: the field comes from the active cell; a ticked Auto box ignores its number.
+    s.execute("pivot.group", json!({"autoStart": false, "start": "0", "autoEnd": true, "end": "50", "interval": "5"})).unwrap();
+    let g = pt(&s).rows[0].range_group.unwrap();
+    assert_eq!((g.start, g.end, g.auto_start, g.auto_end), (0.0, 12.0, false, true));
+    assert_eq!(text(&s, "A5"), "0-4");
+    assert_eq!(text(&s, "A6"), "5-9");
+    // A column label picks the column field; Region can't be grouped.
+    s.execute("selection.set", json!({"range": "B4"})).unwrap();
+    let e = s.execute("pivot.group", json!({})).unwrap_err().to_string();
+    assert!(e.contains("Cannot group"), "{e}");
+    // A value cell isn't a label.
+    s.execute("selection.set", json!({"range": "B6"})).unwrap();
+    assert!(s.execute("pivot.group", json!({"by": "none"})).is_err());
+    // Ungroup from the label cell.
+    s.execute("selection.set", json!({"range": "A6"})).unwrap();
+    s.execute("pivot.group", json!({"by": "none"})).unwrap();
+    assert!(pt(&s).rows[0].range_group.is_none());
+    // A date field asks for the date part.
+    s.execute("pivot.addField", json!({"field": "Date", "area": "rows"})).unwrap();
+    s.execute("pivot.group", json!({"field": "Date"})).unwrap();
+    let Some(crate::UiRequest::Dialog(_, params)) = s.ui_requests.last() else { panic!("no dialog") };
+    assert_eq!((params["kind"].as_str(), params["by"].as_str()), (Some("date"), Some("months")));
+}

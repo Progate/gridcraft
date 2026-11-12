@@ -965,6 +965,40 @@ impl Dialog {
                 vec![Text { key: "name", label: "Name:" }, Text { key: "formula", label: "Formula:" }],
                 json!({"pivot": p("pivot"), "name": p("name"), "formula": p("formula")}),
             ),
+            "pivotGroup" => {
+                // Excel's Grouping dialog: Auto ▸ Starting at / Ending at and By for numbers, By for dates.
+                let fields = if p("kind").as_str() == Some("date") {
+                    vec![Choice {
+                        key: "by",
+                        label: "Grouping|By",
+                        options: vec![
+                            ("days", "Grouping|Days"),
+                            ("months", "Grouping|Months"),
+                            ("quarters", "Grouping|Quarters"),
+                            ("years", "Grouping|Years"),
+                        ],
+                    }]
+                } else {
+                    vec![
+                        Note("Auto".into()),
+                        Check { key: "autoStart", label: "Grouping|Starting at:" },
+                        Text { key: "start", label: "Grouping|Starting at:" },
+                        Check { key: "autoEnd", label: "Grouping|Ending at:" },
+                        Text { key: "end", label: "Grouping|Ending at:" },
+                        Text { key: "interval", label: "Grouping|By:" },
+                    ]
+                };
+                let mut values = json!({"pivot": p("pivot"), "field": p("field"), "kind": p("kind")});
+                for k in ["by", "autoStart", "autoEnd", "start", "end", "interval", "originalStart", "originalEnd"] {
+                    if !p(k).is_null() {
+                        values[k] = p(k).clone();
+                    }
+                }
+                if p("kind").as_str() != Some("date") {
+                    values["by"] = json!("range");
+                }
+                Dialog::form("pivotGroup", "PivotTable|Grouping", "pivot.group", fields, values)
+            }
             "pivotValueSettings" => {
                 let source = p("sourceName").as_str().unwrap_or_default().to_string();
                 Dialog::form(
@@ -1230,6 +1264,35 @@ mod tests {
         assert_eq!(build_params(&dialog)["range"], "B2:C5");
         dialog.set_value("range", json!("D2:E6"));
         assert_eq!(build_params(&dialog)["range"], "D2:E6");
+    }
+
+    /// Right-click ▸ Group… on a number item opens Grouping with the field's smallest and largest
+    /// values; typing a start turns its Auto box off, and OK groups the field into ranges.
+    #[test]
+    fn grouping_dialog_groups_numbers_into_ranges() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let rows = json!([["Score", "N"], [3, 1], [18, 1], [42, 1], [98, 1]]);
+        session.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        session.execute("selection.set", json!({"range": "A1"})).unwrap();
+        session.execute("insert.pivotTable", json!({"rows": ["Score"], "values": ["N"]})).unwrap();
+        session.execute("selection.set", json!({"range": "A4"})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        app.run("pivot.group", json!({})).unwrap();
+        app.after_engine();
+        let mut d = app.dialog.take().unwrap();
+        assert_eq!(d.name(), "pivotGroup");
+        assert_eq!((d.values["start"].as_str(), d.values["end"].as_str(), d.values["interval"].as_str()), (Some("3"), Some("98"), Some("10")));
+        d.set_value("start", json!("0"));
+        d.set_value("end", json!("100"));
+        let params = build_params(&d);
+        assert_eq!((params["autoStart"].as_bool(), params["autoEnd"].as_bool()), (Some(false), Some(false)), "{params}");
+        assert!(params.get("originalStart").is_none() && params.get("kind").is_none(), "{params}");
+        app.run(d.command.unwrap(), params).unwrap();
+        let sh = app.session.active().unwrap().wb.active().unwrap().clone();
+        let g = sh.pivots[0].rows[0].range_group.unwrap();
+        assert_eq!((g.start, g.end, g.interval), (0.0, 100.0, 10.0));
+        assert_eq!(sh.value(gridcraft_engine::core::CellRef::parse("A4").unwrap()).display(), "0-9");
     }
 
     /// The value field's menu opens Value Field Settings on the field; OK applies the choices and
