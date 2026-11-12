@@ -27,7 +27,9 @@ commands:
                   only if docs/parity-checklist.md exists)
   test            workspace tests (cargo nextest when installed, else cargo test), then doctests
   assets          check that every icon/image/font/sample file is attributed in ATTRIBUTION.md
-  i18n-report     list the interface strings each language doesn't translate yet (always passes)
+  i18n-report [--sources LANG]
+                  list the interface strings each language doesn't translate yet (always passes);
+                  --sources: the label-like literals in crates/ui-egui/src the LANG catalog lacks
   layers          enforce the crate dependency layering (AGENTS.md \"Layering\")
   wasm            cargo check --target wasm32-unknown-unknown for the L0-L5 crates (+ gridcraft-web), one call
   parity [--check] [--out PATH]
@@ -46,7 +48,7 @@ fn main() -> ExitCode {
     let rest: Vec<&str> = args.iter().skip(1).map(String::as_str).collect();
     let result = match args.first().map(String::as_str) {
         Some("assets") => assets::run(&root()),
-        Some("i18n-report") => i18n_report::run(&root()),
+        Some("i18n-report") => i18n_report::run(&root(), &rest),
         Some("layers") => cmd_layers(),
         Some("wasm") => cmd_wasm(),
         Some("test") => cmd_test().and_then(|()| cmd_doctest()),
@@ -198,7 +200,7 @@ fn cmd_ci() -> Result<(), String> {
     type Step = (&'static str, Box<dyn Fn() -> Result<(), String>>);
     let steps: Vec<Step> = vec![
         // Missing translations never fail the gate; the list goes first so every log shows it.
-        ("i18n-report", Box::new(|| i18n_report::run(&root()))),
+        ("i18n-report", Box::new(|| i18n_report::run(&root(), &[]))),
         (
             "fmt",
             Box::new(|| {

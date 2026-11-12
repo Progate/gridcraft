@@ -14,7 +14,12 @@ use std::path::Path;
 /// Missing keys listed per language; the rest are counted.
 const LIST_CAP: usize = 50;
 
-pub fn run(root: &Path) -> Result<(), String> {
+pub fn run(root: &Path, args: &[&str]) -> Result<(), String> {
+    if let Some(i) = args.iter().position(|a| *a == "--sources") {
+        let language = args.get(i + 1).copied().unwrap_or("ja");
+        print!("{}", sources(root, language)?);
+        return Ok(());
+    }
     let dir = root.join("crates/ui-egui/src/i18n");
     let mut catalogs = BTreeMap::new();
     let mut help = BTreeMap::new();
@@ -63,6 +68,68 @@ fn list<'a>(out: &mut String, keys: impl Iterator<Item = &'a str>, count: usize)
     if count > LIST_CAP {
         let _ = writeln!(out, "      … and {} more", count - LIST_CAP);
     }
+}
+
+/// `--sources <language>`: the label-like string literals in `crates/ui-egui/src` (outside the
+/// catalogs and test modules) that the language's catalog has no entry for, per file with their
+/// line. Heuristic: it can't tell a label from an id or a font name, and a label the code never
+/// passes to `tr` stays English even with an entry, so read the context column before adding one.
+pub fn sources(root: &Path, language: &str) -> Result<String, String> {
+    let src = root.join("crates/ui-egui/src");
+    let catalog = std::fs::read_to_string(src.join(format!("i18n/{language}.rs"))).map_err(|e| format!("i18n-report: no {language} catalog: {e}"))?;
+    let keys = catalog_keys(&catalog);
+    let mut files = Vec::new();
+    collect_sources(&src, &mut files);
+    files.sort();
+    let mut out = String::new();
+    let mut total = 0;
+    for path in files {
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let text = text.split("#[cfg(test)]\nmod ").next().unwrap_or(&text);
+        let missing: Vec<(usize, String)> = literals(text)
+            .into_iter()
+            .filter(|(value, _, _)| looks_like_label(value) && !keys.contains(value))
+            .map(|(value, start, _)| (text[..start].matches('\n').count() + 1, value))
+            .collect();
+        if missing.is_empty() {
+            continue;
+        }
+        total += missing.len();
+        let name = path.strip_prefix(&src).unwrap_or(&path).display().to_string();
+        let _ = writeln!(out, "  {name}: {}", missing.len());
+        for (line, value) in missing {
+            let _ = writeln!(out, "      {line}: {value:?}");
+        }
+    }
+    Ok(format!("i18n-report: {total} label-like literals in crates/ui-egui/src have no {language} entry\n{out}"))
+}
+
+/// The `.rs` files under `dir`, the catalogs and test files left out.
+fn collect_sources(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or_default();
+        if path.is_dir() {
+            if name != "i18n" {
+                collect_sources(&path, out);
+            }
+        } else if name.ends_with(".rs") && name != "tests.rs" && name != "generated.rs" {
+            out.push(path);
+        }
+    }
+}
+
+/// Whether a literal reads like interface English: starts with a capital (or `(`, as in
+/// "(Blanks)"), has a lowercase letter, and isn't an id (`TableStyleLight1`, `data.sort`).
+fn looks_like_label(value: &str) -> bool {
+    let Some(first) = value.chars().next() else { return false };
+    let id_like = !value.contains(' ') && value.chars().any(|c| c.is_ascii_digit());
+    (first.is_ascii_uppercase() || first == '(')
+        && value.chars().any(|c| c.is_ascii_lowercase())
+        && !id_like
+        && !value.contains(['{', '_'])
+        && !value.split(' ').any(|word| word.contains('.') && !word.ends_with('.'))
 }
 
 /// Function help rows whose English the function catalog no longer has (an English description
@@ -226,5 +293,15 @@ pub(super) fn translate(text: &str) -> Option<&'static str> { None }
         assert!(report.starts_with("i18n-report: 3 interface strings across 2 catalogs"), "{report}");
         assert!(report.contains("  de: 1 missing\n      \"Long …\"\n"), "{report}");
         assert!(report.contains("  ja: 1 missing\n      \"Line\\nbreak \\\"quoted\\\"\"\n"), "{report}");
+    }
+
+    #[test]
+    fn source_scan_keeps_labels_and_skips_ids() {
+        for label in ["Total Row", "(Blanks)", "Resize\nTable", "Sort & Filter", "Show Details", "Copy to:"] {
+            assert!(looks_like_label(label), "{label:?}");
+        }
+        for id in ["TableStyleLight1", "data.sort", "table.totalRow", "ui:newComment", "A1", "SUM", "{n} items", "dialog:pageSetup"] {
+            assert!(!looks_like_label(id), "{id:?}");
+        }
     }
 }
