@@ -112,6 +112,11 @@ pub fn cjk_han_japanese() -> Vec<(String, u32)> {
     // Noto Sans JP as Google Fonts ships it (the region subset), which BrowserOS installs.
     for d in cjk_dirs() {
         v.push((format!("{d}/NotoSansJP-Regular.otf"), 0));
+        // Google Fonts' download: static TTFs, or one variable TTF.
+        v.push((format!("{d}/NotoSansJP-Regular.ttf"), 0));
+        v.push((format!("{d}/static/NotoSansJP-Regular.ttf"), 0));
+        v.push((format!("{d}/NotoSansJP.ttf"), 0));
+        v.push((format!("{d}/NotoSansJP-VariableFont_wght.ttf"), 0));
     }
     v
 }
