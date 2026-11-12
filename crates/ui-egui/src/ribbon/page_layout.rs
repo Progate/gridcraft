@@ -50,7 +50,7 @@ pub(super) fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
     control_keytip(app, ui, &s, "pageLayout.size");
     egui::Popup::menu(&s).show(|ui| {
         for p in crate::dialogs::PAPER_SIZES {
-            if ui.button(p).clicked() {
+            if ui.button(app.ui.language.tr(p)).clicked() {
                 act(app, "pageLayout.size", json!({"paper": p}));
             }
         }
