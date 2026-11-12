@@ -59,6 +59,13 @@ pub fn unix_now_ms() -> Option<f64> {
     }
 }
 
+/// Milliseconds since the Unix epoch on the local wall clock (UTC shifted by the local zone's
+/// offset, [`crate::tz::local_offset_seconds`]): what TODAY and NOW read, as Excel reads the
+/// computer's clock. `None` when the clock is unavailable.
+pub fn local_now_ms() -> Option<f64> {
+    unix_now_ms().map(|ms| ms + f64::from(crate::tz::local_offset_seconds(ms)) * 1000.0)
+}
+
 /// Date serial (1900 system, with fraction) for a Unix time in milliseconds.
 pub fn serial_from_unix_ms(ms: f64) -> f64 {
     25569.0 + ms / 86_400_000.0
