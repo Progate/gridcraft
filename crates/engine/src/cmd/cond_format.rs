@@ -154,7 +154,9 @@ fn value_kind(v: Option<&Json>, default: CfValueKind) -> CfValueKind {
     let raw = o.get("value");
     let text = raw.map(super::edit::json_to_input).unwrap_or_default();
     let n = raw.and_then(Json::as_f64).or_else(|| text.trim().parse::<f64>().ok()).filter(|n| n.is_finite());
-    let formula = || CfValueKind::Formula(text.trim().trim_start_matches('=').to_string());
+    // Kept as typed: the writer strips one `=`, and what is left must parse (#1999), so `===A1`
+    // is refused rather than saved.
+    let formula = || CfValueKind::Formula(text.trim().to_string());
     match o.get("type").and_then(Json::as_str).unwrap_or("num") {
         "min" | "lowest" | "autoMin" => CfValueKind::Min,
         "max" | "highest" | "autoMax" => CfValueKind::Max,
@@ -173,6 +175,7 @@ fn value_kind_params(v: &CfValueKind) -> Json {
         CfValueKind::Number(n) => json!({"type": "num", "value": n}),
         CfValueKind::Percent(n) => json!({"type": "percent", "value": n}),
         CfValueKind::Percentile(n) => json!({"type": "percentile", "value": n}),
+        CfValueKind::Formula(f) if f.starts_with('=') => json!({"type": "formula", "value": f}),
         CfValueKind::Formula(f) => json!({"type": "formula", "value": format!("={f}")}),
     }
 }
