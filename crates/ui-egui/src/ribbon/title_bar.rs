@@ -96,9 +96,15 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
                     }
                 }
             });
-            let redo = icon_button(ui, Icon::Redo, if can_redo { t.text_dim } else { t.text_disabled }, "Redo", vec2(26.0, ch));
-            redo.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, can_redo, "Redo"));
-            if redo.clicked() && can_redo {
+            // As in Excel, the button is Repeat while there is nothing to redo and the last action
+            // can be repeated (the same command Ctrl+Y runs then).
+            let repeat = !can_redo && gridcraft_engine::cmd::edit::can_repeat(&app.session).is_ok();
+            let (name, enabled) = if repeat { ("Repeat", true) } else { ("Redo", can_redo) };
+            let redo = icon_button(ui, Icon::Redo, if enabled { t.text_dim } else { t.text_disabled }, name, vec2(26.0, ch));
+            redo.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+            if redo.clicked() && repeat {
+                app.run_or_alert("edit.repeat", json!({}));
+            } else if redo.clicked() && can_redo {
                 app.run_or_alert("edit.redo", json!({}));
             }
             let more = icon_button(ui, Icon::More, t.text_dim, "More commands", vec2(26.0, ch));

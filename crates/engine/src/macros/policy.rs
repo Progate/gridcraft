@@ -35,6 +35,7 @@ const DENIED_PREFIXES: &[(&str, &str)] = &[
 const DENIED: &[(&str, &str)] = &[
     ("edit.undo", "a macro is undone as one step after it runs"),
     ("edit.redo", "a macro is undone as one step after it runs"),
+    ("edit.repeat", "a macro step does what it says, not whatever the person did last"),
     ("view.newWindow", "macros don't open, hide or show windows"),
     ("view.hideWindow", "macros don't open, hide or show windows"),
     ("view.unhideWindow", "macros don't open, hide or show windows"),

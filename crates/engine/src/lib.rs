@@ -557,6 +557,10 @@ pub struct Session {
     /// Review › Notes › Show All Notes: every note is displayed. An application display setting
     /// (like Excel's comment indicator option), so it's not saved in the file.
     pub show_all_notes: bool,
+    /// The last command that changed a workbook, with its params as the journal keeps them: what
+    /// Excel's Repeat (F4, Ctrl+Y with nothing to redo) runs again on the selection
+    /// ([`cmd::edit::repeatable`]).
+    pub last_action: Option<(String, Json)>,
     /// Whether `link.open` may open web and e-mail addresses without the user's confirmation
     /// (#2181). Host code sets it; no command does.
     pub link_policy: links::LinkPolicy,
@@ -694,6 +698,14 @@ impl Session {
             self.journal_sizes.drain(..n);
             self.journal_bytes = kept;
             self.recording = self.recording.map(|r| r.saturating_sub(n));
+        }
+    }
+
+    /// Keeps a call that changed the workbook as the action Repeat runs again. Repeat goes by the
+    /// outermost command: it finishes last, after the commands it ran.
+    fn note_action(&mut self, id: &str, params: &Json, changed: bool) {
+        if changed {
+            self.last_action = Some((id.to_string(), cmd::journal_params(params)));
         }
     }
 
@@ -847,11 +859,9 @@ impl Session {
             if let Some((doc, sheet, sheet_name, selection)) = place.filter(|_| (!opened_dialog || changed) && !record::NOT_RECORDED.contains(&id))
                 && let Some(rec) = self.recorder.as_mut()
             {
-                // A toggle (Bold) is recorded with the state it set, as Excel records
-                // `Bold = True`: playing it back sets that state rather than flipping it again.
-                let params = match &result {
-                    Ok(r) if params.is_object() => record::with_toggle_state(id, cmd::journal_params(&params), r),
-                    _ => cmd::journal_params(&params),
+                let (id, params) = match &result {
+                    Ok(r) => record::recorded_call(id, &params, r),
+                    Err(_) => (id, cmd::journal_params(&params)),
                 };
                 let kept = rec.push(record::RecordedStep { doc, sheet, sheet_name, selection, id: id.to_string(), params });
                 // A script or macro run is kept with the steps it ran, so editing or deleting the
@@ -864,6 +874,7 @@ impl Session {
                 }
             }
             if self.journal_paused == 0 {
+                self.note_action(id, &params, spec.undoable && changed);
                 self.push_journal(id, cmd::journal_params(&params));
                 recent::note(&mut self.prefs.recent_functions, id, &params);
             }

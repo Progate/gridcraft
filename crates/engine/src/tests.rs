@@ -6268,6 +6268,7 @@ mod objects;
 mod python_cells;
 mod python_commands;
 mod python_files;
+mod repeat;
 mod seams;
 mod sheet_groups;
 

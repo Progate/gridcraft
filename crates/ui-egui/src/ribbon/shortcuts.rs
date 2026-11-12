@@ -9,6 +9,10 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
         Key::U => Some(("home.underline", json!({}))),
         Key::Z if shift => Some(("edit.redo", json!({}))),
         Key::Z => Some(("edit.undo", json!({}))),
+        // Excel: Ctrl+Y redoes, and with nothing to redo repeats the last action.
+        Key::Y if gridcraft_engine::cmd::can_redo(&app.session).is_err() && gridcraft_engine::cmd::edit::can_repeat(&app.session).is_ok() => {
+            Some(("edit.repeat", json!({})))
+        }
         Key::Y => Some(("edit.redo", json!({}))),
         Key::A => Some(("edit.selectAll", json!({}))),
         Key::D => Some(("edit.fillDown", json!({}))),

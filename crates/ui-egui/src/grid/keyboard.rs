@@ -142,7 +142,7 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                         app.open_dialog("macros", json!({}));
                     }
                     Key::F9 => app.run_or_alert("formulas.calculateNow", json!({})),
-                    Key::F4 if !cmd => {}
+                    Key::F4 if !cmd => repeat_on_f4(app, m),
                     // Ctrl+Shift+letter (⌘⇧letter) runs the macro with that shortcut, unless GridCraft uses it.
                     _ if cmd && shift && !m.alt && crate::macro_ui::run_shortcut(app, key) => {}
                     _ if cmd && !crate::keymap::altgr_text(ctx, m, ctx.os() == egui::os::OperatingSystem::Mac) => {
@@ -153,6 +153,15 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             }
             _ => {}
         }
+    }
+}
+
+/// Excel: F4 outside a formula repeats the last action on the selection (in a formula, the cell
+/// editor has it and cycles the reference's `$`).
+fn repeat_on_f4(app: &mut SheetApp, m: egui::Modifiers) {
+    if !m.alt && !m.shift && gridcraft_engine::cmd::edit::can_repeat(&app.session).is_ok() {
+        app.run_or_alert("edit.repeat", json!({}));
+        app.grid.ensure_visible = true;
     }
 }
 

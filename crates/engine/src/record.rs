@@ -72,6 +72,21 @@ impl Default for Recorder {
     }
 }
 
+/// The command and params to record for a call that succeeded with `result`. A toggle (Bold) is
+/// recorded with the state it set ([`with_toggle_state`]). Repeat (`edit.repeat`) is recorded as
+/// the command it ran, which plays back the same with no last action to repeat.
+pub(crate) fn recorded_call<'a>(id: &'a str, params: &Json, result: &'a Json) -> (&'a str, Json) {
+    let (id, params, result) = match result.get("repeated").and_then(Json::as_str) {
+        Some(repeated) if id == "edit.repeat" => (repeated, result.get("params").cloned().unwrap_or_default(), &result["result"]),
+        _ => (id, params.clone(), result),
+    };
+    if params.is_object() {
+        (id, with_toggle_state(id, crate::cmd::journal_params(&params), result))
+    } else {
+        (id, crate::cmd::journal_params(&params))
+    }
+}
+
 /// `params` with the state a toggle set (Bold's `on`, from the command's result), as Excel
 /// records `Bold = True`: playing the step back sets that state rather than flipping it again.
 /// `python.output` without `mode` is a toggle too: it keeps the return type it set (the result's

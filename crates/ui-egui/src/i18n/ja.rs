@@ -981,6 +981,7 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Print Titles", "印刷タイトル"),
     ("Protect Workbook structure", "ブックの構造の保護"),
     ("Redo", "やり直し"),
+    ("Repeat", "繰り返し"),
     ("Scatter or Bubble", "散布図またはバブル"),
     ("Search and run any command", "任意のコマンドを検索して実行"),
     ("Search commands", "コマンドの検索"),

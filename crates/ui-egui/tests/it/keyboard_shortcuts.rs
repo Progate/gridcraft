@@ -362,3 +362,45 @@ fn jis_ctrl_colon_inserts_the_time_and_ctrl_shift_semicolon_inserts_cells() {
     key_on(&mut h, Key::Plus, Key::Semicolon, CTRL_SHIFT);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("insertCells"));
 }
+
+#[test]
+fn f4_repeats_the_last_action_on_the_selection() {
+    let mut h = harness(book("A1"));
+    key(&mut h, Key::B, CTRL);
+    assert!(style(&h, "A1").font.bold);
+    h.state_mut().session.run("selection.set", json!({"range": "B2"})).unwrap();
+    key(&mut h, Key::F4, Modifiers::NONE);
+    assert!(style(&h, "B2").font.bold);
+    // A fill colour, repeated somewhere else.
+    h.state_mut().session.run("home.fillColor", json!({"color": "#FFFF00"})).unwrap();
+    let fill = style(&h, "B2").fill;
+    h.state_mut().session.run("selection.set", json!({"range": "D5:E6"})).unwrap();
+    key(&mut h, Key::F4, Modifiers::NONE);
+    assert_eq!(style(&h, "E6").fill, fill);
+    assert!(!style(&h, "E6").font.bold);
+}
+
+#[test]
+fn ctrl_y_repeats_when_there_is_nothing_to_redo() {
+    let mut h = harness(book("A1"));
+    key(&mut h, Key::I, CTRL);
+    h.state_mut().session.run("selection.set", json!({"range": "B2"})).unwrap();
+    key(&mut h, Key::Y, CTRL);
+    assert!(style(&h, "B2").font.italic, "Ctrl+Y with nothing to redo repeats");
+    // With a step to redo, Ctrl+Y redoes it.
+    key(&mut h, Key::Z, CTRL);
+    assert!(!style(&h, "B2").font.italic);
+    h.state_mut().session.run("selection.set", json!({"range": "C3"})).unwrap();
+    key(&mut h, Key::Y, CTRL);
+    assert!(style(&h, "B2").font.italic && !style(&h, "C3").font.italic);
+}
+
+#[test]
+fn f4_while_editing_a_formula_still_cycles_the_reference() {
+    let mut h = harness(book("D1"));
+    key(&mut h, Key::B, CTRL);
+    h.input_mut().events.push(Event::Text("=A1".into()));
+    h.run_steps(2);
+    key(&mut h, Key::F4, Modifiers::NONE);
+    assert_eq!(editor_text(&h).as_deref(), Some("=$A$1"));
+}
