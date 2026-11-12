@@ -44,6 +44,8 @@ craft-xls = { git = "https://github.com/storytold/craft-libs", rev = "bb57d422d0
 
 # foundation
 thiserror = "2"
+# Shift_JIS (CP932) CSV import and export; (Apache-2.0 OR MIT) AND BSD-3-Clause.
+encoding_rs = "0.8"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"

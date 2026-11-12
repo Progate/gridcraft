@@ -395,3 +395,58 @@ fn csv_used_range_limit_is_enforced_while_reading() {
     // No limit by default.
     assert!(read_csv(dense, &CsvOptions::default()).is_ok());
 }
+
+/// A CSV saved by Japanese Excel as "CSV (Comma delimited)" is Shift_JIS (code page 932): it is
+/// detected and read as Japanese, and the File Origin choice reads it either way.
+#[test]
+fn shift_jis_csv_is_detected_and_read() {
+    use crate::{TextEncoding, decode_with, detect_encoding, encode_with};
+    let text = "氏名,部署,売上\r\n山田 太郎,営業部,1200\r\nｶﾀｶﾅ,①②,－～\r\n";
+    let (bytes, _, unmappable) = encoding_rs::SHIFT_JIS.encode(text);
+    assert!(!unmappable);
+    assert!(std::str::from_utf8(&bytes).is_err());
+    assert_eq!(detect_encoding(&bytes), TextEncoding::ShiftJis);
+    let wb = read_csv(&bytes, &CsvOptions::default()).unwrap();
+    assert_eq!(v(&wb, 0, 0), Value::text("氏名"));
+    assert_eq!(v(&wb, 1, 1), Value::text("営業部"));
+    assert_eq!(v(&wb, 1, 2), Value::Number(1200.0));
+    assert_eq!(v(&wb, 2, 0), Value::text("ｶﾀｶﾅ"));
+    assert_eq!(v(&wb, 2, 1), Value::text("①②"));
+    // Chosen explicitly it reads the same; read as UTF-8 it doesn't.
+    let sjis = CsvOptions { encoding: TextEncoding::ShiftJis, ..CsvOptions::default() };
+    assert_eq!(v(&read_csv(&bytes, &sjis).unwrap(), 1, 0), Value::text("山田 太郎"));
+    assert_ne!(decode_with(&bytes, TextEncoding::Utf8), text);
+    // UTF-8 (with or without a byte order mark) still wins.
+    let bom = [&b"\xEF\xBB\xBF"[..], "氏名".as_bytes()].concat();
+    assert_eq!(decode_with(&bom, TextEncoding::Auto), "氏名");
+    assert_eq!(decode_with(&bom, TextEncoding::ShiftJis), "氏名");
+    // Writing: unmappable characters become `?`, as in Excel's Save As.
+    assert_eq!(encode_with("売上😀", TextEncoding::ShiftJis), [&encoding_rs::SHIFT_JIS.encode("売上").0[..], b"?"].concat());
+    // Katakana words alone (second bytes that are ASCII letters) are still Japanese.
+    let katakana = encoding_rs::SHIFT_JIS.encode("テスト,データ\r\n").0;
+    assert_eq!(detect_encoding(&katakana), TextEncoding::ShiftJis);
+    assert_eq!(TextEncoding::parse("932"), Some(TextEncoding::ShiftJis));
+    assert_eq!(TextEncoding::parse("UTF-8"), Some(TextEncoding::Utf8));
+    assert_eq!(TextEncoding::parse("1252").and_then(TextEncoding::code_page), Some(1252));
+}
+
+/// Western and Arabic single-byte text is not mistaken for Shift_JIS: automatic decoding reads
+/// it as before.
+#[test]
+fn western_and_arabic_bytes_are_not_read_as_shift_jis() {
+    use crate::{TextEncoding, decode_with};
+    let samples: [&[u8]; 9] = [
+        &[0x80, b'a', 0xE9],
+        &[b'C', b'r', 0xE8, b'm', b'e', b' ', b'b', b'r', 0xFB, b'l', 0xE9, b'e', b',', b' ', 0xE0, b' ', b'c', 0xF4, b't', 0xE9],
+        &[b'G', b'r', 0xF6, 0xDF, b'e', b',', b' ', 0xDC, b'b', b'e', b'r', b'm', b'a', 0xDF],
+        &[b'A', 0xC7, 0xC3, b'O', b',', b' ', b'P', 0xE3, b'o'],
+        &[0xC6, b'r', 0xF8, b',', 0xD8, b's', b't', b',', 0xC5, b's', b'e'],
+        &[b'K', 0xE4, b's', b'e', b',', b'B', 0xE4, b'c', b'k', b'e', b'r'],
+        &[0xDD, 0xED, b',', 0xE3, 0xE4, b',', 0xDA, 0xE4, b'\n'],
+        &[0xE4, 0xDA, 0xE3, b',', 0xE1, 0xC7, b'\n'],
+        &[0xF9, 0xEC, 0xE5, 0xED, b',', 0xF2, 0xE5, 0xEC, 0xED],
+    ];
+    for bytes in samples {
+        assert_eq!(decode_with(bytes, TextEncoding::Auto), decode_text(bytes), "{bytes:?}");
+    }
+}

@@ -35,6 +35,7 @@ mod styles;
 mod tables;
 #[cfg(any(test, feature = "test-support"))]
 pub mod testing;
+mod text_encoding;
 mod theme;
 mod write;
 mod xls;
@@ -48,10 +49,11 @@ use gridcraft_core::DateSystem;
 use gridcraft_model::Workbook;
 
 pub use crypto::{DecryptError, check_encryption, decrypt};
-pub use csv::{MAX_CSV_BYTES, decode_text, read_csv, read_csv_with_report, write_csv, write_csv_limited};
+pub use csv::{MAX_CSV_BYTES, decode_text, read_csv, read_csv_with_report, sniff_delimiter, write_csv, write_csv_limited};
 pub use ods::read_ods;
 pub use package::MAX_PART;
 pub use passthrough::rebase_links;
+pub use text_encoding::{TextEncoding, decode_with, detect as detect_encoding, encode_with};
 pub use xls::{read_xls, read_xls_with};
 pub use xlsb::read_xlsb;
 
@@ -234,11 +236,20 @@ pub struct CsvOptions {
     /// Refuse (with [`IoError::TooLarge`], while reading) a file whose used range, from its first to
     /// its last non-empty cell, would pass this many cells; `None` for no limit.
     pub max_used_cells: Option<u64>,
+    /// The file's encoding (Excel's File Origin); `Auto` detects it.
+    pub encoding: TextEncoding,
 }
 
 impl Default for CsvOptions {
     fn default() -> Self {
-        CsvOptions { delimiter: b',', quote: b'"', date_system: DateSystem::D1900, parse_values: true, max_used_cells: None }
+        CsvOptions {
+            delimiter: b',',
+            quote: b'"',
+            date_system: DateSystem::D1900,
+            parse_values: true,
+            max_used_cells: None,
+            encoding: TextEncoding::Auto,
+        }
     }
 }
 

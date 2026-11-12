@@ -252,7 +252,7 @@ pub fn read_csv(bytes: &[u8], opts: &CsvOptions) -> Result<Workbook, IoError> {
 /// [`read_csv`], with the warnings an open shows: a column whose date order had to be guessed,
 /// or whose dates stayed text because it holds both orders.
 pub fn read_csv_with_report(bytes: &[u8], opts: &CsvOptions) -> Result<(Workbook, ReadReport), IoError> {
-    let text = decode_text(bytes);
+    let text = crate::decode_with(bytes, opts.encoding);
     let quote = if opts.quote == 0 { '"' } else { opts.quote as char };
     let delim = if opts.delimiter == 0 { sniff_delimiter(&text, quote) } else { opts.delimiter } as char;
     if delim == quote {

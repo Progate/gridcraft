@@ -74,8 +74,21 @@ pub fn open_bytes_with_password(name: &str, bytes: &[u8], password: Option<&str>
 /// the text it holds, with no number, date or boolean conversion (identifiers such as GTINs, SKUs
 /// and ZIP codes survive). It does not apply to other formats.
 pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>, csv_as_text: bool) -> Result<(Workbook, Vec<String>)> {
+    open_bytes_text(name, bytes, password, TextOpen { as_text: csv_as_text, ..TextOpen::default() })
+}
+
+/// How a CSV/TSV/TXT file (or an HTML table saved as `.xls`) is read: every field kept as text,
+/// and its encoding (Excel's File Origin; automatic detection by default).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextOpen {
+    pub as_text: bool,
+    pub encoding: gridcraft_xlsx::TextEncoding,
+}
+
+/// [`open_bytes_with`] with the text-file options of [`TextOpen`].
+pub fn open_bytes_text(name: &str, bytes: &[u8], password: Option<&str>, text: TextOpen) -> Result<(Workbook, Vec<String>)> {
     if gridcraft_xlsx::sniff(bytes) != gridcraft_xlsx::Format::Encrypted {
-        let (mut wb, warnings) = open_plain(name, bytes, csv_as_text)?;
+        let (mut wb, warnings) = open_plain(name, bytes, text)?;
         fit_imported_rows(&mut wb);
         return Ok((wb, warnings));
     }
@@ -89,7 +102,7 @@ pub fn open_bytes_with(name: &str, bytes: &[u8], password: Option<&str>, csv_as_
     if gridcraft_xlsx::sniff(&plain) == gridcraft_xlsx::Format::Encrypted {
         return Err(EngineError::Other(format!("We can't open '{name}': the encrypted file is damaged (it holds another encrypted file).")));
     }
-    let (mut wb, mut warnings) = open_plain(name, &plain, csv_as_text)?;
+    let (mut wb, mut warnings) = open_plain(name, &plain, text)?;
     fit_imported_rows(&mut wb);
     warnings.insert(0, DECRYPTED_NOTICE.into());
     Ok((wb, warnings))
@@ -138,8 +151,8 @@ fn decrypt_message(name: &str, e: gridcraft_xlsx::DecryptError) -> String {
 /// Parses bytes that aren't encrypted, then takes the workbook's macros, and the button actions
 /// xlsx has no place for, out of their hidden names, and adopts the Python cells they hold (see
 /// [`adopt_python`]) within the limits of [`enforce_python_limits`].
-fn open_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, Vec<String>)> {
-    let (mut wb, mut warnings) = read_plain(name, bytes, csv_as_text)?;
+fn open_plain(name: &str, bytes: &[u8], text: TextOpen) -> Result<(Workbook, Vec<String>)> {
+    let (mut wb, mut warnings) = read_plain(name, bytes, text)?;
     warnings.extend(crate::macros::load(&mut wb));
     crate::cmd::controls::load_action_names(&mut wb);
     warnings.extend(adopt_python(&mut wb));
@@ -272,7 +285,8 @@ fn sane_python_output(v: &gridcraft_core::Value) -> bool {
 }
 
 /// Parses bytes that aren't encrypted, as they are.
-fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, Vec<String>)> {
+fn read_plain(name: &str, bytes: &[u8], text: TextOpen) -> Result<(Workbook, Vec<String>)> {
+    let (csv_as_text, encoding) = (text.as_text, text.encoding);
     let kind = FileKind::from_path(name);
     let sniffed = gridcraft_xlsx::sniff(bytes);
     if sniffed == gridcraft_xlsx::Format::Xls {
@@ -311,7 +325,7 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
             })?;
         return Ok((wb, report.warnings));
     }
-    if let Some(read) = read_html_table(name, kind, bytes, csv_as_text) {
+    if let Some(read) = read_html_table(name, kind, bytes, text) {
         return read;
     }
     match kind {
@@ -339,7 +353,7 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
             Ok((wb, warnings))
         }
         Some(FileKind::Tsv) => {
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', parse_values: !csv_as_text, ..Default::default() };
+            let opts = gridcraft_xlsx::CsvOptions { delimiter: b'\t', parse_values: !csv_as_text, encoding, ..Default::default() };
             let (mut wb, report) = gridcraft_xlsx::read_csv_with_report(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             // Tab is what makes it a .tsv/.txt; saved as .csv it gets the CSV default.
             wb.csv_delimiter = None;
@@ -347,7 +361,7 @@ fn read_plain(name: &str, bytes: &[u8], csv_as_text: bool) -> Result<(Workbook, 
             Ok((wb, report.warnings))
         }
         _ => {
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: 0, parse_values: !csv_as_text, ..Default::default() };
+            let opts = gridcraft_xlsx::CsvOptions { delimiter: 0, parse_values: !csv_as_text, encoding, ..Default::default() };
             let (mut wb, report) = gridcraft_xlsx::read_csv_with_report(bytes, &opts).map_err(|e| EngineError::Other(e.to_string()))?;
             rename_first_sheet(&mut wb, name);
             Ok((wb, report.warnings))
@@ -382,13 +396,14 @@ const HTML_SNIFF_BYTES: usize = 64 << 10;
 /// and extension don't match): the cells read like typed input (or as text with `csv_as_text`),
 /// header cells (`<th>`) are bold and centred, and the sheet takes the name the page gives it
 /// (`<x:Name>`) or the file's. `None` when the bytes aren't such a page.
-fn read_html_table(name: &str, kind: Option<FileKind>, bytes: &[u8], csv_as_text: bool) -> Option<Result<(Workbook, Vec<String>)>> {
+fn read_html_table(name: &str, kind: Option<FileKind>, bytes: &[u8], text_open: TextOpen) -> Option<Result<(Workbook, Vec<String>)>> {
+    let csv_as_text = text_open.as_text;
     // Every other text file (CSV, TSV, JSON) passes through here: look at the start only, and decode
     // the whole file once it is known to be a page within the size a text import takes.
     if matches!(kind, Some(FileKind::Json)) || bytes.len() > gridcraft_xlsx::MAX_CSV_BYTES {
         return None;
     }
-    let start = gridcraft_xlsx::decode_text(bytes.get(..HTML_SNIFF_BYTES).unwrap_or(bytes));
+    let start = gridcraft_xlsx::decode_with(bytes.get(..HTML_SNIFF_BYTES).unwrap_or(bytes), text_open.encoding);
     // Comments an exporter writes before the page (`<!-- ... -->`) don't make it something else.
     let mut rest = start.trim_start_matches('\u{feff}').trim_start();
     while let Some(after) = rest.strip_prefix("<!--") {
@@ -401,8 +416,8 @@ fn read_html_table(name: &str, kind: Option<FileKind>, bytes: &[u8], csv_as_text
     if !["<!doctype html", "<html", "<table", "<head", "<body", "<meta"].iter().any(|t| head.starts_with(t)) {
         return None;
     }
-    // Decoded as a CSV is (BOM, UTF-8, else Windows-1252/1256), so a legacy page keeps its letters.
-    let text = gridcraft_xlsx::decode_text(bytes);
+    // Decoded as a CSV is (BOM, UTF-8, Shift_JIS, else Windows-1252/1256), so a legacy page keeps its letters.
+    let text = gridcraft_xlsx::decode_with(bytes, text_open.encoding);
     let rows = crate::clip_html::table_cells(&text, gridcraft_core::MAX_ROWS as usize, gridcraft_core::MAX_COLS as usize);
     if rows.iter().all(Vec::is_empty) {
         return None;

@@ -132,8 +132,15 @@ pub struct Backstage {
 
 /// Save As file types: (extension, label). The first is the workbook itself; the others are
 /// exports that leave the workbook's own file and unsaved state alone.
-pub const SAVE_TYPES: [(&str, &str); 4] =
-    [("xlsx", "Excel Workbook (*.xlsx)"), ("csv", "CSV UTF-8 (Comma delimited) (*.csv)"), ("html", "Web Page (*.html)"), ("pdf", "PDF (*.pdf)")];
+/// `csv` is CSV UTF-8 (with a byte order mark, as Excel writes it); `csvAnsi` is CSV (Comma
+/// delimited), which Japanese Excel writes in Shift_JIS (code page 932).
+pub const SAVE_TYPES: [(&str, &str); 5] = [
+    ("xlsx", "Excel Workbook (*.xlsx)"),
+    ("csv", "CSV UTF-8 (Comma delimited) (*.csv)"),
+    ("csvAnsi", "CSV (Comma delimited) (*.csv)"),
+    ("html", "Web Page (*.html)"),
+    ("pdf", "PDF (*.pdf)"),
+];
 
 impl Backstage {
     pub fn new(page: Page) -> Backstage {
@@ -697,7 +704,7 @@ fn save_as(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     ui.add_space(14.0);
     // Desktop: the system Save dialog. Web: the file downloads.
     let web = app.services.pick_save.is_none() && app.services.download.is_some();
-    let label = if web { format!("{} (.{fmt})", lang.tr("Download")) } else { lang.tr("Browse…").to_string() };
+    let label = if web { format!("{} (.{})", lang.tr("Download"), extension(fmt)) } else { lang.tr("Browse…").to_string() };
     if square_button(ui, Icon::OpenFolder, &label).clicked() && app.commit_edit(0, 0, false, false) {
         if fmt == "xlsx" {
             let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
@@ -724,7 +731,7 @@ fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     ui.add_space(14.0);
     section(ui, lang, "Change File Type");
     for (fmt, icon, title, detail) in [
-        ("csv", Icon::TextColumns, "CSV (Comma delimited)", "Save the active sheet as comma-separated text."),
+        ("csvAnsi", Icon::TextColumns, "CSV (Comma delimited)", "Save the active sheet as comma-separated text."),
         ("html", Icon::Link, "Web Page (.html)", "Save the workbook as a web page."),
     ] {
         if action_row(ui, icon, lang.tr(title), lang.tr(detail)).clicked() && export_as(app, fmt) {
@@ -733,25 +740,42 @@ fn export(app: &mut SheetApp, ui: &mut Ui, out: &mut Outcome) {
     }
 }
 
-/// Exports the active workbook as `pdf`, `csv` or `html`: through the save picker on the desktop,
-/// as a browser download on the web. Returns whether a file was written or handed over.
+/// The file extension of a Save As type.
+fn extension(fmt: &str) -> &str {
+    if fmt == "csvAnsi" { "csv" } else { fmt }
+}
+
+/// Exports the active workbook as `pdf`, `csv` (CSV UTF-8), `csvAnsi` (CSV (Comma delimited):
+/// Shift_JIS in the Japanese interface, as Japanese Excel writes it) or `html`: through the save
+/// picker on the desktop, as a browser download on the web. Returns whether a file was written
+/// or handed over.
 pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
     if !app.commit_edit(0, 0, false, false) {
         return false;
     }
     let id = match fmt {
         "pdf" => "file.exportPdf",
-        "csv" => "file.exportCsv",
+        "csv" | "csvAnsi" => "file.exportCsv",
         "html" => "file.exportHtml",
         _ => return false,
     };
+    let encoding = match fmt {
+        "csv" => Some("utf-8-bom"),
+        "csvAnsi" if app.ui.language == crate::i18n::Language::Ja => Some("932"),
+        _ => None,
+    };
+    let fmt = extension(fmt);
     let title = app.session.active().map(|d| d.display_title()).unwrap_or_else(|| "Book1".into());
     let stem = std::path::Path::new(&title).file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("Book1").to_string();
     if let Some(pick) = &app.services.pick_save {
         let Some(path) = pick(&format!("{stem}.{fmt}")) else { return false };
         // The picker may suggest a workbook extension; the export writes the chosen format.
         let path = std::path::Path::new(&path).with_extension(fmt).to_string_lossy().into_owned();
-        return match app.run(id, json!({"path": path})) {
+        let mut params = json!({"path": path});
+        if let Some(e) = encoding {
+            params["encoding"] = json!(e);
+        }
+        return match app.run(id, params) {
             Ok(_) => true,
             Err(e) => {
                 app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
@@ -774,7 +798,11 @@ pub fn export_as(app: &mut SheetApp, fmt: &str) -> bool {
         };
     }
     app.store_view_state();
-    match app.session.run("file.saveBytes", json!({"format": fmt})) {
+    let mut params = json!({"format": fmt});
+    if let Some(e) = encoding {
+        params["encoding"] = json!(e);
+    }
+    match app.session.run("file.saveBytes", params) {
         Ok(r) => {
             let bytes = r.get("base64").and_then(Json::as_str).and_then(gridcraft_engine::io::base64_decode);
             let name = r.get("name").and_then(Json::as_str).map_or_else(|| format!("{stem}.{fmt}"), str::to_string);

@@ -8,12 +8,12 @@ use crate::DocState;
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "file.new", "New Workbook", ["File"], Some("Cmd+N"), "{sample?: \"budget\"|\"sales\"|\"grades\"}", always, new_workbook),
-        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook and {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
+        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path} | {name, base64}, plus {password} for a password-protected workbook {csvAsText?: bool} to keep every csv/tsv/txt field as text, with no number or date conversion, and {encoding?: auto|932|65001|1252} for a csv/tsv/txt file's encoding (default: BOM, UTF-8, Shift_JIS when the bytes read as Japanese, else Windows-1252) (xlsx, xlsm, xls import, xlsb and ods data import, csv, tsv, txt, json)", always, open),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?} (xlsx by default; .csv/.tsv/.json/.html/.pdf by extension)", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path} (.xlsx, .csv, .tsv, .json, .html, or .pdf: a PDF of the active sheet)", has_doc, save_as),
-        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html} → {base64}", has_doc, save_bytes),
+        cmd!(query "file.saveBytes", "Encode Workbook", [], None, "{format?: xlsx|csv|tsv|json|html, encoding?: utf-8|utf-8-bom|932|1252 (csv)} → {base64}", has_doc, save_bytes),
         cmd!(noundo "file.close", "Close", ["File"], Some("Cmd+W"), "{force?: bool, document?: bool} (closes the active window, or with `document` the workbook and all its windows; the workbook closes with its last window)", has_doc, close),
-        cmd!(noundo "file.exportCsv", "Export as CSV", ["File", "Export"], None, "{path, sheet?, values?: bool} → {path, bytes}: writes the cells as displayed, like Excel's Save As CSV; `values: true` writes raw values instead (full-precision numbers, ISO 8601 dates and times, TRUE/FALSE)", has_doc, |s, p| export(s, p, "csv")),
+        cmd!(noundo "file.exportCsv", "Export as CSV", ["File", "Export"], None, "{path, sheet?, values?: bool, encoding?: utf-8|utf-8-bom|932|1252} → {path, bytes}: writes the cells as displayed, like Excel's Save As CSV (UTF-8 without a BOM unless `encoding` says: `utf-8-bom` is CSV UTF-8, 932 is Japanese CSV (Comma delimited)); `values: true` writes raw values instead (full-precision numbers, ISO 8601 dates and times, TRUE/FALSE)", has_doc, |s, p| export(s, p, "csv")),
         cmd!(noundo "file.exportHtml", "Save as Web Page", ["File", "Export"], None, "{path}", has_doc, |s, p| export(s, p, "html")),
         cmd!("file.properties", "Properties", ["File"], None, "{title?, subject?, author?, company?, keywords?, description?}", has_doc, properties),
         cmd!(
@@ -58,7 +58,14 @@ fn open(s: &mut Session, p: &Json) -> Result<Json> {
         return ok();
     };
     let encrypted = gridcraft_xlsx::sniff(&bytes) == gridcraft_xlsx::Format::Encrypted;
-    let (mut wb, warnings) = crate::io::open_bytes_with(&name, &bytes, str_param(p, "password"), bool_param(p, "csvAsText").unwrap_or(false))?;
+    let encoding = match str_param(p, "encoding").map(str::to_string).or_else(|| p.get("encoding").and_then(Json::as_u64).map(|n| n.to_string())) {
+        Some(e) => {
+            gridcraft_xlsx::TextEncoding::parse(&e).ok_or_else(|| bad("file.open", format!("unknown encoding `{e}` (auto|932|65001|1252)")))?
+        }
+        None => gridcraft_xlsx::TextEncoding::Auto,
+    };
+    let text = crate::io::TextOpen { as_text: bool_param(p, "csvAsText").unwrap_or(false), encoding };
+    let (mut wb, warnings) = crate::io::open_bytes_text(&name, &bytes, str_param(p, "password"), text)?;
     wb.source_dir = str_param(p, "path").and_then(crate::io::source_dir);
     // What `CELL("filename")` reports (#1489). A workbook opened from bytes knows its name but
     // never a folder, so it reports `[name]Sheet` with none; an import reports the file it came
@@ -159,6 +166,7 @@ fn save_bytes(s: &mut Session, p: &Json) -> Result<Json> {
     let name = format!("{}.{fmt}", std::path::Path::new(&d.display_title()).file_stem().and_then(|x| x.to_str()).unwrap_or("Book"));
     // The file name goes into a PivotChart's link to its PivotTable.
     let bytes = crate::io::save_bytes(&d.wb, &name)?;
+    let bytes = if fmt == "csv" { csv_encoding(p, bytes)? } else { bytes };
     Ok(json!({"name": name, "base64": crate::io::base64_encode(&bytes), "bytes": bytes.len()}))
 }
 
@@ -196,8 +204,23 @@ fn export(s: &mut Session, p: &Json, ext: &str) -> Result<Json> {
     } else {
         crate::io::save_bytes(&wb, &target)?
     };
+    let bytes = if ext == "csv" { csv_encoding(p, bytes)? } else { bytes };
     crate::io::write_file(&target, &bytes)?;
     Ok(json!({"path": target, "bytes": bytes.len()}))
+}
+
+/// CSV text (UTF-8) in the `encoding` param: `utf-8-bom` (Excel's "CSV UTF-8 (Comma delimited)"),
+/// `932` (Japanese Excel's "CSV (Comma delimited)", Shift_JIS), `1252`, or UTF-8 as it is.
+fn csv_encoding(p: &Json, bytes: Vec<u8>) -> Result<Vec<u8>> {
+    let Some(e) = str_param(p, "encoding").map(str::to_string).or_else(|| p.get("encoding").and_then(Json::as_u64).map(|n| n.to_string())) else {
+        return Ok(bytes);
+    };
+    if matches!(e.to_ascii_lowercase().replace('_', "-").as_str(), "utf-8-bom" | "utf8-bom" | "utf-8-sig") {
+        return Ok([&b"\xEF\xBB\xBF"[..], &bytes].concat());
+    }
+    let encoding =
+        gridcraft_xlsx::TextEncoding::parse(&e).ok_or_else(|| bad("file.exportCsv", format!("unknown encoding `{e}` (utf-8|utf-8-bom|932|1252)")))?;
+    Ok(gridcraft_xlsx::encode_with(&String::from_utf8_lossy(&bytes), encoding))
 }
 
 fn properties(s: &mut Session, p: &Json) -> Result<Json> {
