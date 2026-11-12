@@ -1866,6 +1866,10 @@ pub(super) const AUTOFILTER: &[(&str, &str)] = &[
     ("Grouping|Months", "月"),
     ("Grouping|Quarters", "四半期"),
     ("Grouping|Years", "年"),
+    ("Grouping|Seconds", "秒"),
+    ("Grouping|Minutes", "分"),
+    ("Grouping|Hours", "時"),
+    ("Grouping|Number of days:", "日数:"),
     ("Cannot group that selection.", "選択対象をグループ化することはできません。"),
     ("Select a row or column label of the PivotTable to group.", "グループ化するピボットテーブルの行ラベルまたは列ラベルを選択してください。"),
     ("The ending number must be greater than the starting number.", "末尾の値は先頭の値より大きくする必要があります。"),
@@ -2114,7 +2118,14 @@ pub(super) fn translate_message(text: &str) -> Option<String> {
 /// Translates an interface label; `None` for a label the catalog does not know, so `i18n.rs` can
 /// fall back to English. Dialog strings come first, the shared core second.
 pub(super) fn translate(text: &str) -> Option<&'static str> {
-    DIALOGS.iter().chain(CORE).chain(EXTRA).chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).find(|(english, _)| *english == text).map(|(_, translated)| *translated)
+    DIALOGS
+        .iter()
+        .chain(CORE)
+        .chain(EXTRA)
+        .chain(AUTOFILTER)
+        .chain(CONDITIONAL_FORMATTING)
+        .find(|(english, _)| *english == text)
+        .map(|(_, translated)| *translated)
 }
 
 #[cfg(test)]

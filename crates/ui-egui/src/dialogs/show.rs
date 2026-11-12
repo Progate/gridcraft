@@ -41,8 +41,16 @@ pub fn build_params(d: &Dialog) -> Json {
                     }
                 }
                 if m.remove("kind").and_then(|k| k.as_str().map(str::to_string)).as_deref() == Some("date") {
-                    for k in ["autoStart", "autoEnd", "start", "end", "interval"] {
-                        m.remove(k);
+                    m.remove("interval");
+                    let by: Vec<&str> = super::PIVOT_DATE_UNITS
+                        .iter()
+                        .filter(|(key, _)| m.remove(*key).and_then(|x| x.as_bool()) == Some(true))
+                        .map(|(_, unit)| *unit)
+                        .collect();
+                    // Nothing ticked: Excel keeps OK unavailable; ungrouping is Ungroup….
+                    m.insert("by".into(), if by.is_empty() { json!(["months"]) } else { json!(by) });
+                    if by != ["days"] {
+                        m.remove("days");
                     }
                 }
             }

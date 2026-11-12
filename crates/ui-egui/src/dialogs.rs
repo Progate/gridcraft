@@ -48,6 +48,29 @@ pub use show::build_params;
 pub use show::show;
 use zoom::zoom_preset;
 
+/// Grouping › By (dates): the check box keys and the `pivot.group` `by` units, in Excel's order.
+pub(crate) const PIVOT_DATE_UNITS: &[(&str, &str)] = &[
+    ("bySeconds", "seconds"),
+    ("byMinutes", "minutes"),
+    ("byHours", "hours"),
+    ("byDays", "days"),
+    ("byMonths", "months"),
+    ("byQuarters", "quarters"),
+    ("byYears", "years"),
+];
+
+fn pivot_date_unit_label(unit: &str) -> &'static str {
+    match unit {
+        "seconds" => "Grouping|Seconds",
+        "minutes" => "Grouping|Minutes",
+        "hours" => "Grouping|Hours",
+        "days" => "Grouping|Days",
+        "months" => "Grouping|Months",
+        "quarters" => "Grouping|Quarters",
+        _ => "Grouping|Years",
+    }
+}
+
 /// Value Field Settings › Summarize value field by: `pivot.valueSettings` `func` values.
 pub(crate) const PIVOT_FUNCS: [(&str, &str); 11] = [
     ("sum", "Sum"),
@@ -964,17 +987,21 @@ impl Dialog {
             }
             "pivotGroup" => {
                 // Excel's Grouping dialog: Auto ▸ Starting at / Ending at and By for numbers, By for dates.
-                let fields = if p("kind").as_str() == Some("date") {
-                    vec![Choice {
-                        key: "by",
-                        label: "Grouping|By",
-                        options: vec![
-                            ("days", "Grouping|Days"),
-                            ("months", "Grouping|Months"),
-                            ("quarters", "Grouping|Quarters"),
-                            ("years", "Grouping|Years"),
-                        ],
-                    }]
+                let date = p("kind").as_str() == Some("date");
+                let fields = if date {
+                    // Dates: Starting at / Ending at dates, By as a list where several levels may be
+                    // ticked (Years + Quarters + Months nest), and Number of days for Days.
+                    let mut f = vec![
+                        Note("Auto".into()),
+                        Check { key: "autoStart", label: "Grouping|Starting at:" },
+                        Text { key: "start", label: "Grouping|Starting at:" },
+                        Check { key: "autoEnd", label: "Grouping|Ending at:" },
+                        Text { key: "end", label: "Grouping|Ending at:" },
+                        Note("Grouping|By".into()),
+                    ];
+                    f.extend(PIVOT_DATE_UNITS.iter().map(|(key, unit)| Check { key, label: pivot_date_unit_label(unit) }));
+                    f.push(Number { key: "days", label: "Grouping|Number of days:" });
+                    f
                 } else {
                     vec![
                         Note("Auto".into()),
@@ -986,10 +1013,19 @@ impl Dialog {
                     ]
                 };
                 let mut values = json!({"pivot": p("pivot"), "field": p("field"), "kind": p("kind")});
-                for k in ["by", "autoStart", "autoEnd", "start", "end", "interval", "originalStart", "originalEnd"] {
+                for k in ["by", "autoStart", "autoEnd", "start", "end", "interval", "originalStart", "originalEnd", "days"] {
                     if !p(k).is_null() {
                         values[k] = p(k).clone();
                     }
+                }
+                if date {
+                    let by: Vec<String> =
+                        p("by").as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
+                    for (key, unit) in PIVOT_DATE_UNITS {
+                        values[*key] = json!(by.iter().any(|b| b == unit));
+                    }
+                    values["originalStart"] = p("start").clone();
+                    values["originalEnd"] = p("end").clone();
                 }
                 if p("kind").as_str() != Some("date") {
                     values["by"] = json!("range");
@@ -1327,6 +1363,32 @@ mod tests {
 
     /// The value field's menu opens Value Field Settings on the field; OK applies the choices and
     /// leaves an unchanged caption alone (renaming "Sum of Sales" to itself would be refused).
+    #[test]
+    fn grouping_dialog_groups_a_date_field_on_several_levels() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let rows = json!([["Date", "Sales"], ["4/1/2025", 1], ["12/1/2025", 2], ["3/1/2026", 3]]);
+        session.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+        session.execute("selection.set", json!({"range": "A1"})).unwrap();
+        session.execute("insert.pivotTable", json!({"rows": ["Date"], "values": ["Sales"]})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        app.run("pivot.group", json!({"field": "Date"})).unwrap();
+        app.after_engine();
+        let mut d = app.dialog.take().unwrap();
+        assert_eq!(d.name(), "pivotGroup");
+        assert_eq!(d.values["byMonths"], json!(true));
+        assert_eq!(d.values["start"], json!("4/1/2025"));
+        d.set_value("byYears", json!(true));
+        d.set_value("byQuarters", json!(true));
+        let params = build_params(&d);
+        assert_eq!(params["by"], json!(["months", "quarters", "years"]));
+        assert_eq!((params["autoStart"].as_bool(), params["autoEnd"].as_bool()), (Some(true), Some(true)));
+        assert!(params.get("days").is_none() && params.get("byYears").is_none() && params.get("kind").is_none(), "{params}");
+        app.run(d.command.unwrap(), params).unwrap();
+        let pt = app.session.active().unwrap().wb.active().unwrap().pivots[0].clone();
+        assert_eq!(pt.rows.len(), 3);
+    }
+
     #[test]
     fn value_field_settings_opens_on_the_field_and_applies_the_choices() {
         let mut session = gridcraft_engine::Session::default();
