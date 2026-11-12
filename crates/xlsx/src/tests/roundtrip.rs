@@ -272,7 +272,7 @@ fn sample() -> Workbook {
         criteria: vec![
             (0, FilterCriterion::Values { values: vec!["a".into(), "b".into()], blanks: true }),
             (1, FilterCriterion::Custom { a: (">=".into(), "5".into()), b: Some(("<".into(), "9".into())), and: true }),
-            (2, FilterCriterion::Top10 { bottom: true, percent: false, count: 3 }),
+            (2, FilterCriterion::Top10 { bottom: true, percent: false, count: 3, filter_val: Some(2.0) }),
             (3, FilterCriterion::FillColor(Color::Rgb(0xFF0000))),
         ],
     });

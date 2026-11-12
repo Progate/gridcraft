@@ -1099,12 +1099,26 @@ pub enum FilterCriterion {
         b: Option<(String, String)>,
         and: bool,
     },
+    /// Top 10: the `count` largest (or smallest with `bottom`) items, or percent of the items.
+    /// `filter_val` is the cut-off value found when the filter was last applied (`filterVal`).
     Top10 {
         bottom: bool,
         percent: bool,
         count: u32,
+        #[serde(default)]
+        filter_val: Option<f64>,
     },
-    AboveAverage(bool),
+    /// A dynamic filter (`dynamicFilter`): `kind` is the file's type name (`aboveAverage`,
+    /// `belowAverage`, `today`, `thisMonth`, `yearToDate`, `Q1`–`Q4`, `M1`–`M12`, …). `val` and
+    /// `max_val` are what the filter resolved to when last applied: the average for the average
+    /// filters, and the half-open date span `[val, max_val)` for the relative date periods.
+    Dynamic {
+        kind: String,
+        #[serde(default)]
+        val: Option<f64>,
+        #[serde(default)]
+        max_val: Option<f64>,
+    },
     FillColor(Color),
     FontColor(Color),
     /// Rows whose cell shows icon `id` (0-based; `None` = no icon) of conditional-format icon set
@@ -1113,6 +1127,67 @@ pub enum FilterCriterion {
         set: String,
         id: Option<u32>,
     },
+}
+
+/// The `dynamicFilter` types Excel writes for AutoFilters, as they appear in the file.
+pub const DYNAMIC_FILTER_TYPES: &[&str] = &[
+    "aboveAverage",
+    "belowAverage",
+    "tomorrow",
+    "today",
+    "yesterday",
+    "nextWeek",
+    "thisWeek",
+    "lastWeek",
+    "nextMonth",
+    "thisMonth",
+    "lastMonth",
+    "nextQuarter",
+    "thisQuarter",
+    "lastQuarter",
+    "nextYear",
+    "thisYear",
+    "lastYear",
+    "yearToDate",
+    "Q1",
+    "Q2",
+    "Q3",
+    "Q4",
+    "M1",
+    "M2",
+    "M3",
+    "M4",
+    "M5",
+    "M6",
+    "M7",
+    "M8",
+    "M9",
+    "M10",
+    "M11",
+    "M12",
+];
+
+/// One custom AutoFilter condition in the form the file stores: `op` is `=`, `<>`, `<`, `<=`,
+/// `>` or `>=`, and the text operators become wildcards on the value, as Excel writes them
+/// (begins with `abc` → `= abc*`, contains → `= *abc*`, does not contain → `<> *abc*`). Excel's
+/// operator names (`greaterThanOrEqual`, …) are accepted too. `None` for an unknown operator.
+pub fn custom_filter_condition(op: &str, value: &str) -> Option<(String, String)> {
+    let (op, value) = match op.trim() {
+        "=" | "" | "equal" | "equals" => ("=", value.to_string()),
+        "<>" | "notEqual" | "doesNotEqual" => ("<>", value.to_string()),
+        ">" | "greaterThan" => (">", value.to_string()),
+        ">=" | "greaterThanOrEqual" => (">=", value.to_string()),
+        "<" | "lessThan" => ("<", value.to_string()),
+        "<=" | "lessThanOrEqual" => ("<=", value.to_string()),
+        "beginsWith" => ("=", format!("{value}*")),
+        "notBeginsWith" | "doesNotBeginWith" => ("<>", format!("{value}*")),
+        "endsWith" => ("=", format!("*{value}")),
+        "notEndsWith" | "doesNotEndWith" => ("<>", format!("*{value}")),
+        "contains" => ("=", format!("*{value}*")),
+        "notContains" | "doesNotContain" => ("<>", format!("*{value}*")),
+        _ => return None,
+    };
+    Some((op.to_string(), value))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

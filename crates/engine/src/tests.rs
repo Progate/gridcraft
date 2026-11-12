@@ -1191,8 +1191,8 @@ fn filter_top10_two_criteria_on_one_column() {
     let sh = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).sheet_mut(0).unwrap();
     if let Some(af) = sh.autofilter.as_mut() {
         af.criteria = vec![
-            (0, FilterCriterion::Top10 { bottom: false, percent: false, count: 3 }),
-            (0, FilterCriterion::Top10 { bottom: true, percent: false, count: 4 }),
+            (0, FilterCriterion::Top10 { bottom: false, percent: false, count: 3, filter_val: None }),
+            (0, FilterCriterion::Top10 { bottom: true, percent: false, count: 4, filter_val: None }),
         ];
     }
     s.execute("data.reapply", json!({})).unwrap();

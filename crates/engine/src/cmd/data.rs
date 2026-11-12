@@ -23,7 +23,7 @@ mod sort;
 mod tools;
 mod validation;
 
-pub use filter::filter_values;
+pub use filter::{FilterColumnKind, filter_column_kind, filter_criterion_at, filter_values};
 pub(crate) use filter::{apply_filter, grow_autofilter};
 use filter::{clear_filter, filter_by, reapply, toggle_filter};
 use grouping::{detail, group, outline_settings, show_levels, subtotal};
@@ -64,7 +64,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Filter Column",
             [],
             None,
-            "{column: \"B\" (or 0-based offset), values?: [..], blanks?: bool, custom?: {op: \">\", value: \"10\", op2?, value2?, and?}, top?: {count, bottom?, percent?}, aboveAverage?: bool, clear?: bool}",
+            "{column: \"B\" (or 0-based offset), values?: [..], blanks?: bool, custom?: {op: = | <> | > | >= | < | <= | beginsWith | notBeginsWith | endsWith | notEndsWith | contains | notContains, value: \"10\" (wildcards ? and *; a date is stored as its serial), op2?, value2?, and?: bool (default true; false = Or)}, top?: {count: 1-500 items or 1-100 percent, bottom?, percent?}, dynamic?: aboveAverage | belowAverage | tomorrow | today | yesterday | nextWeek | thisWeek | lastWeek | nextMonth | thisMonth | lastMonth | nextQuarter | thisQuarter | lastQuarter | nextYear | thisYear | lastYear | yearToDate | Q1-Q4 | M1-M12, aboveAverage?: bool, clear?: bool}",
             has_doc,
             filter_by
         ),

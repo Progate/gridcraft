@@ -78,15 +78,17 @@ pub fn read_autofilter(cx: &mut Ctx<'_>, e: &El) -> Option<AutoFilter> {
                 bottom: !t.flag("top", true),
                 percent: t.flag("percent", false),
                 count: t.attr_f64("val").unwrap_or(10.0).clamp(0.0, 1e9) as u32,
+                filter_val: t.attr_f64("filterVal").filter(|v| v.is_finite()),
             }
         } else if let Some(d) = fc.child("dynamicFilter") {
-            match d.attr("type") {
-                Some("aboveAverage") => FilterCriterion::AboveAverage(true),
-                Some("belowAverage") => FilterCriterion::AboveAverage(false),
-                _ => {
-                    cx.warn("date filters in AutoFilters are not supported");
-                    continue;
-                }
+            let Some(kind) = d.attr("type").and_then(|t| gridcraft_model::DYNAMIC_FILTER_TYPES.iter().find(|k| **k == t)) else {
+                cx.warn("an AutoFilter dynamic filter of an unknown type was dropped");
+                continue;
+            };
+            FilterCriterion::Dynamic {
+                kind: (*kind).to_string(),
+                val: d.attr_f64("val").filter(|v| v.is_finite()),
+                max_val: d.attr_f64("maxVal").filter(|v| v.is_finite()),
             }
         } else if let Some(c) = fc.child("colorFilter") {
             let Some(dxf) = c.attr_u32("dxfId").and_then(|i| cx.dxfs.get(i as usize)) else { continue };

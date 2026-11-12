@@ -76,16 +76,32 @@ pub(super) fn autofilter_xml(range: RangeRef, criteria: &[(u32, FilterCriterion)
             FilterCriterion::Custom { a, b, and } => {
                 let _ = write!(s, "<customFilters{}>", if *and { " and=\"1\"" } else { "" });
                 for (op, v) in std::iter::once(a).chain(b.iter()) {
-                    let _ = write!(s, "<customFilter{} val=\"{}\"/>", filter_operator(op), esc_attr(v));
+                    // Text operators kept from older models are written as Excel writes them: wildcards on `val`.
+                    let (op, v) = gridcraft_model::custom_filter_condition(op, v).unwrap_or_else(|| (op.clone(), v.clone()));
+                    let _ = write!(s, "<customFilter{} val=\"{}\"/>", filter_operator(&op), esc_attr(&v));
                 }
                 s.push_str("</customFilters>");
             }
-            FilterCriterion::Top10 { bottom, percent, count } => {
+            FilterCriterion::Top10 { bottom, percent, count, filter_val } => {
                 let _ =
-                    write!(s, "<top10{}{} val=\"{count}\"/>", if *bottom { " top=\"0\"" } else { "" }, if *percent { " percent=\"1\"" } else { "" });
+                    write!(s, "<top10{}{} val=\"{count}\"", if *bottom { " top=\"0\"" } else { "" }, if *percent { " percent=\"1\"" } else { "" });
+                if let Some(v) = filter_val.filter(|v| v.is_finite()) {
+                    let _ = write!(s, " filterVal=\"{v}\"");
+                }
+                s.push_str("/>");
             }
-            FilterCriterion::AboveAverage(above) => {
-                let _ = write!(s, "<dynamicFilter type=\"{}\"/>", if *above { "aboveAverage" } else { "belowAverage" });
+            FilterCriterion::Dynamic { kind, val, max_val } => {
+                let _ = write!(s, "<dynamicFilter type=\"{}\"", esc_attr(kind));
+                let date = !matches!(kind.as_str(), "aboveAverage" | "belowAverage");
+                for (name, v) in [("val", val), ("maxVal", max_val)] {
+                    let Some(v) = v.filter(|v| v.is_finite()) else { continue };
+                    let _ = write!(s, " {name}=\"{v}\"");
+                    // Excel adds the date spans as ISO date-times too (`valIso`, `maxValIso`).
+                    if date && let Some(d) = gridcraft_core::date::datetime_from_serial(gridcraft_core::date::DateSystem::D1900, v) {
+                        let _ = write!(s, " {name}Iso=\"{:04}-{:02}-{:02}T00:00:00\"", d.year, d.month, d.day);
+                    }
+                }
+                s.push_str("/>");
             }
             FilterCriterion::FillColor(c) => {
                 let st = Style { fill: gridcraft_model::Fill::solid(*c), ..Default::default() };

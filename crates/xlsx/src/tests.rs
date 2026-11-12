@@ -1,6 +1,7 @@
 //! Integration-style tests: round trips, hand-written fixtures, hostile input and CSV.
 
 mod array_export;
+mod autofilter_conditions;
 mod cellmetadata;
 mod chart_book_names;
 mod chart_bool_default;
