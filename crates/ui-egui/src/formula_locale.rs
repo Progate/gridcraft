@@ -98,9 +98,12 @@ pub(crate) fn description(name: &str, locale: FormulaLocale, language: Language)
     Some(language.function_description_of(locale.canonical_name(name), &english).map_or(english, str::to_string))
 }
 
+/// An argument's values and their labels.
+type Choices = &'static [(&'static str, &'static str)];
+
 /// The values an argument takes, listed under the hint while it is typed as Excel lists them:
 /// (function, argument, [(value, label)]). Labels are catalog keys in Excel's English wording.
-const ARGUMENT_CHOICES: &[(&str, &str, &[(&str, &str)])] = &[
+const ARGUMENT_CHOICES: &[(&str, &str, Choices)] = &[
     ("HLOOKUP", "range_lookup", &[("TRUE", "TRUE - Approximate match"), ("FALSE", "FALSE - Exact match")]),
     ("MATCH", "match_type", &[("1", "1 - Less than"), ("0", "0 - Exact match"), ("-1", "-1 - Greater than")]),
     ("RANK", "order", &[("0", "0 - Descending"), ("1", "1 - Ascending")]),
@@ -130,7 +133,7 @@ const XSEARCH_MODES: &[(&str, &str)] = &[
 
 /// The values argument `arg` (0-based) of function `name` (as the formula syntax spells it)
 /// takes, with their English labels; `None` for a free-form argument.
-pub(crate) fn argument_choices(name: &str, arg: usize, locale: FormulaLocale) -> Option<&'static [(&'static str, &'static str)]> {
+pub(crate) fn argument_choices(name: &str, arg: usize, locale: FormulaLocale) -> Option<Choices> {
     let english = crate::formula_bar::function_signature(locale.canonical_name(name))?;
     let (head, args) = split_signature(&english)?;
     let argument = argument_name(args.get(arg)?);
