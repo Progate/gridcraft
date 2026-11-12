@@ -30,7 +30,7 @@ pub(super) fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
                 ("Normal", "pageLayout.margins", json!({"preset": "normal"})),
                 ("Wide", "pageLayout.margins", json!({"preset": "wide"})),
                 ("Narrow", "pageLayout.margins", json!({"preset": "narrow"})),
-                ("Custom Margins…", "dialog:pageSetup", json!({})),
+                ("Custom Margins…", "dialog:pageSetup", json!({"tab": "Margins"})),
             ],
         );
     });
@@ -49,29 +49,7 @@ pub(super) fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
     let s = big_button(ui, Icon::Paper, "Size", "Paper Size", true);
     control_keytip(app, ui, &s, "pageLayout.size");
     egui::Popup::menu(&s).show(|ui| {
-        // B4/B5/B6 are the JIS sizes Japanese Excel uses; the ISO ones stay selectable by name.
-        for p in [
-            "Letter",
-            "Legal",
-            "Tabloid",
-            "Executive",
-            "A3",
-            "A4",
-            "A5",
-            "A6",
-            "B4",
-            "B5",
-            "B6",
-            "Japanese Postcard",
-            "Japanese Double Postcard",
-            "Japanese Envelope #3",
-            "Japanese Envelope #4",
-            "Japanese Envelope Kaku #2",
-            "Japanese Envelope Kaku #3",
-            "B4 (ISO)",
-            "B5 (ISO)",
-            "B6 (ISO)",
-        ] {
+        for p in crate::dialogs::PAPER_SIZES {
             if ui.button(p).clicked() {
                 act(app, "pageLayout.size", json!({"paper": p}));
             }
@@ -106,6 +84,8 @@ pub(super) fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         app.open_dialog("pageSetup", json!({"tab": "Sheet"}));
     }
+    sep(ui);
+    ui.vertical(|ui| scale_to_fit(app, ui));
     sep(ui);
     let sh = app
         .session
@@ -155,4 +135,60 @@ pub(super) fn page_layout(app: &mut SheetApp, ui: &mut Ui) {
     if r.clicked() {
         act(app, "view.rightToLeft", json!({"on": !rtl}));
     }
+}
+
+/// Page Layout › Scale to Fit: the pages wide and tall the sheet prints on (Automatic = 0), and
+/// the percentage when both are automatic, as in Excel. Each choice is one `pageLayout.pageSetup`.
+fn scale_to_fit(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    let (fit, scale) = app.session.active().and_then(|d| d.wb.active()).map(|s| (s.print.fit_to, s.print.scale)).unwrap_or((None, 100));
+    let (w, h) = fit.unwrap_or((0, 0));
+    let pages = |n: u16| match n {
+        0 => lang.tr("Automatic").to_string(),
+        1 => lang.tr("1 page").to_string(),
+        n => lang.tr("{n} pages").replace("{n}", &n.to_string()),
+    };
+    let small = |text: &str| egui::RichText::new(text).font(crate::theme::ui_font(12.0));
+    // Both automatic is no fitting at all: the percentage applies again.
+    let set = |app: &mut SheetApp, w: u16, h: u16| {
+        let p = if w == 0 && h == 0 { json!({"fitToPage": false}) } else { json!({"fitWidth": w, "fitHeight": h}) };
+        act(app, "pageLayout.pageSetup", p);
+    };
+    // Three rows of boxes in the card's height, as the columns of small buttons hold three.
+    ui.spacing_mut().interact_size.y = 20.0;
+    ui.spacing_mut().button_padding.y = 1.0;
+    egui::Grid::new("scale_to_fit").num_columns(2).spacing(vec2(6.0, 1.0)).show(ui, |ui| {
+        for (key, current) in [("Width:", w), ("Height:", h)] {
+            let label = ui.label(small(lang.tr(key)));
+            craft_ui::ComboBox::from_id_salt(("scale_to_fit", key))
+                .width(96.0)
+                .selected_text(small(&pages(current)))
+                .show_ui(ui, |ui| {
+                    for n in 0..=9 {
+                        if ui.selectable_label(n == current, pages(n)).clicked() {
+                            if key == "Width:" { set(app, n, h) } else { set(app, w, n) }
+                        }
+                    }
+                })
+                .response
+                .labelled_by(label.id);
+            ui.end_row();
+        }
+        let label = ui.label(small(lang.tr("Scale:")));
+        ui.add_enabled_ui(fit.is_none(), |ui| {
+            craft_ui::ComboBox::from_id_salt("scale_to_fit_scale")
+                .width(96.0)
+                .selected_text(small(&format!("{scale}%")))
+                .show_ui(ui, |ui| {
+                    for v in [400u16, 200, 150, 125, 110, 100, 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 40, 30, 25, 10] {
+                        if ui.selectable_label(v == scale, format!("{v}%")).clicked() {
+                            act(app, "pageLayout.pageSetup", json!({"scale": v}));
+                        }
+                    }
+                })
+                .response
+                .labelled_by(label.id);
+        });
+        ui.end_row();
+    });
 }

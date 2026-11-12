@@ -2,7 +2,7 @@
 
 use gridcraft_engine::Session;
 use gridcraft_ui_egui::SheetApp;
-use serde_json::{Value, json};
+use serde_json::json;
 
 fn margins(app: &SheetApp) -> [f32; 6] {
     app.session.active().and_then(|d| d.wb.active()).map(|s| s.print.margins).unwrap_or_default()
@@ -26,8 +26,10 @@ fn page_setup_ok_without_edits_keeps_custom_margins() {
         app.open_dialog("pageSetup", params);
         let d = app.dialog.take().unwrap();
         let shown = json!({"left": 2.0, "right": 2.5, "top": 3.0, "bottom": 0.25, "header": 0.1, "footer": 0.2, "pageOrder": "downThenOver"});
-        assert_eq!(Value::Object(d.values.clone()), shown);
-        app.run(d.command.unwrap(), Value::Object(d.values)).unwrap();
+        for (key, value) in shown.as_object().unwrap() {
+            assert_eq!(d.values.get(key), Some(value), "{key}");
+        }
+        app.run(d.command.unwrap(), gridcraft_ui_egui::dialogs::build_params(&d)).unwrap();
         assert_eq!(margins(&app), [2.0, 2.5, 3.0, 0.25, 0.1, 0.2]);
     }
 }
@@ -38,6 +40,6 @@ fn page_setup_one_edited_field_keeps_the_other_margins() {
     app.open_dialog("pageSetup", json!({}));
     let mut d = app.dialog.take().unwrap();
     d.values.insert("left".into(), json!(1.5));
-    app.run(d.command.unwrap(), Value::Object(d.values)).unwrap();
+    app.run(d.command.unwrap(), gridcraft_ui_egui::dialogs::build_params(&d)).unwrap();
     assert_eq!(margins(&app), [1.5, 2.5, 3.0, 0.25, 0.1, 0.2]);
 }

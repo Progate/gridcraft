@@ -8,6 +8,7 @@ use super::find::{find, go_to};
 use super::format_cells::format_cells;
 use super::insert_function::insert_function;
 use super::names::{name_manager, paste_name};
+use super::page_setup::page_setup;
 use super::paste::{paste_special, paste_special_shortcuts};
 use super::ref_edit::{RefLabel, SHEET_DELETED, end_pick, home_sheet_deleted, place_window, ref_edit, window_shown};
 use super::spelling::spelling;
@@ -18,7 +19,7 @@ use gridcraft_engine::model::PageOrder;
 /// Builds the command params from form values for dialogs that need translation.
 /// The parameters OK sends to the dialog's command: its field values, reshaped per dialog.
 /// Unchanged hyperlink display text is omitted so its number or formula stays intact.
-pub(crate) fn build_params(d: &Dialog) -> Json {
+pub fn build_params(d: &Dialog) -> Json {
     let mut v = Json::Object(d.values.clone());
     match d.name.as_str() {
         "insertLink" => {
@@ -122,15 +123,7 @@ pub(crate) fn build_params(d: &Dialog) -> Json {
                 }
             }
         }
-        "pageSetup" => {
-            // A margin dragged below zero is zero, as the Margins command makes it (Page Setup
-            // refuses negative margins from other callers).
-            for key in ["left", "right", "top", "bottom", "header", "footer"] {
-                if let Some(inches) = d.values.get(key).and_then(Json::as_f64) {
-                    v[key] = json!(inches.max(0.0));
-                }
-            }
-        }
+        "pageSetup" => super::page_setup::params(d, &mut v),
         _ => {}
     }
     v
@@ -200,6 +193,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
             match d.name.as_str() {
                 "formatCells" => format_cells(app, ui, &mut d, &mut confirm),
                 "dataValidation" => data_validation_form(app, ui, &mut d, &mut confirm, &mut open),
+                "pageSetup" => page_setup(app, ui, &mut d, &mut confirm, &mut open),
                 "advancedFilter" => advanced_filter_form(app, ui, &mut d, &mut confirm, &mut open),
                 "insertFunction" => insert_function(app, ui, &mut d, &mut confirm),
                 "find" => find(app, ui, &mut d),
@@ -667,7 +661,9 @@ pub(super) fn form_fields(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
                     ui.vertical(|ui| {
                         let field_label = ui.label(egui::RichText::new(lang.tr(label)).strong());
                         let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
-                        if matches!(d.name.as_str(), "dataValidation" | "pivotValueSettings") {
+                        // Long lists are drop-downs, as in Excel: Data Validation's, Value Field
+                        // Settings', and Page Setup's paper sizes.
+                        if matches!(d.name.as_str(), "dataValidation" | "pivotValueSettings") || (d.name == "pageSetup" && key == "paper") {
                             let selected = options.iter().find(|(val, _)| *val == cur).map(|(_, text)| lang.tr(text)).unwrap_or("");
                             craft_ui::ComboBox::from_id_salt((d.name.clone(), key))
                                 .selected_text(selected)

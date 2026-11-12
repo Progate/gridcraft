@@ -168,6 +168,13 @@ fn selection_ref(app: &SheetApp, home: Option<&Home>, several: bool) -> String {
     }
 }
 
+/// The grid selection as the reference box `key` of `d` takes it ([`selection_ref`]); Page
+/// Setup's print titles take whole rows or columns, as Excel's do.
+fn pick_ref(app: &SheetApp, d: &Dialog, key: &str) -> String {
+    let r = selection_ref(app, d.refs.home.as_ref(), takes_several_areas(&d.name, key));
+    if d.name == "pageSetup" { super::page_setup::title_ref(key, r) } else { r }
+}
+
 /// Places the dialog's window before it is drawn, and returns the reference box the dialog is
 /// collapsed to. Escape or Enter expands a collapsed dialog again, rather than closing it or
 /// pressing OK, and the arrow keys select on the grid, unless another text field (the Name Box)
@@ -305,7 +312,7 @@ pub(super) fn begin_pick(app: &SheetApp, d: &mut Dialog, key: &str) {
     d.refs.refocus = false;
     // Focusing the box keeps its text: only a press after this one picks.
     d.refs.pressed = false;
-    d.refs.seen = selection_ref(app, d.refs.home.as_ref(), takes_several_areas(&d.name, key));
+    d.refs.seen = pick_ref(app, d, key);
     d.refs.seen_sheet = active_sheet_name(app);
 }
 
@@ -361,7 +368,7 @@ pub(super) fn ref_edit(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog, key: &
         if r.gained_focus() {
             begin_pick(app, d, key);
         } else if d.refs.target.as_deref() == Some(key) {
-            let sel = selection_ref(app, d.refs.home.as_ref(), takes_several_areas(&d.name, key));
+            let sel = pick_ref(app, d, key);
             let sheet = active_sheet_name(app);
             let pressed = std::mem::take(&mut d.refs.pressed);
             if sheet != d.refs.seen_sheet && !pressed {

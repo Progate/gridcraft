@@ -15,7 +15,8 @@ fn form_fields_are_translated() {
     for (dialog, labels) in [("pageSetup", ["Left margin (in):", "Footer (in):"]), ("insertPaste", ["Shift cells right", "Shift cells down"])] {
         let mut h = harness();
         h.state_mut().run("app.language.set", json!({"language": "pt"})).unwrap();
-        h.state_mut().open_dialog(dialog, json!({}));
+        // Page Setup's margins are on its Margins tab.
+        h.state_mut().open_dialog(dialog, if dialog == "pageSetup" { json!({"tab": "Margins"}) } else { json!({}) });
         h.run_steps(3);
         for english in labels {
             let translated = Language::PtBr.tr(english);

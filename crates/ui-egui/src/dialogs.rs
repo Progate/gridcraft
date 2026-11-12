@@ -23,6 +23,7 @@ mod find;
 mod format_cells;
 mod insert_function;
 mod names;
+mod page_setup;
 mod paste;
 mod ref_edit;
 mod show;
@@ -35,8 +36,9 @@ use data::{abs, data_validation_fields, remove_duplicates_range, validation_defa
 use find::go_to_entries;
 pub(crate) use names::insert_name;
 use names::pasteable_names;
+pub(crate) use page_setup::PAPER_SIZES;
 pub(crate) use ref_edit::SHEET_DELETED;
-pub(crate) use show::build_params;
+pub use show::build_params;
 pub use show::show;
 use zoom::zoom_preset;
 
@@ -640,37 +642,7 @@ impl Dialog {
                     json!({"header": header, "footer": footer})
                 },
             ),
-            "pageSetup" => {
-                // Opens on the active sheet's saved margins and page order, so OK without edits
-                // rewrites them unchanged. One `pageLayout.pageSetup` sets them all: one undo step.
-                let (margins, order) = app
-                    .session
-                    .active()
-                    .and_then(|d| d.wb.active())
-                    .map(|s| (s.print.margins, s.print.page_order))
-                    .unwrap_or(([0.7, 0.7, 0.75, 0.75, 0.3, 0.3], Default::default()));
-                // Round off f32 noise so the form shows 0.1, not 0.10000000149.
-                let [left, right, top, bottom, header, footer] = margins.map(|v| (f64::from(v) * 1e4).round() / 1e4);
-                Dialog::form(
-                    "pageSetup",
-                    "Page Setup",
-                    "pageLayout.pageSetup",
-                    vec![
-                        Number { key: "left", label: "Left margin (in):" },
-                        Number { key: "right", label: "Right margin (in):" },
-                        Number { key: "top", label: "Top margin (in):" },
-                        Number { key: "bottom", label: "Bottom margin (in):" },
-                        Number { key: "header", label: "Header (in):" },
-                        Number { key: "footer", label: "Footer (in):" },
-                        Choice {
-                            key: "pageOrder",
-                            label: "Page order",
-                            options: vec![("downThenOver", "Down, then over"), ("overThenDown", "Over, then down")],
-                        },
-                    ],
-                    json!({"left": left, "right": right, "top": top, "bottom": bottom, "header": header, "footer": footer, "pageOrder": order.id()}),
-                )
-            }
+            "pageSetup" => page_setup::open(app, p("tab").as_str()),
             "textToColumns" => Dialog::form(
                 "textToColumns",
                 "Convert Text to Columns",
