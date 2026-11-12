@@ -161,6 +161,12 @@ pub struct Sheet {
     /// What-If Analysis ▸ Scenario Manager (`<scenarios>`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scenarios: Option<crate::Scenarios>,
+    /// Errors the person chose to ignore (Ignore Error, `<ignoredErrors>`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignored_errors: Vec<crate::IgnoredError>,
+    /// Cells in the Watch Window (`<cellWatches>`), in the order they were added.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cell_watches: Vec<CellRef>,
     pub print: PrintSettings,
     /// Last selection and scroll position, saved with the file.
     pub view_active: CellRef,
@@ -198,6 +204,11 @@ pub fn points_to_chars(px: f64) -> f64 {
 }
 
 impl Sheet {
+    /// Whether Ignore Error turned `rule` off for cell `c`.
+    pub fn ignores_error(&self, c: CellRef, rule: crate::ErrorRule) -> bool {
+        self.ignored_errors.iter().any(|ie| ie.rules.contains(rule) && ie.ranges.iter().any(|r| r.contains(c)))
+    }
+
     pub fn new(name: impl Into<String>) -> Sheet {
         Sheet {
             name: name.into(),
@@ -240,6 +251,8 @@ impl Sheet {
             protection: None,
             edit_ranges: vec![],
             scenarios: None,
+            ignored_errors: vec![],
+            cell_watches: vec![],
             print: PrintSettings::default(),
             view_active: CellRef::default(),
             view_top_left: CellRef::default(),

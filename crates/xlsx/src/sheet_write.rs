@@ -563,6 +563,26 @@ fn write_sheet_printing<'a>(s: &mut String, sheet: &'a Sheet, rels: &mut Rels, o
             let _ = write!(s, "</{tag}>");
         }
     }
+    // CT_Worksheet: customProperties, cellWatches, ignoredErrors, smartTags, drawing.
+    if !sheet.cell_watches.is_empty() {
+        s.push_str("<cellWatches>");
+        for c in &sheet.cell_watches {
+            let _ = write!(s, "<cellWatch r=\"{}\"/>", c.a1());
+        }
+        s.push_str("</cellWatches>");
+    }
+    let ignored: Vec<_> = sheet.ignored_errors.iter().filter(|ie| !ie.rules.is_empty() && !ie.ranges.is_empty()).collect();
+    if !ignored.is_empty() {
+        s.push_str("<ignoredErrors>");
+        for ie in ignored {
+            let _ = write!(s, "<ignoredError sqref=\"{}\"", sqref(&ie.ranges));
+            for r in ie.rules.iter() {
+                let _ = write!(s, " {}=\"1\"", r.attr());
+            }
+            s.push_str("/>");
+        }
+        s.push_str("</ignoredErrors>");
+    }
 
     kept
 }

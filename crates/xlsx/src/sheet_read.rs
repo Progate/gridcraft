@@ -299,6 +299,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
             }
             "rowBreaks" => sheet.print.row_breaks = e.kids("brk").filter_map(|b| b.attr_u32("id")).filter(|&r| r > 0 && r < MAX_ROWS).collect(),
             "colBreaks" => sheet.print.col_breaks = e.kids("brk").filter_map(|b| b.attr_u32("id")).filter(|&c| c > 0 && c < MAX_COLS).collect(),
+            "cellWatches" | "ignoredErrors" => read_error_checking(e, &mut sheet),
             "sheetProtection" if e.flag("sheet", false) => {
                 sheet.protection = Some(SheetProtection {
                     password: read_password(e, ""),
@@ -487,6 +488,10 @@ fn read_protected_ranges(e: &El, sheet: &mut Sheet) {
 /// Most scenarios, and changing cells per scenario, read from a file (Excel allows 32 cells).
 const MAX_SCENARIOS: usize = 1000;
 const MAX_SCENARIO_CELLS: usize = 1000;
+/// Most Watch Window cells read from one sheet: a hostile file can't make the list huge.
+const MAX_CELL_WATCHES: usize = 10_000;
+/// Most `<ignoredError>` entries (and ranges in each) read from one sheet.
+const MAX_IGNORED_ERRORS: usize = 10_000;
 
 fn read_scenarios(e: &El, sheet: &mut Sheet) {
     let mut list = Vec::new();
@@ -919,6 +924,43 @@ fn truncate_chars(s: &str, max: usize) -> String {
     match s.char_indices().nth(max) {
         Some((at, _)) => s.get(..at).unwrap_or(s).to_string(),
         None => s.to_string(),
+    }
+}
+
+/// The Watch Window (`<cellWatches>`) and Ignore Error (`<ignoredErrors>`), the formula auditing
+/// state a sheet keeps.
+fn read_error_checking(e: &El, sheet: &mut Sheet) {
+    if e.name == "cellWatches" {
+        read_cell_watches(e, sheet);
+    } else {
+        read_ignored_errors(e, sheet);
+    }
+}
+
+/// The Watch Window's cells (`<cellWatches>`).
+fn read_cell_watches(e: &El, sheet: &mut Sheet) {
+    for w in e.kids("cellWatch").take(MAX_CELL_WATCHES) {
+        if let Some(c) = w.attr("r").and_then(CellRef::parse)
+            && !sheet.cell_watches.contains(&c)
+        {
+            sheet.cell_watches.push(c);
+        }
+    }
+}
+
+/// Ignore Error's entries (`<ignoredErrors>`): each names its cells and the rules they ignore.
+fn read_ignored_errors(e: &El, sheet: &mut Sheet) {
+    for ie in e.kids("ignoredError").take(MAX_IGNORED_ERRORS) {
+        let mut rules = gridcraft_model::ErrorRules::NONE;
+        for r in gridcraft_model::ErrorRule::ALL {
+            if ie.flag(r.attr(), false) {
+                rules.insert(r);
+            }
+        }
+        let ranges: Vec<RangeRef> = parse_sqref(ie.attr("sqref")).into_iter().take(MAX_IGNORED_ERRORS).collect();
+        if !rules.is_empty() && !ranges.is_empty() {
+            sheet.ignored_errors.push(gridcraft_model::IgnoredError { ranges, rules });
+        }
     }
 }
 

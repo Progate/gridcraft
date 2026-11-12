@@ -15,6 +15,7 @@ mod csv_tests;
 mod doc_protection_tests;
 mod encrypted_tests;
 mod equation_tests;
+mod error_checking_tests;
 mod fixtures;
 mod google_sheets_dummy;
 mod ink_roundtrip;

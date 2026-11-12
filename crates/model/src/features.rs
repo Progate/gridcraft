@@ -6,10 +6,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::style::{Color, Style};
 
+mod error_rules;
 mod pivot;
 mod print;
 mod scenarios;
 
+pub use error_rules::{ErrorRule, ErrorRules, IgnoredError};
 pub use pivot::{
     MAX_RANGE_BINS, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotRangeGroup, PivotShowAs, PivotSort,
     PivotTable, PivotValue, RangeBins,
