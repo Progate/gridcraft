@@ -142,9 +142,28 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             number_format
         ),
-        cmd!("home.accounting", "Accounting Number Format", ["Home", "Number"], None, "{range?, symbol?: \"$\"}", has_doc, accounting),
+        cmd!(
+            "home.accounting",
+            "Accounting Number Format",
+            ["Home", "Number"],
+            None,
+            "{range?, symbol?: \"$\"} (default: the region's currency; in ja-JP yen with no decimals)",
+            has_doc,
+            accounting
+        ),
         cmd!("home.percent", "Percent Style", ["Home", "Number"], Some("Ctrl+Shift+%"), "{range?}", has_doc, |s, p| set_fmt(s, p, "0%")),
-        cmd!("home.comma", "Comma Style", ["Home", "Number"], None, "{range?}", has_doc, |s, p| set_fmt(s, p, COMMA)),
+        cmd!(
+            "home.comma",
+            "Comma Style",
+            ["Home", "Number"],
+            None,
+            "{range?} (in the ja-JP region Japanese Excel's 桁区切りスタイル, with no decimals)",
+            has_doc,
+            |s, p| {
+                let code = format_code_in("Comma", region_of(s));
+                set_fmt(s, p, code)
+            }
+        ),
         cmd!("home.increaseDecimal", "Increase Decimal", ["Home", "Number"], None, "{range?}", has_doc, |s, p| decimals(s, p, 1)),
         cmd!("home.decreaseDecimal", "Decrease Decimal", ["Home", "Number"], None, "{range?}", has_doc, |s, p| decimals(s, p, -1)),
         // Styles
@@ -214,10 +233,20 @@ pub fn specs() -> Vec<CommandSpec> {
 
 const ACCOUNTING: &str = "_(\"$\"* #,##0.00_);_(\"$\"* \\(#,##0.00\\);_(\"$\"* \"-\"??_);_(@_)";
 const COMMA: &str = "_(* #,##0.00_);_(* \\(#,##0.00\\);_(* \"-\"??_);_(@_)";
+/// Japanese Excel's Accounting format (built-in 42 there): yen, no decimals, `-` before a negative.
+pub const ACCOUNTING_JA: &str = "_ \"¥\"* #,##0_ ;_ \"¥\"* \\-#,##0_ ;_ \"¥\"* \"-\"_ ;_ @_ ";
+/// Japanese Excel's Comma Style (桁区切りスタイル, built-in 41 there): no decimals.
+pub const COMMA_JA: &str = "_ * #,##0_ ;_ * \\-#,##0_ ;_ * \"-\"_ ;_ @_ ";
+/// Japanese Excel's Currency format (built-in 5 there), as a typed `¥1,280` gets it.
+pub const CURRENCY_JA: &str = gridcraft_core::parse::JA_YEN;
 
 /// Accounting Number Format with the currency symbol to use (Excel's own button takes the system
 /// currency; `symbol` is how the control channel picks another one, e.g. `"L"` for lempiras).
 fn accounting(s: &mut Session, p: &Json) -> Result<Json> {
+    let japanese = s.active().is_some_and(|d| d.wb.region.is_japanese());
+    if japanese && str_param(p, "symbol").is_none_or(|sym| sym == "¥") {
+        return set_fmt(s, p, ACCOUNTING_JA);
+    }
     let symbol = str_param(p, "symbol").unwrap_or("$");
     // The symbol goes into a quoted literal: a quote or a backslash would end it, and a control
     // character would reach the format's text as-is.
@@ -728,10 +757,27 @@ pub fn format_code_for(name: &str) -> &str {
     }
 }
 
+/// [`format_code_for`] as the region's Excel applies it: in Japanese, Currency, Accounting and
+/// Comma Style are in yen with no decimals. Other regions use the en-US codes.
+pub fn format_code_in<'a>(name: &'a str, region: &gridcraft_core::Region) -> &'a str {
+    match name {
+        "Currency" if region.is_japanese() => CURRENCY_JA,
+        "Accounting" if region.is_japanese() => ACCOUNTING_JA,
+        "Comma" if region.is_japanese() => COMMA_JA,
+        _ => format_code_for(name),
+    }
+}
+
+/// The region of the active workbook (en-US with none).
+fn region_of(s: &Session) -> &'static gridcraft_core::Region {
+    s.active().map_or_else(gridcraft_core::region::default_region, |d| d.wb.region)
+}
+
 fn number_format(s: &mut Session, p: &Json) -> Result<Json> {
+    let region = region_of(s);
     let code = str_param(p, "code")
         .map(str::to_string)
-        .or_else(|| str_param(p, "format").map(|f| format_code_for(f).to_string()))
+        .or_else(|| str_param(p, "format").map(|f| format_code_in(f, region).to_string()))
         .ok_or_else(|| bad("home.numberFormat", "missing `format` or `code`"))?;
     set_fmt(s, p, &code)
 }

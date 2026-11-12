@@ -786,8 +786,9 @@ impl Region {
 
     /// The code a cell in `code` is shown with in this region. Built-in format 14 (`m/d/yyyy`) is
     /// the system short date and 22 (`m/d/yyyy h:mm`) the short date and time, so Excel shows
-    /// them in the region's own order (`yyyy/m/d` in Japan) while the file keeps the built-in id.
-    /// Every other code is shown as written.
+    /// them in the region's own order (`yyyy/m/d` in Japan) while the file keeps the built-in id;
+    /// `[$-F800]` and `[$-F400]` codes are the system long date and time. Every other code is
+    /// shown as written.
     pub fn display_code<'a>(&self, code: &'a str) -> &'a str
     where
         'static: 'a,
@@ -795,6 +796,9 @@ impl Region {
         match code {
             "m/d/yyyy" => self.short_date,
             "m/d/yyyy h:mm" => self.datetime,
+            // Home › Number Format's Long Date and Time: the system long date and time.
+            "[$-F800]dddd, mmmm dd, yyyy" | "[$-F800]dddd\\,\\ mmmm\\ dd\\,\\ yyyy" if self.tag != "en-US" => self.long_date,
+            "[$-F400]h:mm:ss AM/PM" if self.tag != "en-US" => self.long_time,
             _ => code,
         }
     }
