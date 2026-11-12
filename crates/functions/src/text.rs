@@ -188,9 +188,35 @@ fn proper(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     text_val(out)
 }
 
+/// Removes leading and trailing spaces and shortens every run of spaces between words to its
+/// first space. Spaces are the ASCII space and, as Japanese Excel's TRIM treats it, the
+/// ideographic space U+3000 (`"　a　 b "` → `"a　b"`); other blanks such as U+00A0 are kept.
 fn trim(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+    use gridcraft_core::width::is_trim_space;
     let s = text(a, 0)?;
-    text_val(s.split(' ').filter(|w| !w.is_empty()).collect::<Vec<_>>().join(" "))
+    let mut out = String::with_capacity(s.len());
+    let mut gap: Option<char> = None;
+    for ch in s.chars() {
+        if is_trim_space(ch) {
+            gap = gap.or(Some(ch));
+            continue;
+        }
+        if let Some(sp) = gap.take()
+            && !out.is_empty()
+        {
+            out.push(sp);
+        }
+        out.push(ch);
+    }
+    text_val(out)
+}
+
+fn asc(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+    check_len(gridcraft_core::width::to_halfwidth(&text(a, 0)?))
+}
+
+fn jis(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+    text_val(gridcraft_core::width::to_fullwidth(&text(a, 0)?))
 }
 
 fn clean(a: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
@@ -1128,9 +1154,9 @@ pub(crate) fn specs() -> Vec<FnSpec> {
             "Replaces matches of a regular expression, all of them or a chosen occurrence.",
             regexreplace
         ),
-        f!("ASC", 1, 1, Text, S, "ASC(text)", "Converts full-width characters to half-width (no change for single-byte text).", identity),
-        f!("DBCS", 1, 1, Text, S, "DBCS(text)", "Converts half-width characters to full-width (no change in this locale).", identity),
-        f!("JIS", 1, 1, Text, S, "JIS(text)", "Converts half-width characters to full-width (no change in this locale).", identity),
+        f!("ASC", 1, 1, Text, S, "ASC(text)", "Converts full-width (double-byte) letters, digits, symbols and katakana to half-width.", asc),
+        f!("DBCS", 1, 1, Text, S, "DBCS(text)", "Converts half-width (single-byte) letters, digits, symbols and katakana to full-width.", jis),
+        f!("JIS", 1, 1, Text, S, "JIS(text)", "Converts half-width (single-byte) letters, digits, symbols and katakana to full-width.", jis),
         f!("PHONETIC", 1, 1, Text, S, "PHONETIC(reference)", "Returns the phonetic (furigana) text; here the text itself.", identity),
     ]
 }
@@ -1269,6 +1295,15 @@ mod tests {
         is_text(ev("PROPER", vec![t("this is a TITLE")]), "This Is A Title");
         is_text(ev("PROPER", vec![t("2-way street's")]), "2-Way Street'S");
         is_text(ev("TRIM", vec![t("  a   b  c ")]), "a b c");
+        // Japanese Excel: the ideographic space is a space too; a run keeps its first space.
+        is_text(ev("TRIM", vec![t("\u{3000}山田\u{3000}\u{3000}太郎\u{3000}")]), "山田\u{3000}太郎");
+        is_text(ev("TRIM", vec![t(" 山田\u{3000} 太郎 ")]), "山田\u{3000}太郎");
+        is_text(ev("TRIM", vec![t("a\u{a0}\u{a0}b")]), "a\u{a0}\u{a0}b");
+        is_text(ev("TRIM", vec![t("\u{3000} ")]), "");
+        is_text(ev("ASC", vec![t("ＡＢＣ　１２３　カタカナ　ガ")]), "ABC 123 ｶﾀｶﾅ ｶﾞ");
+        is_text(ev("JIS", vec![t("ABC 123 ｶﾀｶﾅ ｶﾞ")]), "ＡＢＣ　１２３　カタカナ　ガ");
+        is_text(ev("DBCS", vec![t("ﾊﾟｿｺﾝ")]), "パソコン");
+        is_text(ev("ASC", vec![n(12.0)]), "12");
         is_text(ev("CLEAN", vec![t("a\u{7}b\nc")]), "abc");
     }
 
