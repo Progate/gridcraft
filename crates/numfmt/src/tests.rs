@@ -1287,6 +1287,9 @@ fn japanese_colour_names_render_and_are_stored_in_english() {
     ] {
         assert_eq!(canonical_code(code), code);
     }
+}
+
+#[test]
 fn japanese_weekdays_and_eras() {
     // 2026-11-14 is a Saturday (serial 46340).
     let sat = 46340.0;
