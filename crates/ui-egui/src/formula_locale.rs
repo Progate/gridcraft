@@ -85,7 +85,7 @@ pub(crate) fn signature(name: &str, locale: FormulaLocale, language: Language) -
     let english = crate::formula_bar::function_signature(locale.canonical_name(name))?;
     let Some((head, args)) = split_signature(&english) else { return Some(english) };
     let separator = format!("{} ", locale.list_separator());
-    let args = match args.iter().map(|arg| translate_argument(arg, language)).collect::<Option<Vec<_>>>() {
+    let args = match args.iter().map(|arg| translate_argument(head, arg, language)).collect::<Option<Vec<_>>>() {
         Some(translated) => translated.join(&separator),
         None => args.join(&separator),
     };
@@ -95,7 +95,46 @@ pub(crate) fn signature(name: &str, locale: FormulaLocale, language: Language) -
 /// A function's description in the interface language (English while untranslated).
 pub(crate) fn description(name: &str, locale: FormulaLocale, language: Language) -> Option<String> {
     let english = crate::formula_bar::function_description(locale.canonical_name(name))?;
-    Some(language.function_description(&english).map_or(english, str::to_string))
+    Some(language.function_description_of(locale.canonical_name(name), &english).map_or(english, str::to_string))
+}
+
+/// The values an argument takes, listed under the hint while it is typed as Excel lists them:
+/// (function, argument, [(value, label)]). Labels are catalog keys in Excel's English wording.
+const ARGUMENT_CHOICES: &[(&str, &str, &[(&str, &str)])] = &[
+    ("HLOOKUP", "range_lookup", &[("TRUE", "TRUE - Approximate match"), ("FALSE", "FALSE - Exact match")]),
+    ("MATCH", "match_type", &[("1", "1 - Less than"), ("0", "0 - Exact match"), ("-1", "-1 - Greater than")]),
+    ("RANK", "order", &[("0", "0 - Descending"), ("1", "1 - Ascending")]),
+    ("RANK.EQ", "order", &[("0", "0 - Descending"), ("1", "1 - Ascending")]),
+    ("SORT", "sort_order", &[("1", "1 - Ascending"), ("-1", "-1 - Descending")]),
+    ("SORT", "by_col", &[("FALSE", "FALSE - Sort by row"), ("TRUE", "TRUE - Sort by column")]),
+    ("VLOOKUP", "range_lookup", &[("TRUE", "TRUE - Approximate match"), ("FALSE", "FALSE - Exact match")]),
+    ("XLOOKUP", "match_mode", XMATCH_MODES),
+    ("XLOOKUP", "search_mode", XSEARCH_MODES),
+    ("XMATCH", "match_mode", XMATCH_MODES),
+    ("XMATCH", "search_mode", XSEARCH_MODES),
+];
+
+const XMATCH_MODES: &[(&str, &str)] = &[
+    ("0", "0 - Exact match"),
+    ("-1", "-1 - Exact match or next smaller item"),
+    ("1", "1 - Exact match or next larger item"),
+    ("2", "2 - Wildcard character match"),
+];
+
+const XSEARCH_MODES: &[(&str, &str)] = &[
+    ("1", "1 - Search first-to-last"),
+    ("-1", "-1 - Search last-to-first"),
+    ("2", "2 - Binary search (sorted ascending order)"),
+    ("-2", "-2 - Binary search (sorted descending order)"),
+];
+
+/// The values argument `arg` (0-based) of function `name` (as the formula syntax spells it)
+/// takes, with their English labels; `None` for a free-form argument.
+pub(crate) fn argument_choices(name: &str, arg: usize, locale: FormulaLocale) -> Option<&'static [(&'static str, &'static str)]> {
+    let english = crate::formula_bar::function_signature(locale.canonical_name(name))?;
+    let (head, args) = split_signature(&english)?;
+    let argument = argument_name(args.get(arg)?);
+    ARGUMENT_CHOICES.iter().find(|(f, a, _)| f.eq_ignore_ascii_case(head) && *a == argument).map(|(_, _, choices)| *choices)
 }
 
 /// `SUM(number1, [number2], ...)` -> `SUM` and its arguments as written.
@@ -113,14 +152,14 @@ fn argument_name(arg: &str) -> &str {
     arg.trim_end_matches(|c: char| c.is_ascii_digit())
 }
 
-/// `[number2]` -> `[número2]`: brackets, index and `...` stay.
-fn translate_argument(arg: &str, language: Language) -> Option<String> {
+/// `[number2]` -> `[número2]`: brackets, index and `...` stay. `function` is the English name.
+fn translate_argument(function: &str, arg: &str, language: Language) -> Option<String> {
     let name = argument_name(arg);
     if name == "..." {
         return Some(arg.to_string());
     }
     // `arg` is `[`? + `name` + index + `]`?, so the first match is the name itself.
-    Some(arg.replacen(name, language.function_argument(name)?, 1))
+    Some(arg.replacen(name, language.function_argument_of(function, name)?, 1))
 }
 
 /// Avoid suggesting an alias that would call a workbook/table name instead of the function.
@@ -169,5 +208,33 @@ mod tests {
         assert!(sumifs.ends_with("(sum_range; criteria_range1; criteria1; ...)"), "{sumifs}");
         assert_eq!(description("SUMIFS", Es, Language::Es).as_deref(), Some("Adds the cells that meet every condition."));
         assert_eq!(sig("IF", En, Language::En), "IF(logical_test, [value_if_true], [value_if_false])");
+    }
+
+    /// Japanese hints use Excel's Japanese argument names, per function, with English formulas.
+    #[test]
+    fn japanese_hints_use_excels_argument_names() {
+        use FormulaLocale::En;
+        let ja = Language::Ja;
+        assert_eq!(sig("XLOOKUP", En, ja), "XLOOKUP(検索値, 検索範囲, 戻り範囲, [見つからない場合], [一致モード], [検索モード])");
+        assert_eq!(sig("VLOOKUP", En, ja), "VLOOKUP(検索値, 範囲, 列番号, [検索方法])");
+        assert_eq!(sig("IF", En, ja), "IF(論理式, [値が真の場合], [値が偽の場合])");
+        assert_eq!(sig("SUMIFS", En, ja), "SUMIFS(合計対象範囲, 条件範囲1, 条件1, ...)");
+        assert_eq!(sig("sum", En, ja), "SUM(数値1, [数値2], ...)");
+        assert_eq!(description("COUNTIF", En, ja).as_deref(), Some("指定された範囲に含まれるセルのうち、検索条件に一致するセルの個数を返します。"));
+        // A function the Japanese help doesn't cover keeps its English help, whole.
+        let english = sig("BESSELJ", En, Language::En);
+        assert_eq!(sig("BESSELJ", En, ja), english);
+    }
+
+    #[test]
+    fn mode_arguments_list_their_values() {
+        use FormulaLocale::En;
+        let modes = argument_choices("xlookup", 4, En).unwrap_or_default();
+        assert_eq!(modes.iter().map(|(v, _)| *v).collect::<Vec<_>>(), ["0", "-1", "1", "2"]);
+        assert_eq!(Language::Ja.tr(modes[1].1), "-1 - 完全一致または次に小さい項目");
+        let lookup = argument_choices("VLOOKUP", 3, En).unwrap_or_default();
+        assert_eq!(lookup.iter().map(|(_, l)| Language::Ja.tr(l)).collect::<Vec<_>>(), ["TRUE - 近似一致", "FALSE - 完全一致"]);
+        assert!(argument_choices("VLOOKUP", 0, En).is_none());
+        assert!(argument_choices("SUM", 7, En).is_none());
     }
 }

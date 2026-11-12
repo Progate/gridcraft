@@ -1212,6 +1212,18 @@ fn show_editor_suggestions(ui: &mut egui::Ui, suggestion: EditorSuggestion<'_>) 
                         }
                         ui.label(egui::RichText::new(")").font(theme::ui_font(12.0)));
                     });
+                    // The values a mode argument takes (XLOOKUP's match_mode, VLOOKUP's
+                    // range_lookup), as Excel lists them; a click types the value.
+                    if let Some(choices) = crate::formula_locale::argument_choices(&name, arg, ed.locale) {
+                        ui.separator();
+                        for (value, label) in choices {
+                            let item =
+                                egui::Button::new(egui::RichText::new(language.tr(label)).font(theme::ui_font(12.0))).frame_when_inactive(false);
+                            if ui.add(item).clicked() {
+                                ed.insert_at_caret(value);
+                            }
+                        }
+                    }
                     // The description too, so values an argument takes (DATEDIF's units, #363) show
                     // while it's typed; wrapped to the hint's width.
                     if let Some(desc) = crate::formula_locale::description(&name, ed.locale, language) {

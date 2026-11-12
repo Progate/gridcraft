@@ -17,6 +17,7 @@ mod es_functions;
 mod fr;
 mod it;
 mod ja;
+mod ja_functions;
 mod ko;
 mod nl;
 mod pl;
@@ -281,6 +282,33 @@ impl Language {
         lookup(self.function_help()?.1, english)
     }
 
+    /// The description of the function `name` (its English name, any case) in this language: the
+    /// function's own help when the language keys its help by function, else the translation of
+    /// its `english` description; `None` when untranslated.
+    pub fn function_description_of(self, name: &str, english: &str) -> Option<&'static str> {
+        self.named_function_help(name).map(|(_, description, _)| *description).or_else(|| self.function_description(english))
+    }
+
+    /// The name of argument `english` (`lookup_value`, without brackets or index) of the function
+    /// `name` in this language. Japanese names an argument per function (VLOOKUP's `table_array`
+    /// is 範囲, SUMIFS' `criteria` is 条件), so that function's own name wins over the shared one.
+    pub fn function_argument_of(self, name: &str, english: &str) -> Option<&'static str> {
+        match self.named_function_help(name) {
+            Some((_, _, arguments)) => arguments.iter().find(|(key, _)| *key == english).map(|(_, translated)| *translated),
+            None => self.function_argument(english),
+        }
+    }
+
+    /// The help this language keys by function name, for the function `name`.
+    fn named_function_help(self, name: &str) -> Option<&'static ja_functions::FunctionHelp> {
+        let table = match self {
+            Self::Ja => ja_functions::FUNCTIONS,
+            _ => return None,
+        };
+        let name = name.to_ascii_uppercase();
+        table.binary_search_by(|(key, _, _)| (*key).cmp(name.as_str())).ok().and_then(|i| table.get(i))
+    }
+
     /// The function help tables (descriptions, argument names) of the languages that have them.
     fn function_help(self) -> Option<(HelpTable, HelpTable)> {
         match self {
@@ -456,6 +484,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Japanese help is keyed by function name: sorted, unique, and every argument it names is one
+    /// of that function's arguments in the catalog (a renamed argument would fall back to English).
+    #[test]
+    fn japanese_function_help_matches_the_catalog() {
+        assert!(ja_functions::FUNCTIONS.windows(2).all(|pair| pair[0].0 < pair[1].0), "ja function help is not sorted and unique");
+        for (name, description, arguments) in ja_functions::FUNCTIONS {
+            assert!(!description.is_empty(), "{name}");
+            let signature = crate::formula_bar::function_signature(name).unwrap_or_else(|| panic!("{name} is not in the function catalog"));
+            for (english, japanese) in *arguments {
+                assert!(!japanese.is_empty(), "{name}: {english}");
+                assert!(signature.contains(english), "{name}: {english} is not an argument of {signature}");
+            }
+        }
+        assert_eq!(Language::Ja.function_argument_of("vlookup", "range_lookup"), Some("検索方法"));
+        assert_eq!(Language::Ja.function_argument_of("SUMIFS", "criteria"), Some("条件"));
+        assert_eq!(Language::Ja.function_argument_of("COUNTIF", "criteria"), Some("検索条件"));
+        assert_eq!(Language::Es.function_argument_of("VLOOKUP", "range_lookup"), Some("ordenado"));
+        assert_eq!(Language::Ja.function_description_of("BESSELJ", "Bessel function Jn(x)."), None);
     }
 
     #[test]
