@@ -229,6 +229,37 @@ impl Language {
         }
     }
 
+    /// The name Excel's style galleries show for a table or PivotTable style, built from the
+    /// `TableStyleMedium7` / `PivotStyleLight16` name it is saved under: the colour of its accent
+    /// in `theme`, then the family and number ("Green, Table Style Medium 7"; in Japanese
+    /// 「緑, テーブル スタイル (中間) 7」). A name in another form is returned as it is.
+    pub fn style_name(self, theme: &gridcraft_engine::model::Theme, style: &str) -> String {
+        let (rest, kind) = if let Some(rest) = style.strip_prefix("TableStyle") {
+            (rest, "Table Style {family} {n}")
+        } else if let Some(rest) = style.strip_prefix("PivotStyle") {
+            (rest, "Pivot Style {family} {n}")
+        } else {
+            return style.to_owned();
+        };
+        let Some((family, n)) = ["Light", "Medium", "Dark"].into_iter().find_map(|f| Some((f, rest.strip_prefix(f)?.parse::<u32>().ok()?))) else {
+            return style.to_owned();
+        };
+        // Styles 1, 8, 15 and 22 of a family are the neutral ones; the six after each use Accent 1–6,
+        // the slots `gridcraft_engine::tables::look` paints the swatches with.
+        let color = match (n.saturating_sub(1) % 7) as usize {
+            0 if family == "Light" => "Style Color|White",
+            0 => "Style Color|Black",
+            k => theme.colors.get(3 + k).map_or("Style Color|Black", |rgb| style_color(*rgb)),
+        };
+        let family = self.tr(match family {
+            "Light" => "Table Styles|Light",
+            "Medium" => "Table Styles|Medium",
+            _ => "Table Styles|Dark",
+        });
+        let name = self.tr(kind).replace("{family}", family).replace("{n}", &n.to_string());
+        self.tr("{color}, {style}").replace("{color}", self.tr(color)).replace("{style}", &name)
+    }
+
     pub(crate) fn tr_error(self, message: &str) -> String {
         let message = if message.starts_with("command `") { crate::clean_error(message) } else { message.to_owned() };
 
@@ -256,6 +287,41 @@ impl Language {
             Self::Es => Some((es_functions::DESCRIPTIONS, es_functions::ARGUMENTS)),
             _ => None,
         }
+    }
+}
+
+/// The catalog key naming the colour `rgb` (0xRRGGBB) the way Office's colour pickers do, for a
+/// style name: near-greys by lightness, the rest by hue band. Office's own accents land on its
+/// names (0xFFC000 Gold, 0xA5A5A5 Gray, 0x4472C4 Blue, 0x4EA72E Green).
+fn style_color(rgb: u32) -> &'static str {
+    let [r, g, b] = [(rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF].map(|c| c as f32 / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let chroma = max - min;
+    if chroma < 0.12 {
+        return match (max + min) / 2.0 {
+            l if l > 0.85 => "Style Color|White",
+            l if l < 0.2 => "Style Color|Black",
+            _ => "Style Color|Gray",
+        };
+    }
+    let hue = if max == r {
+        60.0 * ((g - b) / chroma)
+    } else if max == g {
+        60.0 * (2.0 + (b - r) / chroma)
+    } else {
+        60.0 * (4.0 + (r - g) / chroma)
+    }
+    .rem_euclid(360.0);
+    match hue {
+        h if !(15.0..345.0).contains(&h) => "Style Color|Red",
+        h if h < 38.0 => "Style Color|Orange",
+        h if h < 52.0 => "Style Color|Gold",
+        h if h < 70.0 => "Style Color|Yellow",
+        h if h < 165.0 => "Style Color|Green",
+        h if h < 190.0 => "Style Color|Teal",
+        h if h < 260.0 => "Style Color|Blue",
+        h if h < 315.0 => "Style Color|Purple",
+        _ => "Style Color|Pink",
     }
 }
 
@@ -355,6 +421,27 @@ mod tests {
         assert_eq!(Language::Uk.translated("Chart"), Some("Діаграма"));
         assert_eq!(Language::Uk.translated("Insert Chart"), Some("Вставити діаграму"));
         assert_eq!(Language::Uk.translated("Diagram"), Some("Схема"));
+    }
+
+    /// Style galleries name a style by its accent's colour, family and number, as Excel does; the
+    /// Japanese catalog uses Excel's 淡色 / 中間 / 濃色 family names.
+    #[test]
+    fn style_names_read_like_excels_gallery_tooltips() {
+        let office = gridcraft_engine::model::Theme::default();
+        assert_eq!(Language::En.style_name(&office, "TableStyleMedium7"), "Green, Table Style Medium 7");
+        assert_eq!(Language::Ja.style_name(&office, "TableStyleMedium7"), "緑, テーブル スタイル (中間) 7");
+        assert_eq!(Language::Ja.style_name(&office, "TableStyleLight1"), "白, テーブル スタイル (淡色) 1");
+        assert_eq!(Language::Ja.style_name(&office, "TableStyleDark1"), "黒, テーブル スタイル (濃色) 1");
+        assert_eq!(Language::Ja.style_name(&office, "TableStyleMedium3"), "オレンジ, テーブル スタイル (中間) 3");
+        assert_eq!(Language::Ja.style_name(&office, "PivotStyleLight16"), "青, ピボットスタイル (淡色) 16");
+        assert_eq!(Language::En.style_name(&office, "PivotStyleLight16"), "Blue, Pivot Style Light 16");
+        // Office 2013–2022's accents keep the names its colour pickers give them.
+        let mut office2013 = office.clone();
+        office2013.colors[4..10].copy_from_slice(&[0x4472C4, 0xED7D31, 0xA5A5A5, 0xFFC000, 0x5B9BD5, 0x70AD47]);
+        let names: Vec<String> = (2..=7).map(|n| Language::Ja.style_name(&office2013, &format!("TableStyleMedium{n}"))).collect();
+        let colors: Vec<&str> = names.iter().map(|n| n.split(',').next().unwrap_or_default()).collect();
+        assert_eq!(colors, ["青", "オレンジ", "灰色", "ゴールド", "青", "緑"]);
+        assert_eq!(Language::Ja.style_name(&office, "Custom Style"), "Custom Style");
     }
 
     /// Help tables are sorted and unique: lookups binary-search them.
