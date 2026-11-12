@@ -588,7 +588,13 @@ impl Dialog {
                     Number { key: "step", label: "Step value:" },
                     Text { key: "stop", label: "Stop value:" },
                 ],
-                json!({"direction": if p("direction") == "rows" { "rows" } else { "columns" }, "type": "linear", "dateUnit": "day", "step": 1}),
+                json!({
+                    "direction": if p("direction") == "rows" { "rows" } else { "columns" },
+                    // A date in the active cell starts the dialog on Date, as in Excel.
+                    "type": if series_starts_with_date(app) { "date" } else { "linear" },
+                    "dateUnit": "day",
+                    "step": 1
+                }),
             ),
             "comment" => {
                 let threaded = p("threaded").as_bool().unwrap_or(true);
@@ -1507,4 +1513,12 @@ mod tests {
         assert_eq!(d.values["type"], "list");
         assert!(d.values.get("formula1").is_none());
     }
+}
+
+/// Whether the active cell holds a date, so the Series dialog opens on the Date type.
+fn series_starts_with_date(app: &SheetApp) -> bool {
+    app.session.active().is_some_and(|d| {
+        let at = d.selection.active;
+        gridcraft_engine::fill::starts_with_date(&d.wb, d.wb.active_sheet(), RangeRef::new(at, at))
+    })
 }

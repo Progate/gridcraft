@@ -138,7 +138,11 @@ pub fn build_params(d: &Dialog) -> Json {
             }
         }
         "series" => {
-            if let Some(s) = d.values.get("stop").and_then(Json::as_str).and_then(|s| s.parse::<f64>().ok()) {
+            // A number goes as one; a date (`2026/11/30`) goes as typed for the engine to read.
+            let stop = d.values.get("stop").and_then(Json::as_str).map(str::trim).filter(|s| !s.is_empty());
+            if let Some(n) = stop.and_then(|s| s.parse::<f64>().ok()) {
+                v["stop"] = json!(n);
+            } else if let Some(s) = stop {
                 v["stop"] = json!(s);
             } else if let Some(m) = v.as_object_mut() {
                 m.remove("stop");

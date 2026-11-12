@@ -587,7 +587,15 @@ pub fn series(cx: &mut Ctx, sheet: usize, options: SeriesOptions<'_>) -> Result<
     let sys = cx.wb.date_system;
     let Some(sh) = cx.wb.sheet(sheet) else { return Ok(()) };
     let lanes: Vec<u32> = if rows { (r.start.row..=r.end.row).collect() } else { (r.start.col..=r.end.col).collect() };
-    let len = if rows { r.width() } else { r.height() };
+    let mut len = if rows { r.width() } else { r.height() };
+    // A lone start cell with a stop value runs on until the stop value, as in Excel, within the
+    // sheet and the fill size cap.
+    let extend = len == 1 && stop.is_some();
+    if extend {
+        let room = if rows { gridcraft_core::MAX_COLS.saturating_sub(r.start.col) } else { gridcraft_core::MAX_ROWS.saturating_sub(r.start.row) };
+        let cap = MAX_FILL_CELLS / (lanes.len().max(1) as u64);
+        len = room.min(u32::try_from(cap).unwrap_or(u32::MAX));
+    }
     let mut writes = Vec::new();
     for lane in lanes {
         let first_cell = if rows { CellRef::new(lane, r.start.col) } else { CellRef::new(r.start.row, lane) };
@@ -611,6 +619,10 @@ pub fn series(cx: &mut Ctx, sheet: usize, options: SeriesOptions<'_>) -> Result<
                 }
                 _ => v + step,
             };
+            // A series that doesn't move (step 0, growth by 1) never reaches the stop value.
+            if extend && round15(v) == round15(prev) {
+                break;
+            }
             // The stop value bounds the series in the direction it runs (a growth by 0.5 falls).
             if let Some(s) = stop
                 && ((v >= prev && round15(v) > s) || (v < prev && round15(v) < s))
@@ -998,6 +1010,44 @@ mod tests {
         s.execute("cell.set", serde_json::json!({"cell": "C2", "input": "月"})).unwrap();
         s.execute("edit.autoFill", serde_json::json!({"source": "C2", "target": "C2:C4", "mode": "alternate"})).unwrap();
         assert_eq!(texts(&s, "C2:C4"), ["月", "月", "月"]);
+    }
+
+    #[test]
+    fn series_from_one_cell_runs_to_its_stop_value() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        s.execute("cell.set", serde_json::json!({"cell": "A1", "input": "1"})).unwrap();
+        s.execute("edit.fillSeries", serde_json::json!({"range": "A1", "direction": "columns", "type": "linear", "step": 2, "stop": 9})).unwrap();
+        assert_eq!(texts(&s, "A1:A6"), ["1", "3", "5", "7", "9", ""]);
+        s.execute("cell.set", serde_json::json!({"cell": "C1", "input": "10"})).unwrap();
+        s.execute("edit.fillSeries", serde_json::json!({"range": "C1", "direction": "rows", "step": -5, "stop": 0})).unwrap();
+        assert_eq!(texts(&s, "C1:F1"), ["10", "5", "0", ""]);
+        // A step that never reaches the stop value writes nothing.
+        s.execute("cell.set", serde_json::json!({"cell": "H1", "input": "4"})).unwrap();
+        s.execute("edit.fillSeries", serde_json::json!({"range": "H1", "type": "growth", "step": 1, "stop": 100})).unwrap();
+        assert_eq!(texts(&s, "H1:H2"), ["4", ""]);
+    }
+
+    #[test]
+    fn series_of_dates_stops_at_a_typed_date() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        s.execute("cell.set", serde_json::json!({"cell": "A1", "input": "2026/11/27"})).unwrap();
+        let date = |s: &mut crate::Session, unit: &str, stop: &str| {
+            s.execute("edit.fillSeries", serde_json::json!({"range": "A1", "type": "date", "dateUnit": unit, "step": 1, "stop": stop})).unwrap();
+            let d = s.doc().unwrap();
+            let sh = d.wb.active().unwrap();
+            let out: Vec<f64> = (0..8).map_while(|r| sh.value(CellRef::new(r, 0)).as_f64()).collect();
+            s.execute("edit.clearAll", serde_json::json!({"range": "A2:A20"})).unwrap();
+            out
+        };
+        let start = gridcraft_core::date::serial_from_ymd(gridcraft_core::DateSystem::default(), 2026, 11, 27).unwrap();
+        assert_eq!(date(&mut s, "day", "2026/11/30"), [start, start + 1.0, start + 2.0, start + 3.0]);
+        // Friday 27th, then Monday 30th and Tuesday 1st.
+        assert_eq!(date(&mut s, "weekday", "2026/12/1"), [start, start + 3.0, start + 4.0]);
+        assert_eq!(date(&mut s, "month", "2027/2/28").len(), 4);
+        assert_eq!(date(&mut s, "year", "2029/11/27").len(), 4);
+        assert!(s.execute("edit.fillSeries", serde_json::json!({"range": "A1", "type": "date", "stop": "soon"})).is_err());
     }
 
     #[test]

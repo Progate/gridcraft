@@ -76,7 +76,15 @@ pub(super) fn fill_series(s: &mut Session, p: &Json) -> Result<Json> {
     let rows = str_param(p, "direction").map(|d| d == "rows").unwrap_or(r.width() > r.height());
     let kind = str_param(p, "type").unwrap_or("linear").to_string();
     let step = f64_param(p, "step").unwrap_or(1.0);
-    let stop = f64_param(p, "stop");
+    // The stop value as typed in the Series dialog: a number, or a date (`2026/11/30`) or other
+    // entry read as a cell would read it.
+    let stop = match p.get("stop") {
+        Some(Json::String(t)) if !t.trim().is_empty() => match gridcraft_core::parse::parse_input(t.trim(), s.doc()?.wb.date_system).value {
+            gridcraft_core::Value::Number(n) => Some(n),
+            _ => return Err(bad("edit.fillSeries", format!("the stop value `{t}` is not a number or a date"))),
+        },
+        _ => f64_param(p, "stop"),
+    };
     let unit = str_param(p, "dateUnit").unwrap_or("day").to_string();
     edit(s, |cx| {
         crate::fill::series(cx, sheet, crate::fill::SeriesOptions { range: r, rows, kind: &kind, step, stop, unit: &unit })?;
