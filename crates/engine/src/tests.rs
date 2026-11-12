@@ -1536,7 +1536,7 @@ fn data_sort_orders_marks_and_digit_scripts_like_excel() {
 #[test]
 fn data_sort_in_a_japanese_workbook_uses_the_japanese_order() {
     let mut s = s();
-    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).region = gridcraft_core::region::lookup("ja-JP");
+    s.execute("app.region.set", json!({"region": "ja-JP"})).unwrap();
     s.execute("range.setValues", json!({"range": "A1", "values": [["東京"], ["ｳﾒ"], ["大阪"], ["いちご"], ["アンズ"]]})).unwrap();
     s.execute("data.sortAscending", json!({"range": "A1:A5", "column": "A"})).unwrap();
     let col: Vec<Value> = (1..=5).map(|r| v(&s, &format!("A{r}"))).collect();
@@ -1574,7 +1574,7 @@ fn data_sort_in_an_english_workbook_keeps_code_point_order_for_kanji() {
     s.execute("range.setValues", json!({"range": "A1", "values": [["亜"], ["一"]]})).unwrap();
     s.execute("data.sortAscending", json!({"range": "A1:A2", "column": "A"})).unwrap();
     assert_eq!(v(&s, "A1"), Value::from("一"));
-    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).region = gridcraft_core::region::lookup("ja-JP");
+    s.execute("app.region.set", json!({"region": "ja-JP"})).unwrap();
     s.execute("data.sortAscending", json!({"range": "A1:A2", "column": "A"})).unwrap();
     assert_eq!(v(&s, "A1"), Value::from("亜"));
 }

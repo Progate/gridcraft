@@ -1781,7 +1781,6 @@ pub(super) const AUTOFILTER: &[(&str, &str)] = &[
     ("Column data format", "列のデータ形式"),
     ("Do not import column (skip)", "削除する"),
     ("Skip Column", "削除"),
-    ("Date:", "日付:"),
     ("< Back", "< 戻る"),
     ("Next >", "次へ >"),
     ("Finish", "完了"),
