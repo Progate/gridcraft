@@ -55,6 +55,70 @@ impl FormatColor {
     }
 }
 
+impl FormatColor {
+    /// The tag's canonical spelling in a stored format code (`Red`, `Color3`).
+    pub fn code_name(self) -> String {
+        use FormatColor as F;
+        match self {
+            F::Black => "Black".into(),
+            F::Blue => "Blue".into(),
+            F::Cyan => "Cyan".into(),
+            F::Green => "Green".into(),
+            F::Magenta => "Magenta".into(),
+            F::Red => "Red".into(),
+            F::White => "White".into(),
+            F::Yellow => "Yellow".into(),
+            F::Indexed(n) => format!("Color{n}"),
+        }
+    }
+}
+
+/// A format code as Excel stores it: colour tags typed in another spelling (`[赤]`, `[色3]`,
+/// `[red]`) become the English names a file holds (`[Red]`, `[Color3]`). Everything else, quoted
+/// text, escaped characters and other tags (`[DBNum1]`, `[$-411]`, `[>100]`, `[h]`), stays as typed.
+pub fn canonical_code(code: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    let mut rest = code;
+    while let Some(c) = rest.chars().next() {
+        let len = c.len_utf8();
+        match c {
+            '"' => {
+                let end = rest[1..].find('"').map_or(rest.len(), |i| i + 2);
+                out.push_str(&rest[..end]);
+                rest = &rest[end..];
+            }
+            '\\' | '_' | '*' => {
+                let end = rest[len..].chars().next().map_or(rest.len(), |n| len + n.len_utf8());
+                out.push_str(&rest[..end]);
+                rest = &rest[end..];
+            }
+            '[' => match rest.find(']') {
+                Some(close) => {
+                    let content = &rest[1..close];
+                    match parse::parse_color(&content.trim().to_lowercase()) {
+                        Some(color) => {
+                            out.push('[');
+                            out.push_str(&color.code_name());
+                            out.push(']');
+                        }
+                        None => out.push_str(&rest[..=close]),
+                    }
+                    rest = &rest[close + 1..];
+                }
+                None => {
+                    out.push_str(rest);
+                    rest = "";
+                }
+            },
+            _ => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+        }
+    }
+    out
+}
+
 /// Best guess at the ribbon's number-format category.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FormatKind {

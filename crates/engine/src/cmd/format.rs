@@ -538,11 +538,15 @@ fn borders(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn format_cells(s: &mut Session, p: &Json) -> Result<Json> {
-    let Some(patch) = p.get("style").map(snake_case_keys) else {
+    let Some(mut patch) = p.get("style").map(snake_case_keys) else {
         // Menu invocation without params: the UI opens the dialog.
         s.ui_requests.push(crate::UiRequest::Dialog("formatCells".into(), json!({})));
         return ok();
     };
+    // A code typed in Format Cells with Japanese colour names is stored in English, as Excel does.
+    if let Some(code) = patch.get("num_fmt").and_then(Json::as_str).map(gridcraft_numfmt::canonical_code) {
+        patch["num_fmt"] = json!(code);
+    }
     // Validate by merging into the active style once.
     let base = serde_json::to_value(active_style(s)?).map_err(|e| EngineError::Other(e.to_string()))?;
     let merged = merge_json(base, &patch);
@@ -733,7 +737,7 @@ fn number_format(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn set_fmt(s: &mut Session, p: &Json, code: &str) -> Result<Json> {
-    let nf = NumFmt::new(code);
+    let nf = NumFmt::new(&gridcraft_numfmt::canonical_code(code));
     apply_style(s, p, |st| st.num_fmt = nf.clone())
 }
 
@@ -868,6 +872,17 @@ mod tests {
         // The style's own snake_case keys keep working.
         s.execute("home.formatCells", json!({"range": "A1", "style": {"num_fmt": "0.00"}})).unwrap();
         assert_eq!(s.execute("cell.get", json!({"cell": "A1"})).unwrap()["style"]["num_fmt"], "0.00");
+    }
+
+    #[test]
+    fn japanese_colour_names_in_a_custom_format_are_stored_in_english() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        s.execute("home.formatCells", json!({"range": "A1", "style": {"numFmt": "#,##0;[赤]-#,##0;[青]0"}})).unwrap();
+        s.execute("home.numberFormat", json!({"range": "A2", "code": "[DBNum1][緑]General"})).unwrap();
+        let mut fmt = |cell: &str| s.execute("cell.get", json!({"cell": cell})).unwrap()["style"]["num_fmt"].clone();
+        assert_eq!(fmt("A1"), "#,##0;[Red]-#,##0;[Blue]0");
+        assert_eq!(fmt("A2"), "[DBNum1][Green]General");
     }
 
     #[test]

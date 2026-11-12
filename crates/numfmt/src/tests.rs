@@ -1247,3 +1247,40 @@ fn round_as_displayed_matches_excel() {
     assert_eq!(r("0", f64::MAX), f64::MAX);
     assert_eq!(r("0.0E+0", f64::MIN_POSITIVE), 2.2e-308);
 }
+
+#[test]
+fn japanese_colour_names_render_and_are_stored_in_english() {
+    for (ja, color) in [
+        ("赤", FormatColor::Red),
+        ("青", FormatColor::Blue),
+        ("黒", FormatColor::Black),
+        ("緑", FormatColor::Green),
+        ("白", FormatColor::White),
+        ("黄", FormatColor::Yellow),
+        ("紫", FormatColor::Magenta),
+        ("水", FormatColor::Cyan),
+        ("色10", FormatColor::Indexed(10)),
+    ] {
+        let code = format!("#,##0;[{ja}]-#,##0");
+        assert_eq!(full(&code, Value::Number(-5.0)).color, Some(color), "{code}");
+        assert_eq!(canonical_code(&code), format!("#,##0;[{}]-#,##0", color.code_name()));
+    }
+    assert_eq!(canonical_code("[赤][<=100]0;[青][>100]0"), "[Red][<=100]0;[Blue][>100]0");
+    assert_eq!(canonical_code("[red]0;[色3]0"), "[Red]0;[Color3]0");
+    // Other tags, quoted text and escaped characters stay as typed.
+    for code in [
+        "[DBNum1]General",
+        "[DBNum3][$-411]#,##0",
+        "[$-ja-JP]ggge\"年\"",
+        "\"[赤]\"0",
+        "\\[0",
+        "[h]:mm",
+        "[>=100]0",
+        "[Red]0",
+        "[色57]0",
+        "0_[",
+        "[赤",
+    ] {
+        assert_eq!(canonical_code(code), code);
+    }
+}

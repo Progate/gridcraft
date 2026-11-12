@@ -233,18 +233,20 @@ fn is_currency_char(c: char) -> bool {
     matches!(c, '$' | '€' | '£' | '¥' | '₹' | '₩' | '₽' | '¢' | '₪' | '₫' | '฿')
 }
 
-fn parse_color(lc: &str) -> Option<FormatColor> {
+/// The colour a `[...]` tag names, its content lower-cased. Japanese Excel takes its own names
+/// (`[赤]`, `[色3]`) as well as the English ones and stores the English ones.
+pub(crate) fn parse_color(lc: &str) -> Option<FormatColor> {
     Some(match lc {
-        "black" => FormatColor::Black,
-        "blue" => FormatColor::Blue,
-        "cyan" => FormatColor::Cyan,
-        "green" => FormatColor::Green,
-        "magenta" => FormatColor::Magenta,
-        "red" => FormatColor::Red,
-        "white" => FormatColor::White,
-        "yellow" => FormatColor::Yellow,
+        "black" | "黒" => FormatColor::Black,
+        "blue" | "青" => FormatColor::Blue,
+        "cyan" | "水" => FormatColor::Cyan,
+        "green" | "緑" => FormatColor::Green,
+        "magenta" | "紫" => FormatColor::Magenta,
+        "red" | "赤" => FormatColor::Red,
+        "white" | "白" => FormatColor::White,
+        "yellow" | "黄" => FormatColor::Yellow,
         _ => {
-            let n: u8 = lc.strip_prefix("color")?.trim().parse().ok()?;
+            let n: u8 = lc.strip_prefix("color").or_else(|| lc.strip_prefix('色'))?.trim().parse().ok()?;
             if (1..=56).contains(&n) {
                 FormatColor::Indexed(n)
             } else {
