@@ -14,7 +14,10 @@ use super::{
 
 mod tabs;
 
-use tabs::{activate, delete_sheet, hide_sheet, insert_sheet, move_sheet, rename_sheet, step_sheet, tab_color, unhide_sheet};
+use tabs::{
+    activate, delete_sheet, hide_sheet, insert_sheet, move_sheet, rename_sheet, select_all_sheets, select_sheets, selected_sheets, step_sheet,
+    tab_color, ungroup_sheets, unhide_sheet,
+};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -64,6 +67,18 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "sheet.activate", "Activate Sheet", [], None, "{sheet: index | name}", has_doc, activate),
         cmd!(noundo "sheet.next", "Next Sheet", [], Some("Ctrl+PageDown"), "{}", has_doc, |s, _| step_sheet(s, 1)),
         cmd!(noundo "sheet.previous", "Previous Sheet", [], Some("Ctrl+PageUp"), "{}", has_doc, |s, _| step_sheet(s, -1)),
+        cmd!(
+            noundo "sheet.select",
+            "Select Sheets",
+            [],
+            None,
+            "{sheets: [index | name, …], active?: index | name} — several groups them: formatting and entry then act on each",
+            has_doc,
+            select_sheets
+        ),
+        cmd!(noundo "sheet.selectAll", "Select All Sheets", [], None, "{}", has_doc, select_all_sheets),
+        cmd!(noundo "sheet.ungroup", "Ungroup Sheets", [], None, "{}", has_doc, ungroup_sheets),
+        cmd!(query "sheet.selected", "Selected Sheets", [], None, "{} → {sheets: [names], grouped, active}", has_doc, selected_sheets),
     ]
 }
 

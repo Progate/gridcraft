@@ -49,9 +49,14 @@ pub(crate) fn keep_view_modes(d: &mut crate::DocState, now: &Workbook) {
     let renamed = |i: usize| {
         (now.sheets.len() == d.wb.sheets.len()).then(|| now.sheets.get(i)).flatten().filter(|sh| !d.wb.sheets.iter().any(|s| s.name == sh.name))
     };
-    let current = |i: usize, name: &str| now.sheets.iter().find(|sh| sh.name == name).or_else(|| renamed(i)).map(|sh| sh.view);
-    let changed: Vec<(usize, SheetViewMode)> =
-        d.wb.sheets.iter().enumerate().filter_map(|(i, sh)| current(i, &sh.name).filter(|v| *v != sh.view).map(|v| (i, v))).collect();
+    // The selected tabs (grouped sheets) are view state as well: Undo neither groups nor ungroups.
+    let current = |i: usize, name: &str| now.sheets.iter().find(|sh| sh.name == name).or_else(|| renamed(i)).map(|sh| (sh.view, sh.tab_selected));
+    let changed: Vec<(usize, (SheetViewMode, bool))> =
+        d.wb.sheets
+            .iter()
+            .enumerate()
+            .filter_map(|(i, sh)| current(i, &sh.name).filter(|v| *v != (sh.view, sh.tab_selected)).map(|v| (i, v)))
+            .collect();
     if changed.is_empty() {
         return;
     }
@@ -59,7 +64,7 @@ pub(crate) fn keep_view_modes(d: &mut crate::DocState, now: &Workbook) {
     let wb = std::sync::Arc::make_mut(&mut d.wb);
     for (i, v) in changed {
         if let Some(sh) = wb.sheet_mut(i) {
-            sh.view = v;
+            (sh.view, sh.tab_selected) = v;
         }
     }
     if !dirty {

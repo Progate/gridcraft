@@ -246,6 +246,115 @@ fn test_commands() -> std::sync::MutexGuard<'static, Vec<&'static CommandSpec>> 
     }
 }
 
+/// Commands that act on every selected sheet while sheets are grouped (Excel's `[Group]` mode):
+/// formatting, cell entry and clearing, applied to the same cells of each grouped sheet.
+pub(crate) const GROUP_COMMANDS: &[&str] = &[
+    "home.bold",
+    "home.italic",
+    "home.underline",
+    "home.doubleUnderline",
+    "home.strikethrough",
+    "home.superscript",
+    "home.subscript",
+    "home.fontName",
+    "home.fontSize",
+    "home.increaseFontSize",
+    "home.decreaseFontSize",
+    "home.fontColor",
+    "home.fillColor",
+    "home.borders",
+    "home.formatCells",
+    "home.alignLeft",
+    "home.alignCenter",
+    "home.alignRight",
+    "home.justify",
+    "home.alignTop",
+    "home.alignMiddle",
+    "home.alignBottom",
+    "home.wrapText",
+    "home.shrinkToFit",
+    "home.increaseIndent",
+    "home.decreaseIndent",
+    "home.orientation",
+    "home.mergeCenter",
+    "home.mergeAcross",
+    "home.mergeCells",
+    "home.unmergeCells",
+    "home.numberFormat",
+    "home.accounting",
+    "home.percent",
+    "home.comma",
+    "home.increaseDecimal",
+    "home.decreaseDecimal",
+    "home.cellStyle",
+    "home.columnWidth",
+    "home.rowHeight",
+    "home.autofitRowHeight",
+    "home.autofitColumnWidth",
+    "home.defaultWidth",
+    "home.hideRows",
+    "home.hideColumns",
+    "home.unhideRows",
+    "home.unhideColumns",
+    "cell.set",
+    "range.setValues",
+    "edit.clearAll",
+    "edit.clearFormats",
+    "edit.clearContents",
+    "edit.fillDown",
+    "edit.fillRight",
+    "edit.fillUp",
+    "edit.fillLeft",
+];
+
+/// Runs a command, once per grouped sheet when sheets are grouped and it is one of
+/// [`GROUP_COMMANDS`] called without naming a sheet: the active sheet first, then each other
+/// selected sheet with the same selection, all inside the one `execute` call, so the whole edit is
+/// one undo step. A toggle (Bold) sets on every sheet the state it set on the active one. If any
+/// sheet refuses the edit (a protected sheet), every sheet is put back and the error returned.
+pub(crate) fn run_on_selected_sheets(s: &mut Session, spec: &CommandSpec, params: &Json) -> Result<Json> {
+    let names_sheet = params.get("sheet").is_some_and(|v| !v.is_null())
+        || ["range", "cell"].iter().any(|k| str_param(params, k).is_some_and(|r| split_sheet(r).0.is_some()));
+    let group = match s.active() {
+        Some(d) if !names_sheet && GROUP_COMMANDS.contains(&spec.id) => d.wb.selected_sheets(),
+        _ => Vec::new(),
+    };
+    if group.len() < 2 {
+        return (spec.run)(s, params);
+    }
+    let (start_wb, start_sel, active) = {
+        let d = s.doc()?;
+        (d.wb.clone(), d.selection.clone(), d.wb.active_sheet())
+    };
+    let requests = s.ui_requests.len();
+    let first = (spec.run)(s, params)?;
+    // A menu-style call that opened a dialog: the dialog's own call does the edit, on every sheet.
+    if s.ui_requests.get(requests..).is_some_and(|new| new.iter().any(|q| matches!(q, crate::UiRequest::Dialog(..)))) {
+        return Ok(first);
+    }
+    let rest = crate::record::with_toggle_state(spec.id, params.clone(), &first);
+    let end_sel = s.doc()?.selection.clone();
+    for i in group.into_iter().filter(|&i| i != active) {
+        let d = s.doc_mut()?;
+        let shown = d.wb.clone();
+        shown.set_active_sheet(i);
+        d.selection = start_sel.clone();
+        let r = (spec.run)(s, &rest);
+        shown.set_active_sheet(active);
+        start_wb.set_active_sheet(active);
+        let d = s.doc_mut()?;
+        d.wb.set_active_sheet(active);
+        if let Err(e) = r {
+            d.wb = start_wb;
+            d.selection = start_sel;
+            d.calc.rebuild(&d.wb);
+            return Err(e);
+        }
+    }
+    s.doc_mut()?.selection = end_sel;
+    Ok(first)
+}
+
 // ---------------------------------------------------------------- param helpers
 
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {

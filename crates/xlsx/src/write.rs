@@ -513,9 +513,12 @@ fn write_sheets(
     let mut sheets_xml = String::new();
     let any_visible = wb.sheets.iter().any(|s| s.visibility == Visibility::Visible);
     let mut ids = crate::passthrough::SheetIds::new(wb, &kept);
+    // Grouped sheets are each saved with `tabSelected`, as Excel saves a selection of tabs.
+    let grouped = wb.selected_sheets();
     for (i, sheet) in wb.sheets.iter().enumerate() {
         sheets_xml.push_str(&kept.sheet_entries(i, false, &mut ids));
-        let (xml, mut rels) = crate::sheet_write::write_sheet(wb, i, i == active, out);
+        let selected = i == active || (grouped.len() > 1 && grouped.contains(&i));
+        let (xml, mut rels) = crate::sheet_write::write_sheet(wb, i, selected, out);
         pivots.add_sheet(wb, i, out, &mut rels);
         let name = format!("xl/worksheets/sheet{}.xml", i + 1);
         out.part(&name, Some(CT_WORKSHEET), xml.into_bytes());

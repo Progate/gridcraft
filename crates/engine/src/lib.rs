@@ -385,6 +385,31 @@ impl DocState {
             self.saved = self.wb.clone();
         }
     }
+    /// Selects the tabs of `sheets` along with the active sheet's (Ctrl+click on sheet tabs):
+    /// more than one groups them, so formatting and entry act on every one of them
+    /// ([`cmd::GROUP_COMMANDS`]); none or only the active sheet ungroups. Hidden sheets are left
+    /// out. The selection is view state saved with the file (`tabSelected`), like the active
+    /// cell: it never makes the workbook dirty and is no undo step.
+    pub fn set_selected_sheets(&mut self, sheets: &[usize]) {
+        let active = self.wb.active_sheet();
+        let pick = |i: usize, sh: &model::Sheet| i == active || (sheets.contains(&i) && sh.visibility == model::Visibility::Visible);
+        let grouped = self.wb.sheets.iter().enumerate().filter(|(i, sh)| pick(*i, sh)).count() > 1;
+        let want = |i: usize, sh: &model::Sheet| grouped && pick(i, sh);
+        if self.wb.sheets.iter().enumerate().all(|(i, sh)| sh.tab_selected == want(i, sh)) {
+            return;
+        }
+        let dirty = self.is_dirty();
+        let wb = Arc::make_mut(&mut self.wb);
+        for (i, sh) in wb.sheets.iter_mut().enumerate() {
+            let w = want(i, sh);
+            if sh.tab_selected != w {
+                Arc::make_mut(sh).tab_selected = w;
+            }
+        }
+        if !dirty {
+            self.saved = self.wb.clone();
+        }
+    }
     pub fn display_title(&self) -> String {
         self.path
             .as_deref()
@@ -744,7 +769,12 @@ impl Session {
         let marked = doc_uid.zip(start).map(|(uid, (_, len))| (uid, len));
         self.marks.extend(marked);
         self.depth = self.depth.saturating_add(1);
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (spec.run)(self, &params)));
+        // Only a top-level call acts on grouped sheets: a step of a script or macro does what it says,
+        // on the sheet it names or the active one, as when it was recorded.
+        let top = self.depth == 1;
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if top { cmd::run_on_selected_sheets(self, spec, &params) } else { (spec.run)(self, &params) }
+        }));
         self.depth = self.depth.saturating_sub(1);
         if marked.is_some() {
             self.marks.pop();

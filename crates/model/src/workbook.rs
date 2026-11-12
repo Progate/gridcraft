@@ -395,6 +395,26 @@ impl Workbook {
     pub fn active(&self) -> Option<&Sheet> {
         self.sheet(self.active_sheet())
     }
+    /// The sheets whose tabs are selected, in tab order: the active sheet, and while it is part of
+    /// a group (its own `tab_selected` is set), every other visible sheet with `tab_selected`.
+    /// A flag left on a sheet the active one is not grouped with (the active sheet changed by
+    /// inserting a sheet, say) counts for nothing, so a stale flag never groups sheets by itself.
+    pub fn selected_sheets(&self) -> Vec<usize> {
+        let a = self.active_sheet();
+        if !self.sheet(a).is_some_and(|s| s.tab_selected) {
+            return vec![a];
+        }
+        self.sheets
+            .iter()
+            .enumerate()
+            .filter(|(i, s)| *i == a || (s.tab_selected && s.visibility == crate::Visibility::Visible))
+            .map(|(i, _)| i)
+            .collect()
+    }
+    /// Whether more than one sheet is selected (Excel shows `[Group]` in the title).
+    pub fn is_grouped(&self) -> bool {
+        self.selected_sheets().len() > 1
+    }
     /// A fresh sheet name `SheetN` not in use.
     pub fn next_sheet_name(&self) -> String {
         (1..).map(|n| format!("Sheet{n}")).find(|n| self.sheet_index(n).is_none()).unwrap_or_else(|| "Sheet".into())

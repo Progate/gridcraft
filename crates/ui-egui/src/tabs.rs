@@ -41,6 +41,27 @@ fn activate_sheet(app: &mut SheetApp, i: usize) {
     }
 }
 
+/// `sheet.select` params for a click on tab `i` with Ctrl (Cmd) or Shift held, as in Excel:
+/// Ctrl adds an unselected tab to the selection, or takes a selected one other than the active
+/// sheet out of it; Shift selects the visible tabs from the active one to `i`. The active sheet
+/// stays. `None` when the selection stays as it is.
+fn tab_selection_click(selected: &[usize], visible: &[usize], active: usize, i: usize, shift: bool) -> Option<serde_json::Value> {
+    let sheets: Vec<usize> = if shift {
+        let (lo, hi) = (active.min(i), active.max(i));
+        visible.iter().copied().filter(|v| (lo..=hi).contains(v)).collect()
+    } else if i == active {
+        return None;
+    } else if selected.contains(&i) {
+        selected.iter().copied().filter(|&v| v != i).collect()
+    } else {
+        let mut v = selected.to_vec();
+        v.push(i);
+        v.sort_unstable();
+        v
+    };
+    Some(json!({"sheets": sheets, "active": active}))
+}
+
 /// A tab released with Ctrl held (Cmd on macOS, as for the fill handle) drops a copy of the sheet. Excel for Mac uses
 /// Option for this, so Option copies there too.
 fn drop_copies_sheet(m: egui::Modifiers, mac: bool) -> bool {
@@ -184,6 +205,10 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                     .filter(|(_, s)| s.visibility == Visibility::Visible)
                     .map(|(i, s)| (i, s.name.clone(), s.tab_color.and_then(|c| c.resolve(&d.wb.theme)), i == d.wb.active_sheet()))
                     .collect();
+            // Grouped sheets: every selected tab is drawn selected, and Ctrl/Shift-clicks change the group.
+            let selected = d.wb.selected_sheets();
+            let visible: Vec<usize> = sheets.iter().map(|(i, ..)| *i).collect();
+            let active_index = d.wb.active_sheet();
             // Keep worksheet tabs in their own horizontally scrollable viewport. As in Excel, the
             // tabs get up to 60% of the bar and the grid's horizontal scrollbar the rest; a strip
             // that needs less shrinks to its tabs, so New sheet (+) sits right after the last one.
@@ -249,6 +274,9 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                             Stroke::new(1.0, t.ribbon_border),
                                             StrokeKind::Inside,
                                         );
+                                    } else if selected.len() > 1 && selected.contains(&i) {
+                                        // A grouped tab: lit like the active one, without its outline.
+                                        ui.painter().rect_filled(Rect::from_min_max(pos2(r.left(), r.top() - 2.0), r.max), 4.0, t.tab_active);
                                     } else if resp.hovered() {
                                         ui.painter().rect_filled(r, 4.0, t.hover);
                                     }
@@ -280,7 +308,21 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                     }
                                     // A right-click activates the tab too, as in Excel, so the menu's sheet commands (Protect
                                     // Sheet, Select All Sheets) act on the sheet that was clicked rather than the one that was active.
-                                    if resp.clicked() || (resp.secondary_clicked() && !active) {
+                                    let mods = ui.input(|inp| inp.modifiers);
+                                    if resp.clicked() && (mods.command || mods.shift) {
+                                        if let Some(params) = tab_selection_click(&selected, &visible, active_index, i, mods.shift)
+                                            && (app.editor.is_none() || app.commit_edit(0, 0, false, false))
+                                        {
+                                            app.run_or_alert("sheet.select", params);
+                                        }
+                                    } else if resp.clicked() || (resp.secondary_clicked() && !active && !selected.contains(&i)) {
+                                        // With every sheet grouped there is no tab outside the group: a click ungroups, as in Excel.
+                                        if resp.clicked() && selected.len() > 1 && selected.len() == visible.len() {
+                                            app.run_or_alert("sheet.ungroup", json!({}));
+                                        }
+                                        activate_sheet(app, i);
+                                    } else if resp.secondary_clicked() && !active {
+                                        // A right-click on another grouped tab keeps the group and makes it the active sheet.
                                         activate_sheet(app, i);
                                     }
                                     if resp.double_clicked() {
@@ -346,6 +388,11 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                             app.open_dialog("protectSheet", json!({}));
                                         }
                                         if ui.button(app.ui.language.tr("Select All Sheets")).clicked() {
+                                            app.run_or_alert("sheet.selectAll", json!({}));
+                                            ui.close();
+                                        }
+                                        if selected.len() > 1 && ui.button(app.ui.language.tr("Ungroup Sheets")).clicked() {
+                                            app.run_or_alert("sheet.ungroup", json!({}));
                                             ui.close();
                                         }
                                     });
@@ -562,7 +609,7 @@ fn status_bar_menu(app: &mut SheetApp, ui: &mut Ui) {
 mod tests {
     use super::{
         MIN_TRACK, NEW_SHEET_WIDTH, SPLIT_WIDTH, activate_sheet, dragged_share, drop_copies_sheet, edge_sheet, navigator_items, rename_needs_focus,
-        tab_drop,
+        tab_drop, tab_selection_click,
     };
     use crate::SheetApp;
     use egui::Modifiers;
@@ -584,6 +631,29 @@ mod tests {
 
     fn names(app: &SheetApp) -> Vec<String> {
         app.session.active().unwrap().wb.sheets.iter().map(|s| s.name.clone()).collect()
+    }
+
+    #[test]
+    fn ctrl_and_shift_clicks_on_tabs_group_sheets() {
+        let mut app = workbook_abc();
+        app.run("sheet.activate", json!({"sheet": 0})).unwrap();
+        let visible = [0, 1, 2];
+        let selected = |app: &SheetApp| app.session.active().unwrap().wb.selected_sheets();
+        // Ctrl+click C adds it; the active sheet stays A.
+        app.run("sheet.select", tab_selection_click(&selected(&app), &visible, 0, 2, false).unwrap()).unwrap();
+        assert_eq!(selected(&app), vec![0, 2]);
+        assert_eq!(app.session.active().unwrap().wb.active_sheet(), 0);
+        // Ctrl+click C again takes it out; Ctrl+click on the active tab changes nothing.
+        app.run("sheet.select", tab_selection_click(&selected(&app), &visible, 0, 2, false).unwrap()).unwrap();
+        assert_eq!(selected(&app), vec![0]);
+        assert_eq!(tab_selection_click(&[0], &visible, 0, 0, false), None);
+        // Shift+click C selects A through C.
+        app.run("sheet.select", tab_selection_click(&selected(&app), &visible, 0, 2, true).unwrap()).unwrap();
+        assert_eq!(selected(&app), vec![0, 1, 2]);
+        app.run("home.bold", json!({"range": "B2"})).unwrap();
+        let d = app.session.active().unwrap();
+        assert!(d.wb.sheets.iter().all(|sh| d.wb.styles.get(sh.style_id(gridcraft_engine::core::CellRef::new(1, 1))).font.bold));
+        assert!(app.session.active().unwrap().wb.is_grouped());
     }
 
     #[test]

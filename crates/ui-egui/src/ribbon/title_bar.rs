@@ -158,11 +158,20 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
             });
             // Centred title, cut with "…" so it never runs under the controls on either side.
             let title = app.session.active().map(|d| d.display_title()).unwrap_or_default();
+            let title = match group_suffix(app) {
+                Some(g) => format!("{title} {g}"),
+                None => title,
+            };
             let dirty = app.session.active().is_some_and(|d| d.is_dirty());
             let max_w = title_max_width(rect.center().x, left_end, right.inner);
             paint_title(ui, rect.center(), &title, dirty, max_w, t.text);
         });
     });
+}
+
+/// `[Group]` (translated) while the active workbook has grouped sheets, as Excel's title bar shows.
+pub(crate) fn group_suffix(app: &crate::SheetApp) -> Option<String> {
+    app.session.active().filter(|d| d.wb.is_grouped()).map(|_| app.ui.language.tr("[Group]").to_string())
 }
 
 /// Lay out the title truncated to fit `max_w` together with the unsaved marker (when `dirty`).

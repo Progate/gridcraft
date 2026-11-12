@@ -256,7 +256,10 @@ fn visible_windows(app: &SheetApp) -> Vec<u64> {
 /// unsaved changes.
 fn window_title(app: &SheetApp, window: u64) -> String {
     let title = app.session.window_title(window).unwrap_or_default();
-    let dirty = app.session.window(window).and_then(|w| app.session.documents().iter().find(|d| d.uid == w.doc_uid)).is_some_and(|d| d.is_dirty());
+    let doc = app.session.window(window).and_then(|w| app.session.documents().iter().find(|d| d.uid == w.doc_uid));
+    let dirty = doc.is_some_and(|d| d.is_dirty());
+    // Grouped sheets show `[Group]` after the name, as in Excel's title bar.
+    let title = if doc.is_some_and(|d| d.wb.is_grouped()) { format!("{title} {}", app.ui.language.tr("[Group]")) } else { title };
     if dirty { format!("{title} — Edited") } else { title }
 }
 

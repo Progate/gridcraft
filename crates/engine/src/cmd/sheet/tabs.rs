@@ -153,6 +153,8 @@ pub(super) fn move_sheet(s: &mut Session, p: &Json) -> Result<Json> {
             let mut sh = (*src).clone();
             // The copy is a sheet of its own, not the one it was copied from.
             sh.uid = gridcraft_model::SheetUid::fresh();
+            // Nor is it selected along with it.
+            sh.tab_selected = false;
             let base = sh.name.clone();
             // `Name (2)`: the name is shortened so the suffix fits in Excel's 31 characters.
             let name = (2..)
@@ -293,4 +295,77 @@ pub(super) fn step_sheet(s: &mut Session, dir: isize) -> Result<Json> {
     }
     // No visible sheet in this direction: keep the current sheet and its selection.
     ok()
+}
+
+/// A sheet given by index or name (case-insensitive), for a list param.
+fn sheet_of(s: &Session, v: &Json) -> Result<usize> {
+    let d = s.doc()?;
+    let i = match v {
+        Json::Number(n) => n.as_u64().map(|i| i as usize).filter(|&i| i < d.wb.sheets.len()),
+        Json::String(n) => d.wb.sheet_index(n),
+        _ => None,
+    };
+    i.ok_or_else(|| bad("sheets", format!("no such sheet: {v}")))
+}
+
+/// The selected sheets as names, and whether they are grouped.
+fn selected_json(s: &Session) -> Result<Json> {
+    let d = s.doc()?;
+    let names: Vec<String> = d.wb.selected_sheets().into_iter().filter_map(|i| d.wb.sheet(i).map(|sh| sh.name.clone())).collect();
+    Ok(json!({"sheets": names, "grouped": names.len() > 1, "active": d.wb.active().map(|sh| sh.name.clone())}))
+}
+
+/// Selects several sheet tabs (Ctrl+click and Shift+click on the tabs): `sheets` lists them,
+/// `active` (one of them) becomes the active sheet, else the active sheet stays when it is listed
+/// and the first one listed becomes active when it is not. Hidden sheets can't be selected.
+pub(super) fn select_sheets(s: &mut Session, p: &Json) -> Result<Json> {
+    let Some(list) = p.get("sheets").and_then(Json::as_array) else {
+        return Err(bad("sheet.select", "missing `sheets` (a list of indexes or names)"));
+    };
+    let mut picked = Vec::new();
+    for v in list.iter().take(s.doc()?.wb.sheets.len().saturating_add(1)) {
+        let i = sheet_of(s, v)?;
+        if s.doc()?.wb.sheet(i).is_some_and(|sh| sh.visibility != Visibility::Visible) {
+            return Err(EngineError::Other("A hidden sheet can't be selected.".into()));
+        }
+        if !picked.contains(&i) {
+            picked.push(i);
+        }
+    }
+    let Some(&first) = picked.first() else { return Err(bad("sheet.select", "`sheets` is empty")) };
+    let active = match p.get("active").filter(|v| !v.is_null()) {
+        Some(v) => {
+            let i = sheet_of(s, v)?;
+            if !picked.contains(&i) {
+                return Err(bad("sheet.select", "`active` must be one of `sheets`"));
+            }
+            i
+        }
+        None if picked.contains(&s.doc()?.wb.active_sheet()) => s.doc()?.wb.active_sheet(),
+        None => first,
+    };
+    let d = s.doc_mut()?;
+    // Ungroup first, so switching never keeps a group the new selection leaves out.
+    d.set_selected_sheets(&[]);
+    d.wb_switch_sheet(active);
+    d.set_selected_sheets(&picked);
+    selected_json(s)
+}
+
+/// Selects every visible sheet (right-click a tab ▸ Select All Sheets).
+pub(super) fn select_all_sheets(s: &mut Session, _: &Json) -> Result<Json> {
+    let d = s.doc_mut()?;
+    let all: Vec<usize> = (0..d.wb.sheets.len()).collect();
+    d.set_selected_sheets(&all);
+    selected_json(s)
+}
+
+/// Selects only the active sheet (right-click a tab ▸ Ungroup Sheets).
+pub(super) fn ungroup_sheets(s: &mut Session, _: &Json) -> Result<Json> {
+    s.doc_mut()?.set_selected_sheets(&[]);
+    selected_json(s)
+}
+
+pub(super) fn selected_sheets(s: &mut Session, _: &Json) -> Result<Json> {
+    selected_json(s)
 }

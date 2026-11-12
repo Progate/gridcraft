@@ -1036,6 +1036,8 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Paste formulas that refer to the copied cells", "コピーしたセルを参照する数式を貼り付けます"),
     ("Rename", "名前の変更"),
     ("Select All Sheets", "すべてのシートを選択"),
+    ("Ungroup Sheets", "シートのグループ解除"),
+    ("[Group]", "[グループ]"),
     ("Select Data…", "データの選択…"),
     ("Tab Color", "シートの見出しの色"),
     ("Unhide…", "再表示…"),

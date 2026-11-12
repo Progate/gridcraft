@@ -484,6 +484,7 @@ fn read_protected_ranges(e: &El, sheet: &mut Sheet) {
 
 fn read_views(e: &El, sheet: &mut Sheet) {
     let Some(v) = e.child("sheetView") else { return };
+    sheet.tab_selected = v.flag("tabSelected", false);
     sheet.show_gridlines = v.flag("showGridLines", true);
     sheet.show_headings = v.flag("showRowColHeaders", true);
     sheet.show_formulas = v.flag("showFormulas", false);

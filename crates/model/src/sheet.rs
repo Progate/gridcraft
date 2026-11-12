@@ -165,6 +165,11 @@ pub struct Sheet {
     /// Normal, Page Layout or Page Break Preview.
     #[serde(default)]
     pub view: SheetViewMode,
+    /// The sheet's tab is selected along with the active sheet's (grouped sheets, saved as
+    /// `sheetView tabSelected`). It counts only while the active sheet's own flag is set too; see
+    /// [`crate::Workbook::selected_sheets`].
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tab_selected: bool,
     /// Unmodelled file content of this sheet kept for saving (form controls, OLE objects, query
     /// tables). Goes away with the sheet; not in JSON.
     #[serde(skip)]
@@ -231,6 +236,7 @@ impl Sheet {
             view_active: CellRef::default(),
             view_top_left: CellRef::default(),
             view: SheetViewMode::Normal,
+            tab_selected: false,
             preserved: None,
         }
     }

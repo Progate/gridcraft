@@ -49,6 +49,12 @@ impl crate::DocState {
         if let Some(slot) = self.sheet_selections.get_mut(cur) {
             *slot = self.selection.clone();
         }
+        // A sheet outside the group ungroups, as clicking an unselected tab does in Excel; a
+        // grouped one keeps the group and becomes its active sheet.
+        let in_group = self.wb.is_grouped() && self.wb.selected_sheets().contains(&i);
+        if !in_group {
+            self.set_selected_sheets(&[]);
+        }
         // View state: set in place, so the workbook is neither copied nor made dirty.
         self.wb.set_active_sheet(i);
         self.selection = self.sheet_selections.get(i).cloned().unwrap_or_default();
