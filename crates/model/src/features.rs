@@ -1296,6 +1296,7 @@ mod tests {
             by_rows: false,
             pivot: None,
             alt_text: Default::default(),
+            label_parts: Default::default(),
         };
         let mut json = serde_json::to_value(&chart).expect("serialize chart");
         json.as_object_mut().expect("chart object").remove("hole_size");
