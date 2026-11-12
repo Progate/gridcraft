@@ -2,8 +2,8 @@ use super::create::source_param;
 use super::fields::{canonical, in_axes, shift_values, update};
 use super::params::{group_param, layout_name};
 use super::{
-    Chart, Json, PivotDateGroup, PivotField, PivotFilter, PivotLayout, PivotSort, PivotTable, Result, Session, bad, bool_param, edit, find_pivot,
-    json, other, pv, str_param,
+    Chart, Json, PivotDateGroup, PivotField, PivotFilter, PivotLayout, PivotRangeGroup, PivotSort, PivotTable, Result, Session, bad, bool_param,
+    edit, find_pivot, json, other, pv, str_param,
 };
 
 pub(super) fn filter(s: &mut Session, p: &Json) -> Result<Json> {
@@ -77,11 +77,28 @@ pub(super) fn sort(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
+/// A number param given as a JSON number or numeric text; `Ok(None)` when absent, empty or `auto`.
+fn num_or_auto(cmd: &str, p: &Json, key: &str) -> Result<Option<f64>> {
+    match p.get(key) {
+        None | Some(Json::Null) => Ok(None),
+        Some(Json::Number(n)) => n.as_f64().map(Some).ok_or_else(|| bad(cmd, format!("`{key}` must be a number"))),
+        Some(Json::String(t)) if t.trim().is_empty() || t.trim().eq_ignore_ascii_case("auto") => Ok(None),
+        Some(Json::String(t)) => {
+            t.trim().parse::<f64>().ok().filter(|v| v.is_finite()).map(Some).ok_or_else(|| bad(cmd, format!("`{key}` must be a number")))
+        }
+        Some(_) => Err(bad(cmd, format!("`{key}` must be a number"))),
+    }
+}
+
 pub(super) fn group(s: &mut Session, p: &Json) -> Result<Json> {
     const C: &str = "pivot.group";
     let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
+    let range = str_param(p, "by").is_some_and(|b| b.eq_ignore_ascii_case("range")) || (p.get("by").is_none() && p.get("interval").is_some());
+    if range {
+        return group_range(s, p, field);
+    }
     let raw = str_param(p, "by").unwrap_or("months");
-    let by = group_param(Some(raw)).ok_or_else(|| bad(C, format!("unknown grouping `{raw}` (years|quarters|months|days|none)")))?;
+    let by = group_param(Some(raw)).ok_or_else(|| bad(C, format!("unknown grouping `{raw}` (years|quarters|months|days|range|none)")))?;
     update(s, p, |pt, src, _| {
         if by != PivotDateGroup::None {
             let c = src.col(&field).ok_or_else(|| bad(C, format!("no field `{field}` in the source data")))?;
@@ -91,8 +108,51 @@ pub(super) fn group(s: &mut Session, p: &Json) -> Result<Json> {
         }
         let f = axis_field(C, pt, &field)?;
         f.date_group = by;
+        f.range_group = None;
         f.collapsed_items.clear();
         Ok(json!({}))
+    })
+}
+
+/// Grouping ▸ Starting at / Ending at / By for a numeric field: ranges such as `0-9`, `10-19`.
+fn group_range(s: &mut Session, p: &Json, field: String) -> Result<Json> {
+    const C: &str = "pivot.group";
+    let start = num_or_auto(C, p, "start")?;
+    let end = num_or_auto(C, p, "end")?;
+    let interval = num_or_auto(C, p, "interval")?.unwrap_or(10.0);
+    if interval <= 0.0 {
+        return Err(other("The By value must be greater than zero."));
+    }
+    update(s, p, |pt, src, _| {
+        let c = src.col(&field).ok_or_else(|| bad(C, format!("no field `{field}` in the source data")))?;
+        if !src.numeric.get(c).copied().unwrap_or(false) {
+            return Err(other("Cannot group that selection."));
+        }
+        let (mut min, mut max) = (f64::INFINITY, f64::NEG_INFINITY);
+        for v in src.rows.iter().filter_map(|r| r.get(c)) {
+            if let gridcraft_core::Value::Number(n) = v.scalar() {
+                min = min.min(n);
+                max = max.max(n);
+            }
+        }
+        if !min.is_finite() {
+            return Err(other("Cannot group that selection."));
+        }
+        let g =
+            PivotRangeGroup { start: start.unwrap_or(min), end: end.unwrap_or(max), interval, auto_start: start.is_none(), auto_end: end.is_none() };
+        if g.bins(min, max, false).is_none() {
+            let (a, b) = (if g.auto_start { min } else { g.start }, if g.auto_end { max } else { g.end });
+            return Err(other(if a > b {
+                "The ending number must be greater than the starting number."
+            } else {
+                "Too many groups: increase the By value."
+            }));
+        }
+        let f = axis_field(C, pt, &field)?;
+        f.date_group = PivotDateGroup::None;
+        f.range_group = Some(g);
+        f.collapsed_items.clear();
+        Ok(json!({"start": g.start, "end": g.end, "interval": g.interval, "autoStart": g.auto_start, "autoEnd": g.auto_end}))
     })
 }
 
@@ -107,9 +167,8 @@ pub(super) fn collapse(s: &mut Session, p: &Json) -> Result<Json> {
             Some(v) => v.clone(),
             None => {
                 let f = pt.rows.iter().chain(pt.columns.iter()).find(|f| f.source_col.eq_ignore_ascii_case(&field));
-                let g = f.map(|f| f.date_group).unwrap_or_default();
                 match src.col(&field) {
-                    Some(c) => pv::distinct_labels(wb, src, c, g, 100_000),
+                    Some(c) => pv::distinct_labels(wb, src, c, f.map_or(pv::Grouping::None, |f| pv::field_grouping(src, c, f)), 100_000),
                     None => vec![],
                 }
             }

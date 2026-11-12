@@ -127,8 +127,20 @@ fn workbook() -> Workbook {
         source: "SalesTbl".into(),
         anchor: at("K4"),
         rows: vec![
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Years, sort: PivotSort::None, collapsed_items: vec!["2024".into()] },
-            PivotField { source_col: "Date".into(), date_group: PivotDateGroup::Months, sort: PivotSort::Asc, collapsed_items: vec![] },
+            PivotField {
+                source_col: "Date".into(),
+                date_group: PivotDateGroup::Years,
+                sort: PivotSort::None,
+                collapsed_items: vec!["2024".into()],
+                range_group: None,
+            },
+            PivotField {
+                source_col: "Date".into(),
+                date_group: PivotDateGroup::Months,
+                sort: PivotSort::Asc,
+                collapsed_items: vec![],
+                range_group: None,
+            },
         ],
         columns: vec![PivotField { sort: PivotSort::Desc, ..field("Product") }],
         values: vec![
@@ -539,7 +551,9 @@ fn hostile_pivot_parts_warn_not_panic() {
     assert_eq!(pt.rows[0].sort, PivotSort::Desc);
     assert!(pt.values.iter().any(|v| v.func == PivotFunc::Sum && v.source_col == "V"));
     assert!(report.warnings.iter().any(|w| w.contains("bogus")), "{:?}", report.warnings);
-    assert!(report.warnings.iter().any(|w| w.contains("grouping")), "{:?}", report.warnings);
+    // The cache's numeric range grouping of "V" (0 to 10 by 5) is read, not warned about.
+    assert!(report.warnings.iter().all(|w| !w.contains("grouping")), "{:?}", report.warnings);
+    assert_eq!(pt.columns[0].range_group, Some(PivotRangeGroup { start: 0.0, end: 10.0, interval: 5.0, auto_start: true, auto_end: true }));
     assert!(report.warnings.iter().any(|w| w.contains("difference")), "{:?}", report.warnings);
 }
 
@@ -714,6 +728,11 @@ fn data_on_rows_with_one_value_field_reads_without_warning() {
 /// A one-sheet-of-data workbook with a pivot on "Report": `columns` are the source columns
 /// (header, values), `pt` the pivot built on `Data!A1:<last>`.
 fn small_pivot(columns: &[(&str, Vec<Value>)], pt: impl FnOnce(&mut PivotTable)) -> HashMap<String, String> {
+    let wb = small_pivot_workbook(columns, pt);
+    unzip(&write_xlsx(&wb).unwrap()).into_iter().map(|(k, v)| (k, String::from_utf8_lossy(&v).into_owned())).collect()
+}
+
+fn small_pivot_workbook(columns: &[(&str, Vec<Value>)], pt: impl FnOnce(&mut PivotTable)) -> Workbook {
     let mut wb = Workbook::new();
     let data = wb.sheet_mut(0).unwrap();
     data.name = "Data".into();
@@ -733,7 +752,7 @@ fn small_pivot(columns: &[(&str, Vec<Value>)], pt: impl FnOnce(&mut PivotTable))
     let mut report = Sheet::new("Report");
     report.pivots = vec![table];
     wb.sheets.push(Arc::new(report));
-    unzip(&write_xlsx(&wb).unwrap()).into_iter().map(|(k, v)| (k, String::from_utf8_lossy(&v).into_owned())).collect()
+    wb
 }
 
 /// #1447: two value fields and no column field: Excel 365 adds a `Values` row unless told not to.
@@ -835,4 +854,63 @@ fn every_show_values_as_round_trips() {
         let v = &back.sheet(1).unwrap().pivots[0].values[0];
         assert_eq!((v.show_as, v.number_format.as_deref()), (show_as, Some("0.00%")));
     }
+}
+
+/// Numeric range grouping (Group ▸ Starting at / Ending at / By) is written as Excel writes it: a
+/// `fieldGroup` on the base cache field with a numeric `rangePr` and the `<start`, ranges, `>end`
+/// group items the table's items refer to, and read back.
+#[test]
+fn numeric_range_grouping_round_trips() {
+    let scores = [3.0, 18.0, 25.0, 42.0, 98.0, 57.0];
+    let cols = [
+        ("Name", scores.iter().enumerate().map(|(i, _)| Value::text(format!("P{i}"))).collect()),
+        ("Score", scores.iter().map(|n| Value::number(*n)).collect::<Vec<_>>()),
+    ];
+    let wb = small_pivot_workbook(&cols, |p| {
+        p.rows = vec![PivotField {
+            range_group: Some(PivotRangeGroup { start: 0.0, end: 100.0, interval: 10.0, auto_start: false, auto_end: false }),
+            ..field("Score")
+        }];
+        p.values = vec![PivotValue { source_col: "Score".into(), func: PivotFunc::Count, name: "Count of Score".into(), ..PivotValue::default() }];
+    });
+    let bytes = write_xlsx(&wb).unwrap();
+    let parts: HashMap<String, String> = unzip(&bytes).into_iter().map(|(k, v)| (k, String::from_utf8_lossy(&v).into_owned())).collect();
+    let cache = &parts["xl/pivotCache/pivotCacheDefinition1.xml"];
+    let mut items = String::from("<s v=\"&lt;0\"/>");
+    for a in (0..=100).step_by(10) {
+        items.push_str(&format!("<s v=\"{a}-{}\"/>", a + 9));
+    }
+    items.push_str("<s v=\"&gt;100\"/>");
+    let group = format!(
+        "<fieldGroup base=\"1\"><rangePr autoStart=\"0\" autoEnd=\"0\" startNum=\"0\" endNum=\"100\" groupInterval=\"10\"/><groupItems count=\"13\">{items}</groupItems></fieldGroup>"
+    );
+    assert!(cache.contains(&group), "{cache}");
+    assert!(
+        cache.contains("<cacheField name=\"Score\" numFmtId=\"0\"><sharedItems containsSemiMixedTypes=\"0\" containsString=\"0\" containsNumber=\"1\" containsInteger=\"1\" minValue=\"3\" maxValue=\"98\"/>"),
+        "{cache}"
+    );
+    let records = &parts["xl/pivotCache/pivotCacheRecords1.xml"];
+    assert!(records.contains("<n v=\"3\"/>"), "{records}");
+    let table = &parts["xl/pivotTables/pivotTable1.xml"];
+    assert!(
+        table.contains("<pivotField axis=\"axisRow\" dataField=\"1\" showAll=\"0\" sortType=\"ascending\"><items count=\"14\"><item x=\"0\"/>"),
+        "{table}"
+    );
+    assert!(!table.contains("numFmtId=\"14\""), "{table}");
+
+    let (back, report) = read_xlsx(&bytes).unwrap();
+    assert!(report.warnings.iter().all(|w| !w.contains("grouping")), "{:?}", report.warnings);
+    let f = &back.sheet(1).unwrap().pivots[0].rows[0];
+    assert_eq!(f.source_col, "Score");
+    assert_eq!(f.range_group, Some(PivotRangeGroup { start: 0.0, end: 100.0, interval: 10.0, auto_start: false, auto_end: false }));
+
+    // Automatic bounds leave `autoStart`/`autoEnd` at their defaults and follow the data.
+    let auto = small_pivot(&cols, |p| {
+        p.rows = vec![PivotField { range_group: Some(PivotRangeGroup { interval: 20.0, ..PivotRangeGroup::default() }), ..field("Score") }];
+    });
+    let cache = &auto["xl/pivotCache/pivotCacheDefinition1.xml"];
+    assert!(
+        cache.contains("<rangePr startNum=\"3\" endNum=\"98\" groupInterval=\"20\"/><groupItems count=\"7\"><s v=\"&lt;3\"/><s v=\"3-22\"/>"),
+        "{cache}"
+    );
 }

@@ -1,10 +1,10 @@
-use super::items::{Acc, FieldItems, build_tree, collect_siblings, is_collapsed, item_label};
+use super::items::{Acc, FieldItems, Grouping, build_tree, collect_siblings, field_grouping, is_collapsed, item_label};
 use super::output::{
     AggMap, CellKind, ColKind, ColSpec, Ctx, Grid, Line, LineKind, Output, RowKind, ValSrc, caption, data_cols_exceed_sheet, flatten_cols,
 };
 use super::{
-    CalcSet, CellError, CellRef, HashMap, HashSet, MAX_AXIS_FIELDS, MAX_COLS, MAX_VALUE_FIELDS, PivotDateGroup, PivotField, PivotFilter, PivotFunc,
-    PivotLayout, PivotShowAs, PivotTable, PivotValue, Source, Value, Workbook, read_source,
+    CalcSet, CellError, CellRef, HashMap, HashSet, MAX_AXIS_FIELDS, MAX_COLS, MAX_VALUE_FIELDS, PivotField, PivotFilter, PivotFunc, PivotLayout,
+    PivotShowAs, PivotTable, PivotValue, Source, Value, Workbook, read_source,
 };
 
 /// Why Show Details turns a cell down when it isn't a value cell of a PivotTable (the front end
@@ -77,7 +77,9 @@ struct AggregateInput<'a> {
     cols: &'a [(usize, &'a PivotField)],
     vals: &'a [(ValSrc, &'a PivotValue)],
     extra: &'a [usize],
-    filters: &'a [(usize, &'a PivotFilter, PivotDateGroup, bool)],
+    filters: &'a [(usize, &'a PivotFilter, Grouping, bool)],
+    row_groups: &'a [Grouping],
+    col_groups: &'a [Grouping],
     filter_fmts: &'a [String],
     /// Each filter's selected labels, ASCII-lowercased, so a record's test is one probe.
     filter_sets: &'a [Option<HashSet<String>>],
@@ -119,12 +121,12 @@ fn aggregate_record(
         return Ok(());
     }
     let mut row_path = Vec::with_capacity(input.rows.len());
-    for (((column, field), items), fmt) in input.rows.iter().zip(data.row_items.iter_mut()).zip(input.row_fmts) {
-        row_path.push(items.intern(input.wb, rec.get(*column).unwrap_or(&Value::Empty), field.date_group, fmt, ri));
+    for ((((column, _), items), fmt), group) in input.rows.iter().zip(data.row_items.iter_mut()).zip(input.row_fmts).zip(input.row_groups) {
+        row_path.push(items.intern(input.wb, rec.get(*column).unwrap_or(&Value::Empty), *group, fmt, ri));
     }
     let mut col_path = Vec::with_capacity(input.cols.len());
-    for (((column, field), items), fmt) in input.cols.iter().zip(data.col_items.iter_mut()).zip(input.col_fmts) {
-        col_path.push(items.intern(input.wb, rec.get(*column).unwrap_or(&Value::Empty), field.date_group, fmt, ri));
+    for ((((column, _), items), fmt), group) in input.cols.iter().zip(data.col_items.iter_mut()).zip(input.col_fmts).zip(input.col_groups) {
+        col_path.push(items.intern(input.wb, rec.get(*column).unwrap_or(&Value::Empty), *group, fmt, ri));
     }
     for row_depth in 0..=row_path.len() {
         for col_depth in 0..=col_path.len() {
@@ -485,17 +487,22 @@ fn show_value(definition: &PivotValue, raw: Value, lookup: &ValueLookup<'_>, con
     }
 }
 
-type ReportFilter<'a> = (usize, &'a PivotFilter, PivotDateGroup, bool);
+type ReportFilter<'a> = (usize, &'a PivotFilter, Grouping, bool);
 
 fn report_filters<'a>(pt: &'a PivotTable, src: &Source) -> (Vec<ReportFilter<'a>>, Vec<ReportFilter<'a>>) {
-    let axis_group =
-        |name: &str| pt.rows.iter().chain(pt.columns.iter()).find(|field| field.source_col.eq_ignore_ascii_case(name)).map(|field| field.date_group);
+    let axis_group = |name: &str, column: usize| {
+        pt.rows
+            .iter()
+            .chain(pt.columns.iter())
+            .find(|field| field.source_col.eq_ignore_ascii_case(name))
+            .map(|field| field_grouping(src, column, field))
+    };
     let filters: Vec<_> = pt
         .filters
         .iter()
         .filter_map(|filter| {
             let column = src.col(&filter.source_col)?;
-            let group = axis_group(&filter.source_col);
+            let group = axis_group(&filter.source_col, column);
             Some((column, filter, group.unwrap_or_default(), group.is_none()))
         })
         .collect();
@@ -583,6 +590,8 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
         filters.iter().map(|(_, field, _, _)| field.selected.as_ref().map(|s| s.iter().map(|v| v.to_ascii_lowercase()).collect())).collect();
     let row_fmts: Vec<String> = rows.iter().map(|(c, _)| fmt_of(*c)).collect();
     let col_fmts: Vec<String> = cols.iter().map(|(c, _)| fmt_of(*c)).collect();
+    let row_groups: Vec<Grouping> = rows.iter().map(|(c, f)| field_grouping(src, *c, f)).collect();
+    let col_groups: Vec<Grouping> = cols.iter().map(|(c, f)| field_grouping(src, *c, f)).collect();
     let aggregate = aggregate_source(
         AggregateInput {
             wb,
@@ -595,6 +604,8 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
             filters: &filters,
             filter_fmts: &filter_fmts,
             filter_sets: &filter_sets,
+            row_groups: &row_groups,
+            col_groups: &col_groups,
             row_fmts: &row_fmts,
             col_fmts: &col_fmts,
             empty,

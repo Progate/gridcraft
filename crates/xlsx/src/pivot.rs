@@ -3,13 +3,13 @@
 //!
 //! Writing: one cache per PivotTable, with a records snapshot of the source list (omitted, with
 //! `saveData="0"`, for very large sources) and `refreshOnLoad="1"` so a reader recomputes the
-//! report from the source on open. Fields used on an axis get shared items (or, for date
-//! grouping, `fieldGroup` group items) so the table's `<items>` can refer to them. The report
+//! report from the source on open. Fields used on an axis get shared items (or, for date and
+//! numeric range grouping, `fieldGroup` group items) so the table's `<items>` can refer to them. The report
 //! cells the engine wrote stay on the sheet as plain cells.
 //!
 //! Reading: the cache's source and field names plus the table's areas, functions, show-values-as,
 //! layout flags, grand totals and style become a model [`PivotTable`]. Anything we don't model
-//! (OLAP sources, calculated fields, numeric grouping…) becomes a warning.
+//! (OLAP sources, calculated items, manual item grouping…) becomes a warning.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -18,7 +18,8 @@ use gridcraft_core::date::datetime_from_serial;
 use gridcraft_core::{CellRef, DateSystem, RangeRef, Value, number_to_text};
 use gridcraft_formula::quote_sheet;
 use gridcraft_model::{
-    PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotShowAs, PivotSort, PivotTable, PivotValue, Workbook,
+    PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotRangeGroup, PivotShowAs, PivotSort, PivotTable, PivotValue,
+    RangeBins, Workbook,
 };
 
 use crate::IoError;

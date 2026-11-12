@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use gridcraft_core::{CellRef, RangeRef};
 use gridcraft_model::{
-    Anchor, Cell, Chart, ChartKind, LegendPos, NumFmt, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotShowAs,
-    PivotSort, PivotTable, PivotValue, Sheet, StyleId, Workbook,
+    Anchor, Cell, Chart, ChartKind, LegendPos, NumFmt, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout,
+    PivotRangeGroup, PivotShowAs, PivotSort, PivotTable, PivotValue, Sheet, StyleId, Workbook,
 };
 use serde_json::{Value as Json, json};
 
@@ -124,7 +124,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Group Field",
             ["PivotTable Analyze", "Group"],
             None,
-            "{pivot?, field, by: years|quarters|months|days|none, replace?}",
+            "{pivot?, field, by: years|quarters|months|days|range|none (none = Ungroup), start?: number | \"auto\" (range; default: the smallest value), end?: number | \"auto\" (default: the largest), interval?: number (range By, default 10), replace?} → {start, end, interval, autoStart, autoEnd} for ranges",
             has_doc,
             group
         ),

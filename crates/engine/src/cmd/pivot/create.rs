@@ -327,6 +327,15 @@ pub(super) fn summarize_table(s: &mut Session, p: &Json) -> Result<Json> {
 
 // ---------------------------------------------------------------- queries
 
+fn axis_json(f: &gridcraft_model::PivotField) -> Json {
+    let mut j = json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items});
+    if let (Some(g), Some(m)) = (f.range_group, j.as_object_mut()) {
+        m.insert("group".into(), json!("range"));
+        m.insert("range".into(), json!({"start": g.start, "end": g.end, "interval": g.interval, "autoStart": g.auto_start, "autoEnd": g.auto_end}));
+    }
+    j
+}
+
 pub(super) fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
     json!({
         "id": pt.id,
@@ -335,8 +344,8 @@ pub(super) fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "anchor": pt.anchor.a1(),
         "range": pt.last_range.map(|r| r.a1()),
         "source": pt.source,
-        "rows": pt.rows.iter().map(|f| json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items})).collect::<Vec<_>>(),
-        "columns": pt.columns.iter().map(|f| json!({"field": f.source_col, "sort": sort_name(f.sort), "group": group_name(f.date_group), "collapsed": f.collapsed_items})).collect::<Vec<_>>(),
+        "rows": pt.rows.iter().map(|f| axis_json(f)).collect::<Vec<_>>(),
+        "columns": pt.columns.iter().map(|f| axis_json(f)).collect::<Vec<_>>(),
         "values": pt.values.iter().map(|v| json!({"field": v.source_col, "func": func_name(v.func), "name": v.name, "showAs": show_as_name(v.show_as), "numberFormat": v.number_format})).collect::<Vec<_>>(),
         "filters": pt.filters.iter().map(|f| json!({"field": f.source_col, "selected": f.selected, "report": !in_axes(pt, &f.source_col)})).collect::<Vec<_>>(),
         "layout": layout_name(pt.layout),

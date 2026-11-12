@@ -1,8 +1,8 @@
 use super::create::pivot_json;
 use super::params::{area_param, func_name, func_param, position_param, show_as_name, show_as_param};
 use super::{
-    Json, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotShowAs, PivotTable, PivotValue, Result, Session, Workbook, bad,
-    bool_param, edit, find_pivot, json, ok, other, pv, str_param, u32_param,
+    Json, PivotCalcField, PivotField, PivotFilter, PivotFunc, PivotShowAs, PivotTable, PivotValue, Result, Session, Workbook, bad, bool_param, edit,
+    find_pivot, json, ok, other, pv, str_param, u32_param,
 };
 
 // ---------------------------------------------------------------- layout editing (pure)
@@ -258,7 +258,7 @@ pub(super) fn fields(s: &mut Session, p: &Json) -> Result<Json> {
                     "name": h,
                     "numeric": src.numeric.get(c).copied().unwrap_or(false),
                     "date": src.dates.get(c).copied().unwrap_or(false),
-                    "samples": pv::distinct_labels(&d.wb, src, c, PivotDateGroup::None, 5),
+                    "samples": pv::distinct_labels(&d.wb, src, c, pv::Grouping::None, 5),
                     "areas": areas,
                 })
             })

@@ -1,7 +1,7 @@
 use super::create::{insert_pivot, source_param};
 use super::{
-    Anchor, CellRef, Chart, ChartKind, EngineError, Json, LegendPos, PivotDateGroup, Result, Session, Workbook, anchor_mode_param, bad, cell_param,
-    edit, f64_param, find_pivot, json, other, pv, str_param,
+    Anchor, CellRef, Chart, ChartKind, EngineError, Json, LegendPos, Result, Session, Workbook, anchor_mode_param, bad, cell_param, edit, f64_param,
+    find_pivot, json, other, pv, str_param,
 };
 
 // ---------------------------------------------------------------- PivotChart
@@ -88,7 +88,7 @@ pub(super) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
 fn suggestions(wb: &Workbook, src: &pv::Source) -> Vec<Json> {
     let n = src.headers.len();
     let h = |i: usize| src.headers.get(i).cloned().unwrap_or_default();
-    let distinct = |i: usize| pv::distinct_labels(wb, src, i, PivotDateGroup::None, 1001).len();
+    let distinct = |i: usize| pv::distinct_labels(wb, src, i, pv::Grouping::None, 1001).len();
     let records = src.rows.len().max(1);
     let is_num = |i: usize| src.numeric.get(i).copied().unwrap_or(false);
     let is_date = |i: usize| src.dates.get(i).copied().unwrap_or(false);

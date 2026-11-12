@@ -1147,3 +1147,39 @@ fn legacy_count_numbers_caption_follows_the_function() {
         assert_eq!(text(&s, "E3"), after, "{legacy}");
     }
 }
+
+#[test]
+fn numeric_range_grouping_and_ungroup() {
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Units"], "values": ["Sales"]})).unwrap();
+    let r = s.execute("pivot.group", json!({"field": "Units", "by": "range", "start": 0, "end": 12, "interval": 5})).unwrap();
+    assert_eq!(r["autoStart"], false);
+    assert_eq!(text(&s, "A4"), "0-4");
+    assert_eq!(val(&s, "B4"), Value::Number(150.0));
+    assert_eq!(text(&s, "A5"), "5-9");
+    assert_eq!(val(&s, "B5"), Value::Number(465.0));
+    assert_eq!(text(&s, "A6"), "10-14");
+    assert_eq!(val(&s, "B6"), Value::Number(220.0));
+    assert_eq!(text(&s, "A7"), "Grand Total");
+    // Automatic bounds start at the smallest value; numeric text works like the dialog's boxes.
+    s.execute("pivot.group", json!({"field": "Units", "start": "auto", "end": "", "interval": "5"})).unwrap();
+    assert_eq!(text(&s, "A4"), "1-5");
+    assert_eq!(val(&s, "B4"), Value::Number(275.0));
+    let g = pt(&s).rows[0].range_group.unwrap();
+    assert!(g.auto_start && g.auto_end);
+    assert_eq!((g.start, g.end), (1.0, 12.0));
+    // Values outside the bounds go to `<start` and `>end`.
+    s.execute("pivot.group", json!({"field": "Units", "by": "range", "start": 3, "end": 9, "interval": 3})).unwrap();
+    assert_eq!(text(&s, "A4"), "<3");
+    assert_eq!(text(&s, "A5"), "3-5");
+    assert_eq!(text(&s, "A8"), ">9");
+    // Text can't be grouped, the end can't come before the start, the interval must be positive.
+    assert!(s.execute("pivot.group", json!({"field": "Units", "by": "range", "start": 9, "end": 3, "interval": 3})).is_err());
+    assert!(s.execute("pivot.group", json!({"field": "Units", "by": "range", "interval": 0})).is_err());
+    s.execute("pivot.addField", json!({"field": "Region", "area": "columns"})).unwrap();
+    assert!(s.execute("pivot.group", json!({"field": "Region", "by": "range", "interval": 5})).is_err());
+    // Ungroup restores one item per value.
+    s.execute("pivot.group", json!({"field": "Units", "by": "none"})).unwrap();
+    assert!(pt(&s).rows[0].range_group.is_none());
+    assert_eq!(text(&s, "A5"), "1");
+}

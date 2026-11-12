@@ -50,9 +50,11 @@ impl Stats {
     }
 }
 
-/// Date grouping of a cache field.
+/// Date or numeric range grouping of a cache field.
 struct Group {
     by: PivotDateGroup,
+    /// Numeric range grouping (then `by` is `None`): the dialog's settings and the resolved ranges.
+    range: Option<(PivotRangeGroup, RangeBins)>,
     /// The database field the grouping applies to.
     base: usize,
     /// The next (coarser) grouping field of the same base.
@@ -78,6 +80,9 @@ struct CField {
 }
 
 impl CField {
+    fn is_date_group(&self) -> bool {
+        self.group.as_ref().is_some_and(|g| g.range.is_none())
+    }
     /// Item captions the PivotTable's `<item x>` indices refer to.
     fn item_labels(&self) -> Vec<String> {
         match &self.group {
@@ -289,11 +294,32 @@ fn group_cache_fields(fields: &mut Vec<CField>, axis: &[&PivotField], date_syste
             && datetime_from_serial(date_system, s.min).is_some()
             && datetime_from_serial(date_system, s.max).is_some()
     };
+    // Numeric ranges replace the base field's items in place (one level, no extra fields).
+    for pf in axis {
+        let Some(g) = pf.range_group else { continue };
+        let Some(b) = find(fields, &pf.source_col) else { continue };
+        let Some(f) = fields.get_mut(b) else { continue };
+        let s = &f.stats;
+        if f.group.is_some() || !s.number || s.text || s.boolean || s.error {
+            continue;
+        }
+        if let Some(bins) = g.bins(s.min, s.max, !s.non_int) {
+            f.group = Some(Group {
+                by: PivotDateGroup::None,
+                range: Some((g, bins)),
+                base: b,
+                par: None,
+                start: bins.start,
+                end: bins.end,
+                items: bins.labels(),
+            });
+        }
+    }
     // (base column field, groupings fine → coarse)
     let mut groupings: Vec<(usize, Vec<PivotDateGroup>)> = Vec::new();
     for pf in axis {
         let Some(b) = find(fields, &pf.source_col) else { continue };
-        if pf.date_group == PivotDateGroup::None || !fields.get(b).is_some_and(groupable) {
+        if pf.date_group == PivotDateGroup::None || pf.range_group.is_some() || !fields.get(b).is_some_and(groupable) {
             continue;
         }
         match groupings.iter_mut().find(|(x, _)| *x == b) {
@@ -316,7 +342,7 @@ fn group_cache_fields(fields: &mut Vec<CField>, axis: &[&PivotField], date_syste
         list.sort_by_key(fineness);
         let (min, max) = fields.get(*b).map(|f| (f.stats.min, f.stats.max)).unwrap_or((0.0, 0.0));
         let (start, end) = (min.floor(), max.floor() + 1.0);
-        let make = |by: PivotDateGroup| Group { by, base: *b, par: None, start, end, items: group_items(date_system, by, start, end) };
+        let make = |by: PivotDateGroup| Group { by, range: None, base: *b, par: None, start, end, items: group_items(date_system, by, start, end) };
         let mut prev = *b;
         for (k, by) in list.iter().enumerate() {
             if k == 0 {
@@ -388,9 +414,11 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
             axis_map.push(None);
             continue;
         };
-        let grouped = fields.iter().position(|f| f.group.as_ref().is_some_and(|g| g.base == b && g.by == pf.date_group));
+        let grouped = fields.iter().position(|f| {
+            f.group.as_ref().is_some_and(|g| g.base == b && if pf.range_group.is_some() { g.range.is_some() } else { g.by == pf.date_group })
+        });
         match grouped {
-            Some(i) if pf.date_group != PivotDateGroup::None => axis_map.push(Some(i)),
+            Some(i) if pf.date_group != PivotDateGroup::None || pf.range_group.is_some() => axis_map.push(Some(i)),
             _ => {
                 if let Some(f) = fields.get_mut(b)
                     && f.group.is_none()
@@ -447,7 +475,7 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
                         None => s.push_str(&item_xml(&v, wb.date_system, false)),
                     }
                 } else {
-                    s.push_str(&item_xml(&v, wb.date_system, f.group.is_some()));
+                    s.push_str(&item_xml(&v, wb.date_system, f.is_date_group()));
                 }
             }
             s.push_str("</r>");
@@ -531,7 +559,7 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
     let _ = write!(s, "<cacheSource type=\"worksheet\">{}</cacheSource>", c.source_xml);
     let _ = write!(s, "<cacheFields count=\"{}\">", c.fields.len());
     for f in &c.fields {
-        let fmt = if f.group.is_some() { 14 } else { 0 };
+        let fmt = if f.is_date_group() { 14 } else { 0 };
         let _ = write!(s, "<cacheField name=\"{}\" numFmtId=\"{fmt}\"", esc_attr(&f.name));
         if let Some(formula) = &f.formula {
             let _ = write!(s, " formula=\"{}\"", esc_attr(formula));
@@ -543,7 +571,7 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
         let st = &f.stats;
         if f.col.is_some() {
             s.push_str("<sharedItems");
-            if let Some(g) = &f.group {
+            if f.is_date_group() {
                 s.push_str(" containsSemiMixedTypes=\"0\" containsNonDate=\"0\" containsDate=\"1\" containsString=\"0\"");
                 if st.blank {
                     s.push_str(" containsBlank=\"1\"");
@@ -551,7 +579,6 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
                 if let (Some(a), Some(b)) = (iso(sys, st.min), iso(sys, st.max)) {
                     let _ = write!(s, " minDate=\"{a}\" maxDate=\"{b}\"");
                 }
-                let _ = g;
             } else {
                 if !st.strings() && !st.blank {
                     s.push_str(" containsSemiMixedTypes=\"0\"");
@@ -592,9 +619,22 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
                 let _ = write!(s, " par=\"{p}\"");
             }
             let _ = write!(s, " base=\"{}\">", g.base);
-            let _ = write!(s, "<rangePr groupBy=\"{}\"", group_by_name(g.by));
-            if let (Some(a), Some(b)) = (iso(sys, g.start), iso(sys, g.end)) {
-                let _ = write!(s, " startDate=\"{a}\" endDate=\"{b}\"");
+            if let Some((rg, bins)) = &g.range {
+                // `groupBy` defaults to `range`; the bounds the user typed turn the automatic ones off.
+                s.push_str("<rangePr");
+                if !rg.auto_start {
+                    s.push_str(" autoStart=\"0\"");
+                }
+                if !rg.auto_end {
+                    s.push_str(" autoEnd=\"0\"");
+                }
+                let num = crate::xml::num;
+                let _ = write!(s, " startNum=\"{}\" endNum=\"{}\" groupInterval=\"{}\"", num(bins.start), num(bins.end), num(bins.interval));
+            } else {
+                let _ = write!(s, "<rangePr groupBy=\"{}\"", group_by_name(g.by));
+                if let (Some(a), Some(b)) = (iso(sys, g.start), iso(sys, g.end)) {
+                    let _ = write!(s, " startDate=\"{a}\" endDate=\"{b}\"");
+                }
             }
             let _ = write!(s, "/><groupItems count=\"{}\">", g.items.len());
             for it in &g.items {
@@ -761,7 +801,7 @@ fn write_pivot_fields(s: &mut String, pt: &PivotTable, c: &Cache, layout: &Pivot
             PivotLayout::Outline => s.push_str(" compact=\"0\""),
             PivotLayout::Tabular => s.push_str(" compact=\"0\" outline=\"0\""),
         }
-        if f.group.is_some() {
+        if f.is_date_group() {
             s.push_str(" numFmtId=\"14\"");
         }
         let filter = layout.hidden_fields.get(&i).copied();

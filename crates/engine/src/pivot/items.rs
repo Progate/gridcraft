@@ -1,4 +1,41 @@
 use super::{CellError, HashMap, MONTHS, Ordering, PivotDateGroup, PivotField, PivotFunc, PivotSort, Source, Value, Workbook, datetime_from_serial};
+use gridcraft_model::RangeBins;
+
+// ---------------------------------------------------------------- grouping
+
+/// How a field's values become items: as they are, by a date part, or by numeric range.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Grouping {
+    #[default]
+    None,
+    Date(PivotDateGroup),
+    Range(RangeBins),
+}
+
+impl From<PivotDateGroup> for Grouping {
+    fn from(g: PivotDateGroup) -> Self {
+        if g == PivotDateGroup::None { Grouping::None } else { Grouping::Date(g) }
+    }
+}
+
+/// A field's grouping over source column `col`. A numeric grouping's automatic bounds come from the
+/// column's numbers; one that can't be made (no numbers, too many ranges) leaves the field ungrouped.
+pub fn field_grouping(src: &Source, col: usize, f: &PivotField) -> Grouping {
+    let Some(g) = &f.range_group else { return f.date_group.into() };
+    let (mut min, mut max, mut integers, mut any) = (f64::INFINITY, f64::NEG_INFINITY, true, false);
+    for v in src.rows.iter().filter_map(|r| r.get(col)) {
+        if let Value::Number(n) = v.scalar() {
+            any = true;
+            min = min.min(n);
+            max = max.max(n);
+            integers &= n.fract() == 0.0;
+        }
+    }
+    if !any {
+        return Grouping::None;
+    }
+    g.bins(min, max, integers).map_or(Grouping::None, Grouping::Range)
+}
 
 // ---------------------------------------------------------------- items
 
@@ -24,8 +61,8 @@ fn cmp_items(a: &Item, b: &Item) -> Ordering {
     a.class.cmp(&b.class).then(a.num.total_cmp(&b.num)).then_with(|| gridcraft_core::compare_text(&a.text, &b.text))
 }
 
-/// (identity key, item) for a source value under a field's date grouping.
-fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: usize) -> (String, Item) {
+/// (identity key, item) for a source value under a field's grouping.
+fn make_item(wb: &Workbook, v: &Value, group: Grouping, fmt: &str, first: usize) -> (String, Item) {
     let it = |value: Value, label: String, class: u8, num: f64, formatted: bool| Item {
         text: label.to_lowercase(),
         value,
@@ -38,7 +75,12 @@ fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: 
     match v {
         Value::Empty => ("b".into(), it(Value::text("(blank)"), "(blank)".into(), 4, 0.0, false)),
         Value::Number(n) => {
-            if group != PivotDateGroup::None
+            if let Grouping::Range(bins) = group {
+                let i = bins.index(*n);
+                let label = bins.label(i);
+                return (format!("r{i}"), it(Value::text(label.as_str()), label, 0, i as f64, false));
+            }
+            if let Grouping::Date(group) = group
                 && let Some(dt) = datetime_from_serial(wb.date_system, *n)
             {
                 let mon = MONTHS.get(dt.month.saturating_sub(1) as usize).copied().unwrap_or("Jan");
@@ -67,7 +109,7 @@ fn make_item(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: 
 }
 
 impl FieldItems {
-    pub(super) fn intern(&mut self, wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str, first: usize) -> u32 {
+    pub(super) fn intern(&mut self, wb: &Workbook, v: &Value, group: Grouping, fmt: &str, first: usize) -> u32 {
         let (key, item) = make_item(wb, v, group, fmt, first);
         if let Some(i) = self.index.get(&key) {
             return *i;
@@ -85,13 +127,13 @@ impl FieldItems {
     }
 }
 
-/// The label of a source value under a date grouping (for filters and field lists).
-pub fn item_label(wb: &Workbook, v: &Value, group: PivotDateGroup, fmt: &str) -> String {
+/// The label of a source value under a grouping (for filters and field lists).
+pub fn item_label(wb: &Workbook, v: &Value, group: Grouping, fmt: &str) -> String {
     make_item(wb, v, group, fmt, 0).1.label
 }
 
 /// Distinct item labels of a source column, sorted like the field list shows them.
-pub fn distinct_labels(wb: &Workbook, src: &Source, col: usize, group: PivotDateGroup, limit: usize) -> Vec<String> {
+pub fn distinct_labels(wb: &Workbook, src: &Source, col: usize, group: Grouping, limit: usize) -> Vec<String> {
     let mut fi = FieldItems::default();
     let fmt = src.formats.get(col).map(String::as_str).unwrap_or("General");
     for (i, r) in src.rows.iter().enumerate() {

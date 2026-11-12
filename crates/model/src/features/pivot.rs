@@ -35,6 +35,92 @@ pub enum PivotDateGroup {
     Days,
 }
 
+/// Grouping of a numeric field into equal ranges, as Excel's Grouping dialog sets it (Starting at,
+/// Ending at, By). An automatic bound follows the field's smallest or largest value.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotRangeGroup {
+    pub start: f64,
+    pub end: f64,
+    pub interval: f64,
+    pub auto_start: bool,
+    pub auto_end: bool,
+}
+
+impl Default for PivotRangeGroup {
+    fn default() -> Self {
+        PivotRangeGroup { start: 0.0, end: 0.0, interval: 10.0, auto_start: true, auto_end: true }
+    }
+}
+
+/// Most ranges one numeric grouping may produce (besides the `<start` and `>end` items).
+pub const MAX_RANGE_BINS: usize = 100_000;
+
+impl PivotRangeGroup {
+    /// The ranges for a field whose numbers run from `min` to `max`; `integers` when they are all
+    /// whole numbers. `None` when the grouping can't be made (a bad interval, start after end, or
+    /// more than [`MAX_RANGE_BINS`] ranges).
+    pub fn bins(&self, min: f64, max: f64, integers: bool) -> Option<RangeBins> {
+        let start = if self.auto_start { min } else { self.start };
+        let end = if self.auto_end { max } else { self.end };
+        let interval = self.interval;
+        if !(start.is_finite() && end.is_finite() && interval.is_finite()) || interval <= 0.0 || start > end {
+            return None;
+        }
+        let n = ((end - start) / interval).floor() + 1.0;
+        if !(n >= 1.0 && n <= MAX_RANGE_BINS as f64) {
+            return None;
+        }
+        // Whole-number data in whole-number steps shows `0-9`; otherwise each range shows its
+        // upper bound, which belongs to the next range (`0-0.5`, `0.5-1`).
+        let whole = integers && start.fract() == 0.0 && interval.fract() == 0.0;
+        Some(RangeBins { start, end, interval, count: n as usize, whole })
+    }
+}
+
+/// A resolved numeric grouping: item 0 is `<start`, items 1..=count the ranges, the last `>end`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RangeBins {
+    pub start: f64,
+    pub end: f64,
+    pub interval: f64,
+    /// Number of ranges.
+    pub count: usize,
+    /// Labels show inclusive whole-number ranges (`0-9`).
+    pub whole: bool,
+}
+
+impl RangeBins {
+    /// The item a number falls in.
+    pub fn index(&self, v: f64) -> usize {
+        if v < self.start {
+            return 0;
+        }
+        if v > self.end {
+            return self.count + 1;
+        }
+        let k = ((v - self.start) / self.interval).floor();
+        (k.max(0.0) as usize).min(self.count.saturating_sub(1)) + 1
+    }
+    /// The caption of item `i`.
+    pub fn label(&self, i: usize) -> String {
+        use gridcraft_core::number_to_text as t;
+        if i == 0 {
+            return format!("<{}", t(self.start));
+        }
+        if i > self.count {
+            return format!(">{}", t(self.end));
+        }
+        let a = self.start + (i - 1) as f64 * self.interval;
+        let b = if self.whole { a + self.interval - 1.0 } else { a + self.interval };
+        format!("{}-{}", t(a), t(b))
+    }
+    /// Every item caption, `<start` first and `>end` last.
+    pub fn labels(&self) -> Vec<String> {
+        (0..self.count + 2).map(|i| self.label(i)).collect()
+    }
+}
+
 /// A field placed in the Rows or Columns area.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -43,6 +129,8 @@ pub struct PivotField {
     pub source_col: String,
     pub sort: PivotSort,
     pub date_group: PivotDateGroup,
+    /// Grouping of a numeric field into equal ranges (`0-9`, `10-19`…); exclusive with `date_group`.
+    pub range_group: Option<PivotRangeGroup>,
     /// Item labels whose detail is hidden (collapsed).
     pub collapsed_items: Vec<String>,
 }
@@ -183,5 +271,36 @@ impl Default for PivotTable {
             values_on_rows: false,
             values_position: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn range_bins_label_whole_number_ranges() {
+        let g = PivotRangeGroup { start: 0.0, end: 100.0, interval: 10.0, auto_start: false, auto_end: false };
+        let b = g.bins(3.0, 98.0, true).unwrap();
+        assert_eq!(b.count, 11);
+        let l = b.labels();
+        assert_eq!(l.first().map(String::as_str), Some("<0"));
+        assert_eq!(l.get(1).map(String::as_str), Some("0-9"));
+        assert_eq!(l.get(11).map(String::as_str), Some("100-109"));
+        assert_eq!(l.last().map(String::as_str), Some(">100"));
+        assert_eq!(b.index(-1.0), 0);
+        assert_eq!(b.index(0.0), 1);
+        assert_eq!(b.index(19.0), 2);
+        assert_eq!(b.index(100.0), 11);
+        assert_eq!(b.index(100.5), 12);
+    }
+
+    #[test]
+    fn range_bins_auto_bounds_and_fractions() {
+        let g = PivotRangeGroup { interval: 0.5, ..PivotRangeGroup::default() };
+        let b = g.bins(1.0, 2.2, false).unwrap();
+        assert_eq!(b.labels(), vec!["<1", "1-1.5", "1.5-2", "2-2.5", ">2.2"]);
+        assert!(PivotRangeGroup { interval: 0.0, ..g }.bins(1.0, 2.0, true).is_none());
+        assert!(PivotRangeGroup { interval: 1e-9, ..g }.bins(0.0, 1.0, true).is_none());
     }
 }
