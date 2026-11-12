@@ -58,6 +58,8 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("file.exportHtml", "writes files"),
     ("file.exportPdf", "renders a PDF: slow, and may write files"),
     ("file.print", "renders a PDF: slow"),
+    ("file.generalOptions", "a password to open encrypts the saved file, which the round trip can't reopen"),
+    ("file.encryptWithPassword", "encrypts the saved file, which the round trip can't reopen"),
     ("window.activate", "switches documents"),
     ("window.close", "closes the document under test"),
     ("view.newWindow", "opens another window, whose view swaps with the first"),
