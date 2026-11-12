@@ -2,9 +2,10 @@
 //!
 //! Recognises numbers with thousands separators, percentages, currency, scientific notation,
 //! fractions (`1 1/2`), dates (`3/4/2026`, `2026-03-04`, `4-Mar-2026`, `Mar 4, 2026`), times
-//! (`10:30`, `10:30:15 PM`) and date-times. Locale: en-US.
+//! (`10:30`, `10:30:15 PM`) and date-times. Locale: en-US, and Japanese with [`parse_input_in`].
 
 use crate::date::{DateSystem, MONTHS, serial_from_ymd, time_fraction};
+use crate::region::Region;
 use crate::value::{CellError, Value};
 
 /// A parsed entry: its value and the number format Excel would apply automatically.
@@ -37,6 +38,241 @@ pub fn parse_input(s: &str, sys: DateSystem) -> Parsed {
         return Parsed { value: Value::number(n), format: f };
     }
     Parsed { value: Value::text(s), format: None }
+}
+
+/// `yyyy"年"m"月"d"日"`: built-in format 31 in Japanese Excel.
+pub const JA_YMD: &str = "yyyy\"年\"m\"月\"d\"日\"";
+/// `m"月"d"日"`: built-in format 56 in Japanese Excel, what a typed `11/10` or `11月10日` gets.
+pub const JA_MD: &str = "m\"月\"d\"日\"";
+/// `yyyy"年"m"月"`: built-in format 55 in Japanese Excel.
+pub const JA_YM: &str = "yyyy\"年\"m\"月\"";
+/// `[$-411]ggge"年"m"月"d"日"` (令和8年11月10日): built-in format 58 in Japanese Excel.
+pub const JA_ERA_YMD: &str = "[$-411]ggge\"年\"m\"月\"d\"日\"";
+/// `[$-411]ge.m.d` (R8.11.10): built-in format 57 in Japanese Excel.
+pub const JA_ERA_SHORT: &str = "[$-411]ge.m.d";
+/// `h"時"mm"分"`: built-in format 32 in Japanese Excel.
+pub const JA_HM: &str = "h\"時\"mm\"分\"";
+/// `h"時"mm"分"ss"秒"`: built-in format 33 in Japanese Excel.
+pub const JA_HMS: &str = "h\"時\"mm\"分\"ss\"秒\"";
+/// The yen currency format a typed `¥1,280` gets (built-in 5 in Japanese Excel).
+pub const JA_YEN: &str = "\"¥\"#,##0;\"¥\"\\-#,##0";
+/// The same with two decimals (built-in 7 in Japanese Excel).
+pub const JA_YEN_2: &str = "\"¥\"#,##0.00;\"¥\"\\-#,##0.00";
+
+/// The Japanese eras Excel reads and shows (`ggg`/`e`), newest first: name, initial and the
+/// Gregorian date the era began.
+pub const JA_ERAS: [(&str, char, i32, u32, u32); 5] =
+    [("令和", 'R', 2019, 5, 1), ("平成", 'H', 1989, 1, 8), ("昭和", 'S', 1926, 12, 25), ("大正", 'T', 1912, 7, 30), ("明治", 'M', 1868, 1, 1)];
+
+/// Interprets typed cell input as people type it in `region`. Regions other than Japanese read
+/// it as [`parse_input`] does. In Japanese, as Excel there:
+/// - full-width characters from an input method read as their ASCII forms (`３８０` is 380,
+///   `１２％` is 12%); text that stays text keeps what was typed;
+/// - `2026/11/10` is a date shown in the system short date (built-in 14, `yyyy/m/d`), `11/10`
+///   a date this year shown `m"月"d"日"`, `26/11/10` a year-first date;
+/// - `2026年11月10日`, `11月10日`, `2026年11月`, `令和8年11月10日` and `R8.11.10` are dates, and
+///   `9時30分` and `午後9:30` times;
+/// - `¥1,280` (or `￥`, or `\1280`) is an amount in yen.
+pub fn parse_input_in(s: &str, sys: DateSystem, region: &Region) -> Parsed {
+    if !region.is_japanese() || s.is_empty() || s.starts_with('\'') {
+        return parse_input(s, sys);
+    }
+    let norm = to_halfwidth(s);
+    let t = norm.trim();
+    let found = parse_yen(t).or_else(|| parse_ja_date(t, sys)).or_else(|| parse_ja_time(t));
+    if let Some((n, f)) = found {
+        return Parsed { value: Value::number(n), format: Some(f) };
+    }
+    let p = parse_input(&norm, sys);
+    match p.value {
+        Value::Text(_) => Parsed { value: Value::text(s), format: None },
+        value => Parsed { value, format: p.format.map(ja_format) },
+    }
+}
+
+/// Like [`parse_number_text_in`], reading text as it is typed in `region`.
+pub fn parse_number_text_region(s: &str, sys: DateSystem, region: &Region) -> Option<f64> {
+    match parse_input_in(s.trim(), sys, region).value {
+        Value::Number(n) => Some(n),
+        _ => None,
+    }
+}
+
+/// The format Japanese Excel gives an entry that reads the same as in English.
+fn ja_format(code: &'static str) -> &'static str {
+    match code {
+        "yyyy-mm-dd" => "m/d/yyyy",
+        "d-mmm" => JA_MD,
+        c => c,
+    }
+}
+
+/// Full-width ASCII forms (as an input method types them) as ASCII, the ideographic space as a
+/// space, the full-width yen sign as `¥`, the minus sign as `-` and curly double quotes as `"`.
+pub fn to_halfwidth(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\u{ff01}'..='\u{ff5e}' => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+            '\u{3000}' => ' ',
+            '\u{ffe5}' => '¥',
+            '\u{2212}' => '-',
+            '\u{201c}' | '\u{201d}' => '"',
+            c => c,
+        })
+        .collect()
+}
+
+/// `¥1,280`, `-¥1,280`, `¥-1,280`, `¥ 1280`; a backslash is the yen sign on Japanese keyboards.
+fn parse_yen(t: &str) -> Option<(f64, &'static str)> {
+    let (neg, rest) = match t.strip_prefix('-') {
+        Some(r) => (true, r.trim_start()),
+        None => (false, t),
+    };
+    let rest = rest.strip_prefix('¥').or_else(|| rest.strip_prefix('\\'))?.trim_start();
+    let (neg2, rest) = match rest.strip_prefix('-') {
+        Some(r) if !neg => (true, r),
+        _ => (false, rest),
+    };
+    if rest.starts_with(['+', '-', '$', '¥']) {
+        return None;
+    }
+    let (n, f) = parse_plain(rest)?;
+    // `¥5%` is not an amount.
+    if f.is_some_and(|f| f.contains('%') || f.contains('E')) {
+        return None;
+    }
+    let n = if neg || neg2 { -n } else { n };
+    Some((n, if rest.contains('.') { JA_YEN_2 } else { JA_YEN }))
+}
+
+/// Two-digit years as Excel reads them: 00–29 are 2000–2029, 30–99 are 1930–1999.
+fn expand_year(text: &str, y: i64) -> i64 {
+    if text.len() <= 2 { if y < 30 { 2000 + y } else { 1900 + y } } else { y }
+}
+
+fn digits(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() || s.len() > 9 || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse().ok()
+}
+
+/// The Gregorian year of year `n` of the era named or initialled at the start of `t`, and the
+/// rest of `t`.
+fn era_year(t: &str) -> Option<(i64, &str)> {
+    for (name, initial, start, ..) in JA_ERAS {
+        let rest = t.strip_prefix(name).or_else(|| t.strip_prefix(initial)).or_else(|| t.strip_prefix(initial.to_ascii_lowercase()));
+        if let Some(rest) = rest {
+            let end = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+            let (num, rest) = rest.split_at(end);
+            // 元年 is the first year.
+            let (n, rest) = match (digits(num), rest.strip_prefix('元')) {
+                (Some(n), _) => (n, rest),
+                (None, Some(r)) if num.is_empty() => (1, r),
+                _ => return None,
+            };
+            if n < 1 {
+                return None;
+            }
+            return Some((i64::from(start) + n - 1, rest));
+        }
+    }
+    None
+}
+
+/// Japanese date entry: year-first numeric dates, `年月日` dates and era dates.
+fn parse_ja_date(t: &str, sys: DateSystem) -> Option<(f64, &'static str)> {
+    if t.contains(['年', '月', '日']) {
+        let (era, mut rest) = match era_year(t) {
+            Some((y, rest)) => (Some(y), rest),
+            None => (None, t),
+        };
+        let mut y = era;
+        if let Some((a, r)) = rest.split_once('年') {
+            if era.is_some() {
+                if !a.is_empty() {
+                    return None;
+                }
+            } else {
+                y = Some(expand_year(a.trim(), digits(a)?));
+            }
+            rest = r;
+        } else if era.is_some() {
+            return None;
+        }
+        let mut m = None;
+        if let Some((a, r)) = rest.split_once('月') {
+            m = Some(digits(a)?);
+            rest = r;
+        }
+        let mut d = None;
+        if let Some((a, r)) = rest.split_once('日') {
+            d = Some(digits(a)?);
+            rest = r;
+        }
+        if !rest.trim().is_empty() {
+            return None;
+        }
+        return match (y, m, d) {
+            (Some(y), Some(m), Some(d)) => valid_ymd(sys, y, m, d).map(|n| (n, if era.is_some() { JA_ERA_YMD } else { JA_YMD })),
+            (None, Some(m), Some(d)) => valid_ymd(sys, current_year(), m, d).map(|n| (n, JA_MD)),
+            (Some(y), Some(m), None) if era.is_none() => valid_ymd(sys, y, m, 1).map(|n| (n, JA_YM)),
+            _ => None,
+        };
+    }
+    // R8.11.10, H31/4/30
+    if let Some((y, rest)) = era_year(t)
+        && let Some(rest) = rest.strip_prefix(['.', '/', '-'])
+    {
+        let parts: Vec<&str> = rest.split(['.', '/', '-']).collect();
+        if let [m, d] = parts.as_slice() {
+            return valid_ymd(sys, y, digits(m)?, digits(d)?).map(|n| (n, JA_ERA_SHORT));
+        }
+        return None;
+    }
+    let parts: Vec<&str> = t.split(['/', '-', '.']).collect();
+    match parts.as_slice() {
+        // Year first: 2026/11/10 and 26/11/10. A four-digit year last (11/10/2026) reads as in English.
+        [a, b, c] if a.len() == 4 || (a.len() <= 2 && c.len() <= 2) => {
+            let y = expand_year(a, digits(a)?);
+            valid_ymd(sys, y, digits(b)?, digits(c)?).map(|n| (n, "m/d/yyyy"))
+        }
+        // 2026/11 is the first of the month.
+        [a, b] if a.len() == 4 && t.contains('/') => valid_ymd(sys, digits(a)?, digits(b)?, 1).map(|n| (n, JA_YM)),
+        [a, b] if t.contains('/') && b.len() <= 2 => valid_ymd(sys, current_year(), digits(a)?, digits(b)?).map(|n| (n, JA_MD)),
+        _ => None,
+    }
+}
+
+/// `9時30分`, `9時30分15秒`, and times with 午前/午後 before or after them (`午後9:30`).
+fn parse_ja_time(t: &str) -> Option<(f64, &'static str)> {
+    if let Some((h, rest)) = t.split_once('時') {
+        let h = digits(h)?;
+        let (m, rest) = rest.split_once('分')?;
+        let m = digits(m)?;
+        let (s, rest, fmt) = match rest.split_once('秒') {
+            Some((s, r)) => (digits(s)?, r, JA_HMS),
+            None => (0, rest, JA_HM),
+        };
+        if !rest.trim().is_empty() || m >= 60 || s >= 60 || h >= 10000 {
+            return None;
+        }
+        return Some((time_fraction(h as f64, m as f64, s as f64), fmt));
+    }
+    let (pm, body) = if let Some(r) = t.strip_prefix("午前") {
+        (false, r)
+    } else if let Some(r) = t.strip_prefix("午後") {
+        (true, r)
+    } else if let Some(r) = t.strip_suffix("午前") {
+        (false, r)
+    } else if let Some(r) = t.strip_suffix("午後") {
+        (true, r)
+    } else {
+        return None;
+    };
+    let (tf, secs, ampm) = parse_time(&format!("{} {}", body.trim(), if pm { "PM" } else { "AM" }))?;
+    ampm.then_some((tf, if secs { "h:mm:ss AM/PM" } else { "h:mm AM/PM" }))
 }
 
 /// Numeric text as arithmetic coerces it ("1,000", "50%", "$3", "1/2/2020", "10:00").
@@ -632,5 +868,77 @@ mod tests {
         for text in ["3/4/2026", "10:30", "1 1/2", "abc", "12abc", "", "  ", "TRUE", "#N/A", "((1))", "(-5)", "$(5)%", "(1/2)"] {
             assert_eq!(number_stored_as_text(text), None, "{text}");
         }
+    }
+
+    fn ja(s: &str) -> Parsed {
+        parse_input_in(s, DateSystem::D1900, crate::region::lookup("ja-JP"))
+    }
+
+    fn serial(y: i64, m: i64, d: i64) -> Value {
+        Value::Number(serial_from_ymd(DateSystem::D1900, y, m, d).unwrap_or(f64::NAN))
+    }
+
+    #[test]
+    fn japanese_dates() {
+        let this_year = current_year();
+        for (typed, value, format) in [
+            ("2026/11/10", serial(2026, 11, 10), "m/d/yyyy"),
+            ("2026-11-10", serial(2026, 11, 10), "m/d/yyyy"),
+            ("26/11/10", serial(2026, 11, 10), "m/d/yyyy"),
+            ("２０２６／１１／１０", serial(2026, 11, 10), "m/d/yyyy"),
+            ("11/10", serial(this_year, 11, 10), JA_MD),
+            ("11月10日", serial(this_year, 11, 10), JA_MD),
+            ("2026年11月10日", serial(2026, 11, 10), JA_YMD),
+            ("２０２６年１１月１０日", serial(2026, 11, 10), JA_YMD),
+            ("2026年11月", serial(2026, 11, 1), JA_YM),
+            ("2026/11", serial(2026, 11, 1), JA_YM),
+            ("令和8年11月10日", serial(2026, 11, 10), JA_ERA_YMD),
+            ("平成元年1月8日", serial(1989, 1, 8), JA_ERA_YMD),
+            ("R8.11.10", serial(2026, 11, 10), JA_ERA_SHORT),
+            ("H31/4/30", serial(2019, 4, 30), JA_ERA_SHORT),
+        ] {
+            let p = ja(typed);
+            assert_eq!((p.value, p.format), (value, Some(format)), "{typed}");
+        }
+        // A four-digit year last still reads month first, as in English.
+        assert_eq!(ja("11/10/2026").value, serial(2026, 11, 10));
+        for text in ["2026年13月1日", "11月32日", "年月日", "令和8年", "R8", "東京"] {
+            assert_eq!(ja(text).value, Value::text(text), "{text}");
+        }
+        // English keeps its own reading.
+        assert_eq!(p("2026/11/10").format, Some("yyyy-mm-dd"));
+        assert_eq!(parse_input_in("11月10日", DateSystem::D1900, crate::region::default_region()).value, Value::text("11月10日"));
+    }
+
+    #[test]
+    fn japanese_times_numbers_and_yen() {
+        let t = |h: f64, m: f64| Value::Number(time_fraction(h, m, 0.0));
+        for (typed, value, format) in [
+            ("9:30", t(9.0, 30.0), Some("h:mm")),
+            ("９：３０", t(9.0, 30.0), Some("h:mm")),
+            ("9時30分", t(9.0, 30.0), Some(JA_HM)),
+            ("9時30分15秒", Value::Number(time_fraction(9.0, 30.0, 15.0)), Some(JA_HMS)),
+            ("午後9:30", t(21.0, 30.0), Some("h:mm AM/PM")),
+            ("午前 9:30", t(9.0, 30.0), Some("h:mm AM/PM")),
+            ("9:30午後", t(21.0, 30.0), Some("h:mm AM/PM")),
+            ("３８０", Value::Number(380.0), None),
+            ("－５", Value::Number(-5.0), None),
+            ("１，２８０", Value::Number(1280.0), Some("#,##0")),
+            ("１２％", Value::Number(0.12), Some("0%")),
+            ("¥1280", Value::Number(1280.0), Some(JA_YEN)),
+            ("￥１，２８０", Value::Number(1280.0), Some(JA_YEN)),
+            ("\\1280", Value::Number(1280.0), Some(JA_YEN)),
+            ("-¥1,280", Value::Number(-1280.0), Some(JA_YEN)),
+            ("¥1,280.50", Value::Number(1280.5), Some(JA_YEN_2)),
+            ("$5", Value::Number(5.0), Some("\"$\"#,##0")),
+        ] {
+            let p = ja(typed);
+            assert_eq!((p.value, p.format), (value, format), "{typed}");
+        }
+        // Text keeps the full-width characters it was typed with.
+        for text in ["ＡＢＣ", "￥", "¥5%", "１２ｘ"] {
+            assert_eq!(ja(text).value, Value::text(text), "{text}");
+        }
+        assert_eq!(ja("'３８０").value, Value::text("３８０"));
     }
 }

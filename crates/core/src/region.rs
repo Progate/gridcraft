@@ -777,6 +777,27 @@ impl Region {
     pub fn is_12_hour(&self) -> bool {
         self.short_time.contains("AM/PM")
     }
+
+    /// True for Japanese (Japan), whose typed entry reads full-width characters, `年月日` dates,
+    /// era dates and `¥` amounts (see [`crate::parse::parse_input_in`]).
+    pub fn is_japanese(&self) -> bool {
+        self.lcid == 0x0411
+    }
+
+    /// The code a cell in `code` is shown with in this region. Built-in format 14 (`m/d/yyyy`) is
+    /// the system short date and 22 (`m/d/yyyy h:mm`) the short date and time, so Excel shows
+    /// them in the region's own order (`yyyy/m/d` in Japan) while the file keeps the built-in id.
+    /// Every other code is shown as written.
+    pub fn display_code<'a>(&self, code: &'a str) -> &'a str
+    where
+        'static: 'a,
+    {
+        match code {
+            "m/d/yyyy" => self.short_date,
+            "m/d/yyyy h:mm" => self.datetime,
+            _ => code,
+        }
+    }
 }
 
 fn is_space_like(c: char) -> bool {
