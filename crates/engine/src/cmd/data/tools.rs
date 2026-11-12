@@ -106,10 +106,73 @@ pub(super) fn remove_duplicates(s: &mut Session, p: &Json) -> Result<Json> {
         for c in RangeRef::new(CellRef::new(start, r.start.col), r.end).iter() {
             cx.changed.push((sheet, c));
         }
+        if removed > 0 {
+            shrink_after_removal(cx, sheet, r, removed as u32)?;
+        }
         Ok(())
     })?;
     let remaining = (r.end.row + 1 - start) as usize - removed;
     Ok(json!({"removed": removed, "remaining": remaining}))
+}
+
+/// After Remove Duplicates compacted the rows of `r`, `removed` rows at its bottom are empty. A
+/// table whose data ends with `r` loses those rows, as in Excel: its range ends at the last kept
+/// row and its total row moves up under it. A sheet AutoFilter over exactly those rows shrinks
+/// the same way. Nothing outside the range moves.
+fn shrink_after_removal(cx: &mut crate::cmd::Ctx, sheet: usize, r: RangeRef, removed: u32) -> Result<()> {
+    let sh = cx.sheet_mut(sheet)?;
+    let table = sh.tables.iter().position(|t| {
+        t.range.start.col == r.start.col
+            && t.range.end.col == r.end.col
+            && t.range.start.row <= r.start.row
+            && t.data_range().is_some_and(|d| d.start.row <= r.start.row.saturating_add(1) && d.end.row == r.end.row)
+    });
+    let new_end = r.end.row - removed;
+    let mut moved_total = None;
+    if let Some(i) = table
+        && let Some(t) = sh.tables.get(i).cloned()
+    {
+        if t.totals_row {
+            let from = t.range.end.row;
+            let to = new_end + 1;
+            for col in t.range.start.col..=t.range.end.col {
+                let (a, b) = (CellRef::new(from, col), CellRef::new(to, col));
+                if let Some(cell) = sh.cell(a).cloned() {
+                    sh.remove_cell(a);
+                    sh.set_cell(b, cell);
+                }
+                if let Some(cm) = sh.comments.remove(&a) {
+                    sh.comments.insert(b, cm);
+                }
+                if let Some(h) = sh.hyperlinks.remove(&a) {
+                    sh.hyperlinks.insert(b, h);
+                }
+            }
+            moved_total = Some((from, to, t.range.start.col, t.range.end.col));
+        }
+        if let Some(t) = sh.tables.get_mut(i) {
+            t.range.end.row -= removed;
+        }
+    }
+    if let Some(af) = sh.autofilter.as_mut()
+        && af.range.start.col == r.start.col
+        && af.range.end.col == r.end.col
+        && af.range.start.row <= r.start.row
+        && af.range.end.row == r.end.row
+    {
+        af.range.end.row = new_end;
+    }
+    if let Some((from, to, c0, c1)) = moved_total {
+        for col in c0..=c1 {
+            cx.changed.push((sheet, CellRef::new(from, col)));
+            cx.changed.push((sheet, CellRef::new(to, col)));
+        }
+    }
+    if table.is_some() {
+        // Structured references (`Table1[Sales]`) now cover fewer rows.
+        cx.recalc_all = true;
+    }
+    Ok(())
 }
 
 pub(super) fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {

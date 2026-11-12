@@ -629,6 +629,18 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Treat consecutive delimiters as one", "連続した区切り文字は 1 文字として扱う"),
     ("Destination:", "表示先:"),
     ("My data has headers", "先頭行をデータの見出しとして使用する"),
+    ("Column {col}", "列 {col}"),
+    ("Select All", "すべて選択"),
+    ("Unselect All", "すべて選択解除"),
+    (
+        "To delete duplicate values, select one or more columns that contain duplicates.",
+        "重複する値を削除するには、重複が含まれている列を 1 つ以上選択してください。",
+    ),
+    ("No duplicate values found.", "重複する値は見つかりませんでした。"),
+    (
+        "{removed} duplicate values found and removed; {remaining} unique values remain.",
+        "{removed} 個の重複する値が見つかり、削除されました。{remaining} 個の一意の値が残っています。",
+    ),
     ("Columns (blank = all, e.g. A,C):", "列 (空白 = すべて、例: A,C):"),
     ("Timeline range (blank: first column of the selection):", "タイムラインの範囲 (空白: 選択範囲の最初の列):"),
     ("Values range (blank: second column of the selection):", "値の範囲 (空白: 選択範囲の 2 番目の列):"),

@@ -621,6 +621,48 @@ fn a_list_source_formula_is_evaluated_per_cell_like_a_dependent_dropdown() {
 }
 
 #[test]
+fn remove_duplicates_in_a_table_shrinks_the_table_and_moves_its_total_row_up() {
+    // Excel deletes the duplicate rows from the table: its ref ends at the last kept row, the
+    // total row follows, and content below the table stays. The ref used to keep every old row.
+    let mut s = Session::new();
+    s.new_workbook();
+    let rows = json!([["Item", "Qty"], ["a", 1], ["b", 2], ["a", 1], ["c", 3], ["b", 2]]);
+    s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+    s.execute("range.setValues", json!({"range": "A10", "values": [["below"]]})).unwrap();
+    s.execute("insert.table", json!({"range": "A1:B6", "header": true})).unwrap();
+    s.execute("table.totalRow", json!({"on": true})).unwrap();
+    s.execute("cell.set", json!({"cell": "B7", "input": "=SUBTOTAL(109,Table1[Qty])"})).unwrap();
+    s.execute("selection.set", json!({"range": "A2"})).unwrap();
+    let r = s.execute("data.removeDuplicates", json!({})).unwrap();
+    assert_eq!((r["removed"].as_u64(), r["remaining"].as_u64()), (Some(2), Some(3)));
+    let wb = &s.doc().unwrap().wb;
+    let sh = wb.active().unwrap();
+    assert_eq!(sh.tables[0].range.a1(), "A1:B5");
+    assert_eq!(sh.value(CellRef::parse("B5").unwrap()), Value::Number(6.0));
+    assert!(sh.value(CellRef::parse("A6").unwrap()).is_empty() && sh.value(CellRef::parse("B7").unwrap()).is_empty());
+    assert_eq!(sh.value(CellRef::parse("A10").unwrap()), Value::from("below"));
+    let bytes = gridcraft_xlsx::write_xlsx(wb).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/tables/table1.xml").unwrap(), &mut xml).unwrap();
+    assert!(xml.contains(r#"ref="A1:B5""#) && xml.contains(r#"<autoFilter ref="A1:B4""#), "{xml}");
+}
+
+#[test]
+fn remove_duplicates_in_a_plain_range_shrinks_its_autofilter_only() {
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["k"], ["x"], ["x"], ["y"]]})).unwrap();
+    s.execute("range.setValues", json!({"range": "A6", "values": [["after"]]})).unwrap();
+    s.execute("data.filter", json!({"range": "A1:A4"})).unwrap();
+    s.execute("data.removeDuplicates", json!({"range": "A1:A4", "header": true})).unwrap();
+    let sh = s.doc().unwrap().wb.active().unwrap().clone();
+    assert_eq!(sh.autofilter.as_ref().map(|af| af.range.a1()), Some("A1:A3".into()));
+    assert_eq!(sh.value(CellRef::parse("A6").unwrap()), Value::from("after"));
+    assert!(sh.value(CellRef::parse("A4").unwrap()).is_empty());
+}
+
+#[test]
 fn date_and_time_bounds_are_stored_as_serials_like_excel() {
     // Excel saves a typed date as its serial (`46113`); stored as typed, `2026/4/1` read back as
     // 2026÷4÷1. Formulas stay formulas.

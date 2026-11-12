@@ -98,6 +98,101 @@ pub(super) fn remove_duplicates_range(app: &SheetApp, sel: &str) -> String {
     range.a1()
 }
 
+/// The columns Remove Duplicates lists for `range` on `sheet` (by name, else the active sheet):
+/// (column letter, label). With "My data has headers" ticked a column is named by its header
+/// text, as in Excel; otherwise, or when the header is blank, it is `Column A` (列 A).
+pub(super) fn remove_duplicates_columns(app: &SheetApp, range: &str, header: bool) -> Vec<(String, String)> {
+    use gridcraft_engine::core::{CellRef, RangeRef, col_to_letters, split_sheet};
+    let lang = app.ui.language;
+    let (sheet_name, a1) = split_sheet(range.trim());
+    let Some(r) = RangeRef::parse(a1) else { return vec![] };
+    let doc = app.session.active();
+    let sheet = doc.and_then(|d| match &sheet_name {
+        Some(name) => d.wb.sheet_index(name).and_then(|i| d.wb.sheet(i)),
+        None => d.wb.active(),
+    });
+    // At most one column per sheet column: a whole-row range must not build 16,384 rows of check boxes forever.
+    (r.start.col..=r.end.col.min(r.start.col.saturating_add(1023)))
+        .map(|c| {
+            let letter = col_to_letters(c);
+            let text = match (header, doc, sheet) {
+                (true, Some(d), Some(sh)) => gridcraft_engine::display::cell_text(&d.wb, sh, CellRef::new(r.start.row, c)),
+                _ => String::new(),
+            };
+            let label = if text.trim().is_empty() { lang.tr("Column {col}").replace("{col}", &letter) } else { text };
+            (letter, label)
+        })
+        .collect()
+}
+
+/// Remove Duplicates as Excel draws it: Select All / Unselect All, "My data has headers", and a
+/// check box per column of the range. Unticked columns are kept in `unchecked` (letters), so every
+/// column of a range typed later starts ticked.
+pub(super) fn remove_duplicates_form(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let lang = app.ui.language;
+    d.fields = vec![Field::Text { key: "range", label: "Range:" }];
+    form_fields(app, ui, d);
+    let range = d.values.get("range").and_then(Json::as_str).unwrap_or("").to_string();
+    let mut header = d.values.get("header").and_then(Json::as_bool).unwrap_or(true);
+    let columns = remove_duplicates_columns(app, &range, header);
+    let mut unchecked: Vec<String> = d
+        .values
+        .get("unchecked")
+        .and_then(Json::as_array)
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    ui.label(lang.tr("To delete duplicate values, select one or more columns that contain duplicates."));
+    ui.horizontal(|ui| {
+        if ui.button(lang.tr("Select All")).clicked() {
+            unchecked.clear();
+        }
+        if ui.button(lang.tr("Unselect All")).clicked() {
+            unchecked = columns.iter().map(|(letter, _)| letter.clone()).collect();
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.checkbox(&mut header, lang.tr("My data has headers"));
+        });
+    });
+    ui.label(egui::RichText::new(lang.tr("Columns")).strong());
+    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+        for (letter, label) in &columns {
+            let mut on = !unchecked.contains(letter);
+            if ui.checkbox(&mut on, label.as_str()).changed() {
+                if on {
+                    unchecked.retain(|x| x != letter);
+                } else {
+                    unchecked.push(letter.clone());
+                }
+            }
+        }
+    });
+    d.values.insert("header".into(), json!(header));
+    d.values.insert("unchecked".into(), json!(unchecked));
+    let none = !columns.is_empty() && columns.iter().all(|(letter, _)| unchecked.contains(letter));
+    let mut ok = false;
+    ok_cancel(ui, &mut ok, open);
+    // With no column ticked there is nothing to compare: OK does nothing, as Excel greys it out.
+    *confirm |= ok && !none;
+}
+
+/// Excel's message after Remove Duplicates, from the command's `{removed, remaining}`.
+pub(super) fn remove_duplicates_message(lang: crate::i18n::Language, r: &Json) -> String {
+    let removed = r.get("removed").and_then(Json::as_u64).unwrap_or(0);
+    let remaining = r.get("remaining").and_then(Json::as_u64).unwrap_or(0);
+    if removed == 0 {
+        return lang.tr("No duplicate values found.").to_string();
+    }
+    lang.tr("{removed} duplicate values found and removed; {remaining} unique values remain.")
+        .replace("{removed}", &removed.to_string())
+        .replace("{remaining}", &remaining.to_string())
+}
+
+/// Whether Remove Duplicates opens with "My data has headers" ticked: a table's own header row
+/// setting inside a table, else ticked.
+pub(super) fn remove_duplicates_header(app: &SheetApp) -> bool {
+    app.session.active().and_then(|d| d.wb.active().and_then(|sh| sh.table_at(d.selection.active)).map(|t| t.header_row)).unwrap_or(true)
+}
+
 pub(super) fn abs(r: &gridcraft_engine::core::RangeRef) -> String {
     let a = |c: gridcraft_engine::core::CellRef| format!("${}${}", gridcraft_engine::core::col_to_letters(c.col), c.row + 1);
     if r.is_single() { a(r.start) } else { format!("{}:{}", a(r.start), a(r.end)) }

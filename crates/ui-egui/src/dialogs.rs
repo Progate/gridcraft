@@ -34,7 +34,7 @@ mod zoom;
 
 use analysis::toolpak_defaults;
 use charts::select_chart;
-use data::{abs, data_validation_fields, remove_duplicates_range, validation_defaults};
+use data::{abs, data_validation_fields, remove_duplicates_header, remove_duplicates_range, validation_defaults};
 use find::go_to_entries;
 pub(crate) use names::insert_name;
 use names::pasteable_names;
@@ -664,12 +664,8 @@ impl Dialog {
                 "removeDuplicates",
                 "Remove Duplicates",
                 "data.removeDuplicates",
-                vec![
-                    Text { key: "range", label: "Range:" },
-                    Check { key: "header", label: "My data has headers" },
-                    Text { key: "columnsText", label: "Columns (blank = all, e.g. A,C):" },
-                ],
-                json!({"range": remove_duplicates_range(app, &sel), "header": true}),
+                vec![Text { key: "range", label: "Range:" }, Check { key: "header", label: "My data has headers" }],
+                json!({"range": remove_duplicates_range(app, &sel), "header": remove_duplicates_header(app), "unchecked": []}),
             ),
             "advancedFilter" => {
                 let list = app
@@ -1265,6 +1261,31 @@ mod tests {
             (v.name.as_str(), v.func, v.show_as),
             ("Average of Sales", gridcraft_engine::model::PivotFunc::Average, gridcraft_engine::model::PivotShowAs::PercentOfColumnTotal)
         );
+    }
+
+    #[test]
+    fn remove_duplicates_lists_columns_by_header_and_submits_the_ticked_ones() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        session.execute("range.setValues", json!({"range": "A1:C3", "values": [["Name", "", "City"], ["a", 1, "x"], ["a", 2, "x"]]})).unwrap();
+        session.execute("selection.set", json!({"range": "A1:C3"})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        app.ui.language = crate::i18n::Language::Ja;
+        let mut dialog = Dialog::open(&mut app, "removeDuplicates", json!({})).unwrap();
+        let labels = |header| data::remove_duplicates_columns(&app, "A1:C3", header).into_iter().map(|(_, l)| l).collect::<Vec<_>>();
+        assert_eq!(labels(true), ["Name", "列 B", "City"]);
+        assert_eq!(labels(false), ["列 A", "列 B", "列 C"]);
+        assert!(build_params(&dialog).get("columns").is_none(), "every column ticked compares all of them");
+        dialog.set_value("unchecked", json!(["B"]));
+        let params = build_params(&dialog);
+        assert_eq!(params["columns"], json!(["A", "C"]));
+        assert!(params.get("unchecked").is_none());
+        let r = app.run("data.removeDuplicates", params).unwrap();
+        assert_eq!(
+            data::remove_duplicates_message(app.ui.language, &r),
+            "1 個の重複する値が見つかり、削除されました。1 個の一意の値が残っています。"
+        );
+        assert_eq!(data::remove_duplicates_message(crate::i18n::Language::En, &json!({"removed": 0, "remaining": 2})), "No duplicate values found.");
     }
 
     #[test]

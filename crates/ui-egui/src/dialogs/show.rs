@@ -3,7 +3,7 @@ use super::analysis::{analysis_toolpak, cancel_solver_options, goal_seek, in_sol
 use super::charts::{combo_chart, recommended_charts, select_data};
 use super::command_search::command_search;
 use super::cond_format_rules::manage_rules;
-use super::data::{advanced_filter_form, data_validation_form, sort};
+use super::data::{advanced_filter_form, data_validation_form, remove_duplicates_form, remove_duplicates_message, sort};
 use super::find::{find, go_to};
 use super::format_cells::format_cells;
 use super::insert_function::insert_function;
@@ -82,7 +82,27 @@ pub fn build_params(d: &Dialog) -> Json {
             }
             v["delimiters"] = Json::Array(delims);
         }
-        "removeDuplicates" | "subtotal" => {
+        "removeDuplicates" => {
+            // The unticked columns go out as the ticked ones (`columns`); all ticked compares every column.
+            let unchecked: Vec<&str> =
+                d.values.get("unchecked").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
+            let range = d.values.get("range").and_then(Json::as_str).unwrap_or("");
+            let (_, a1) = gridcraft_engine::core::split_sheet(range.trim());
+            if !unchecked.is_empty()
+                && let Some(r) = gridcraft_engine::core::RangeRef::parse(a1)
+            {
+                let columns: Vec<Json> = (r.start.col..=r.end.col)
+                    .map(gridcraft_engine::core::col_to_letters)
+                    .filter(|letter| !unchecked.contains(&letter.as_str()))
+                    .map(Json::from)
+                    .collect();
+                v["columns"] = Json::Array(columns);
+            }
+            if let Some(m) = v.as_object_mut() {
+                m.remove("unchecked");
+            }
+        }
+        "subtotal" => {
             if let Some(t) = d.values.get("columnsText").and_then(Json::as_str).filter(|t| !t.trim().is_empty()) {
                 v["columns"] = Json::Array(t.split(',').map(|c| json!(c.trim().to_ascii_uppercase())).collect());
             }
@@ -197,6 +217,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
             match d.name.as_str() {
                 "formatCells" => format_cells(app, ui, &mut d, &mut confirm),
                 "dataValidation" => data_validation_form(app, ui, &mut d, &mut confirm, &mut open),
+                "removeDuplicates" => remove_duplicates_form(app, ui, &mut d, &mut confirm, &mut open),
                 "pageSetup" => page_setup(app, ui, &mut d, &mut confirm, &mut open),
                 "advancedFilter" => advanced_filter_form(app, ui, &mut d, &mut confirm, &mut open),
                 "insertFunction" => insert_function(app, ui, &mut d, &mut confirm),
@@ -453,6 +474,9 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 open = false;
                 if d.name == "solver" {
                     app.open_dialog("solverResults", r);
+                } else if d.name == "removeDuplicates" {
+                    let lang = app.ui.language;
+                    app.message = Some((lang.tr(&d.title).to_string(), remove_duplicates_message(lang, &r)));
                 } else if d.name == "openPassword" {
                     let path = d.values.get("path").and_then(Json::as_str).map(str::to_string);
                     app.after_open(path.as_deref(), &r);
