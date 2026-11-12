@@ -72,7 +72,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Chart",
             ["Insert", "Charts"],
             None,
-            "{range?, type?: column|bar|line|pie|doughnut|area|scatter|bubble|radar|combo|histogram|waterfall|funnel|treemap|sunburst|boxWhisker|stock, subtype?: clustered|stacked|stacked100|markers, title?, at?: \"H2\", width?, height?}",
+            "{range?, type?: column|bar|line|pie|doughnut|area|scatter|bubble|radar|combo|histogram|waterfall|funnel|treemap|sunburst|boxWhisker|stock, subtype?: clustered|stacked|stacked100|markers, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series] (as chart.set), title?, at?: \"H2\", width?, height?}",
             has_doc,
             insert_chart
         ),
@@ -99,7 +99,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Properties",
             ["Chart Design"],
             None,
-            "{chart?: id, type?, subtype?, title?, legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?, holeSize?, firstSliceAngle?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
+            "{chart?: id, type?, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series, in order] (Combo ▸ Custom Combination: per-series chart type and Secondary Axis; makes the chart a combo), title?, legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?, holeSize?, firstSliceAngle?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
             has_doc,
             chart_set
         ),
@@ -164,6 +164,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{kind: chart|image|shape|slicer|equation|control, id, mode: moveAndSize|moveOnly|absolute}",
             has_doc,
             set_anchor_mode
+        ),
+        cmd!(
+            "object.altText",
+            "Alt Text",
+            ["Format", "Accessibility"],
+            None,
+            "{kind: chart|image, id, title?, description?, decorative?: bool} → {title, description, decorative} (only the given fields change; none: reads them)",
+            has_doc,
+            alt_text
         ),
         cmd!(
             "insert.link",
@@ -832,7 +841,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
             Some("Chart Title".into())
         }
     });
-    let chart = Chart {
+    let mut chart = Chart {
         id,
         kind,
         anchor: Anchor {
@@ -857,7 +866,11 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         source: (areas.len() == 1).then(|| format!("{}!{}", gridcraft_formula::quote_sheet(&sh.name), bounds.a1())),
         by_rows,
         pivot: None,
+        alt_text: Default::default(),
     };
+    if let Some(rows) = p.get("combo") {
+        apply_combo(&mut chart, rows)?;
+    }
     Ok((sheet, chart))
 }
 
@@ -897,9 +910,19 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         let Some(c) = sh.charts.get_mut(ci) else { return Ok(Json::Null) };
         if let Some(t) = str_param(p, "type") {
             c.kind = chart_kind(t, str_param(p, "subtype").unwrap_or(""));
-            if !c.supports_data_table() {
-                c.data_table = None;
+            if c.kind != ChartKind::Combo {
+                // Per-series types and axes belong to combo charts: a plain chart draws every series alike.
+                for series in &mut c.series {
+                    series.kind = None;
+                    series.secondary = false;
+                }
             }
+        }
+        if let Some(rows) = p.get("combo") {
+            apply_combo(c, rows)?;
+        }
+        if (p.get("type").is_some() || p.get("combo").is_some()) && !c.supports_data_table() {
+            c.data_table = None;
         }
         update_data_table(c, p, bool_param(p, "dataTable"))?;
         if let Some(method) = quartiles {
@@ -957,6 +980,89 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         }
         Ok(Json::Null)
     })
+}
+
+/// The chart type of one series of a combo chart: column, line and area, as Excel's Combo
+/// rows offer for an ordinary chart. `None` for any other type.
+pub fn combo_series_kind(t: &str, sub: &str) -> Option<ChartKind> {
+    matches!(t, "column" | "line" | "area").then(|| chart_kind(t, sub))
+}
+
+/// Makes `c` a combo chart, each series keeping the type it is drawn as. Fails for a chart whose
+/// series can't share an axis with a column, line or area (pie, scatter, histogram…).
+pub(crate) fn make_combo(c: &mut Chart) -> Result<()> {
+    if c.kind == ChartKind::Combo {
+        return Ok(());
+    }
+    let kind = c.kind;
+    let combinable = matches!(
+        kind,
+        ChartKind::ColumnClustered
+            | ChartKind::ColumnStacked
+            | ChartKind::ColumnStacked100
+            | ChartKind::Line
+            | ChartKind::LineMarkers
+            | ChartKind::LineStacked
+            | ChartKind::Area
+            | ChartKind::AreaStacked
+            | ChartKind::AreaStacked100
+    );
+    if !combinable {
+        return Err(bad("chart", "a secondary axis or per-series chart type needs a column, line, area or combo chart"));
+    }
+    for series in &mut c.series {
+        series.kind = Some(kind);
+    }
+    c.kind = ChartKind::Combo;
+    Ok(())
+}
+
+/// Change Chart Type ▸ Combo: one `{type?, subtype?, secondary?}` row per series, in order (rows
+/// left out keep what they have). Makes the chart a combo chart.
+pub(crate) fn apply_combo(c: &mut Chart, rows: &Json) -> Result<()> {
+    let rows = rows.as_array().ok_or_else(|| bad("chart", "`combo` must be a list of {type, subtype?, secondary?}"))?;
+    if rows.len() > c.series.len() {
+        return Err(bad("chart", "`combo` has more rows than the chart has series"));
+    }
+    let mut kinds = Vec::with_capacity(rows.len());
+    for row in rows {
+        let kind = match str_param(row, "type") {
+            Some(t) => Some(
+                combo_series_kind(t, str_param(row, "subtype").unwrap_or(""))
+                    .ok_or_else(|| bad("chart", "a combo series type must be column, line or area"))?,
+            ),
+            None => None,
+        };
+        if row.get("secondary").is_some_and(|v| !v.is_boolean()) {
+            return Err(bad("chart", "`secondary` must be a boolean"));
+        }
+        kinds.push((kind, bool_param(row, "secondary")));
+    }
+    if c.kind != ChartKind::Combo {
+        if make_combo(c).is_err() {
+            // Another type (pie, bar…) becomes Excel's default combination: a column, then lines.
+            for (i, series) in c.series.iter_mut().enumerate() {
+                series.kind = Some(if i == 0 { ChartKind::ColumnClustered } else { ChartKind::Line });
+                series.secondary = false;
+            }
+            c.kind = ChartKind::Combo;
+        }
+    } else {
+        // Spell out the kinds series without one are drawn as, so changing one row leaves the others as they look.
+        let drawn: Vec<ChartKind> = (0..c.series.len()).map(|i| gridcraft_chart::series_plot_kind(c, i)).collect();
+        for (series, kind) in c.series.iter_mut().zip(drawn) {
+            series.kind = Some(kind);
+        }
+    }
+    for (series, (kind, secondary)) in c.series.iter_mut().zip(kinds) {
+        if let Some(k) = kind {
+            series.kind = Some(k);
+        }
+        if let Some(v) = secondary {
+            series.secondary = v;
+        }
+    }
+    Ok(())
 }
 
 /// Shared by Chart Properties and Add Chart Element; no separate UI state.
@@ -1129,6 +1235,8 @@ fn insert_picture(s: &mut Session, p: &Json) -> Result<Json> {
         data: data.into(),
         mime,
         alt: str_param(p, "alt").unwrap_or("").into(),
+        alt_title: String::new(),
+        decorative: false,
     };
     let sheet = d.wb.active_sheet();
     edit(s, |cx| {
@@ -1313,6 +1421,74 @@ fn set_anchor_mode(s: &mut Session, p: &Json) -> Result<Json> {
         let Some(a) = cx.sheet_mut(sheet)?.object_anchor_mut(o) else { return Err(bad("object.setAnchorMode", "no such object")) };
         a.mode = mode;
         Ok(json!({"mode": anchor_mode_name(mode)}))
+    })
+}
+
+/// Alt Text of a chart or picture (Excel's Alt Text pane): title, description and Mark as
+/// decorative, saved on the object's `xdr:cNvPr`.
+fn alt_text(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "object.altText";
+    let (sheet, o) = object_param(s, p, CMD)?;
+    if !matches!(o.kind, ObjKind::Chart | ObjKind::Image) {
+        return Err(bad(CMD, "alt text is for charts and pictures"));
+    }
+    let text = |key: &str| -> Result<Option<String>> {
+        match p.get(key) {
+            None => Ok(None),
+            Some(Json::Null) => Ok(Some(String::new())),
+            Some(Json::String(t)) if t.chars().count() <= gridcraft_model::AltText::MAX_LEN => Ok(Some(t.clone())),
+            Some(Json::String(_)) => Err(bad(CMD, format!("`{key}` is longer than {} characters", gridcraft_model::AltText::MAX_LEN))),
+            Some(_) => Err(bad(CMD, format!("`{key}` must be text"))),
+        }
+    };
+    let (title, description) = (text("title")?, text("description")?);
+    if p.get("decorative").is_some_and(|v| !v.is_boolean()) {
+        return Err(bad(CMD, "`decorative` must be a boolean"));
+    }
+    let decorative = bool_param(p, "decorative");
+    let read = |sh: &Sheet| -> Option<gridcraft_model::AltText> {
+        match o.kind {
+            ObjKind::Chart => sh.charts.iter().find(|c| c.id == o.id).map(|c| c.alt_text.clone()),
+            _ => sh.images.iter().find(|i| i.id == o.id).map(|i| gridcraft_model::AltText {
+                title: i.alt_title.clone(),
+                description: i.alt.clone(),
+                decorative: i.decorative,
+            }),
+        }
+    };
+    let out = |a: &gridcraft_model::AltText| json!({"title": a.title, "description": a.description, "decorative": a.decorative});
+    if title.is_none() && description.is_none() && decorative.is_none() {
+        let d = s.doc()?;
+        let a = d.wb.sheet(sheet).and_then(read).ok_or_else(|| bad(CMD, "no such object"))?;
+        return Ok(out(&a));
+    }
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        let mut a = read(sh).ok_or_else(|| bad(CMD, "no such object"))?;
+        if let Some(t) = &title {
+            a.title = t.clone();
+        }
+        if let Some(t) = &description {
+            a.description = t.clone();
+        }
+        if let Some(v) = decorative {
+            a.decorative = v;
+        }
+        match o.kind {
+            ObjKind::Chart => {
+                if let Some(c) = sh.charts.iter_mut().find(|c| c.id == o.id) {
+                    c.alt_text = a.clone();
+                }
+            }
+            _ => {
+                if let Some(i) = sh.images.iter_mut().find(|i| i.id == o.id) {
+                    i.alt_title = a.title.clone();
+                    i.alt = a.description.clone();
+                    i.decorative = a.decorative;
+                }
+            }
+        }
+        Ok(out(&a))
     })
 }
 
@@ -1925,6 +2101,85 @@ mod tests {
         assert!(s.active().unwrap().wb.active().unwrap().charts[0].data_table.is_none());
         s.execute("edit.undo", json!({})).unwrap();
         assert!(s.active().unwrap().wb.active().unwrap().charts[0].data_table.is_some());
+    }
+
+    fn sales_chart(kind: &str) -> Session {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": [["Month", "Sales", "Rate"], ["Jan", 100, 0.1], ["Feb", 120, 0.2]]})).unwrap();
+        s.execute("insert.chart", json!({"range": "A1:C3", "type": kind})).unwrap();
+        s
+    }
+
+    fn first_chart(s: &Session) -> Chart {
+        s.active().unwrap().wb.active().unwrap().charts[0].clone()
+    }
+
+    #[test]
+    fn change_chart_type_combo_sets_each_series_type_and_axis() {
+        let mut s = sales_chart("column");
+        let combo = json!([{"type": "column"}, {"type": "line", "subtype": "markers", "secondary": true}]);
+        s.execute("chart.changeType", json!({"type": "combo", "combo": combo})).unwrap();
+        let c = first_chart(&s);
+        assert_eq!(c.kind, ChartKind::Combo);
+        let got: Vec<(Option<ChartKind>, bool)> = c.series.iter().map(|x| (x.kind, x.secondary)).collect();
+        assert_eq!(got, [(Some(ChartKind::ColumnClustered), false), (Some(ChartKind::LineMarkers), true)]);
+        // A row without a type keeps the series' type; only its axis changes.
+        s.execute("chart.set", json!({"combo": [{}, {"secondary": false}]})).unwrap();
+        assert_eq!(first_chart(&s).series[1].kind, Some(ChartKind::LineMarkers));
+        assert!(!first_chart(&s).series[1].secondary);
+        // Back to a plain chart: every series is drawn alike again.
+        s.execute("chart.set", json!({"combo": [{}, {"secondary": true}]})).unwrap();
+        s.execute("chart.set", json!({"type": "column"})).unwrap();
+        assert!(first_chart(&s).series.iter().all(|x| x.kind.is_none() && !x.secondary));
+        s.execute("edit.undo", json!({})).unwrap();
+        assert!(first_chart(&s).series[1].secondary);
+    }
+
+    #[test]
+    fn combo_rows_are_checked_before_anything_changes() {
+        let mut s = sales_chart("column");
+        let before = first_chart(&s);
+        for combo in [json!([{"type": "pie"}]), json!([{}, {}, {}]), json!({"type": "line"}), json!([{"secondary": "yes"}])] {
+            assert!(s.execute("chart.set", json!({"combo": combo})).is_err(), "{combo}");
+            assert_eq!(first_chart(&s), before);
+        }
+    }
+
+    #[test]
+    fn format_selection_moves_a_series_to_the_secondary_axis_and_keeps_its_fill() {
+        let mut s = sales_chart("line");
+        s.execute("chart.formatSelection", json!({"series": 1, "color": "#FF0000"})).unwrap();
+        s.execute("chart.formatSelection", json!({"series": 1, "secondary": true})).unwrap();
+        let c = first_chart(&s);
+        assert_eq!(c.kind, ChartKind::Combo);
+        assert!(c.series[1].secondary && !c.series[0].secondary);
+        assert_eq!(c.series.iter().map(|x| x.kind).collect::<Vec<_>>(), [Some(ChartKind::Line), Some(ChartKind::Line)]);
+        assert!(c.series[1].color.is_some(), "moving to another axis keeps the fill");
+        assert!(s.execute("chart.formatSelection", json!({"series": 5, "secondary": true})).is_err());
+        let mut pie = sales_chart("pie");
+        assert!(pie.execute("chart.formatSelection", json!({"series": 0, "secondary": true})).is_err());
+    }
+
+    #[test]
+    fn alt_text_sets_reads_and_undoes_for_charts_and_pictures() {
+        let mut s = sales_chart("column");
+        let id = first_chart(&s).id;
+        let r = s.execute("object.altText", json!({"kind": "chart", "id": id, "title": "Sales", "description": "Monthly sales"})).unwrap();
+        assert_eq!(r, json!({"title": "Sales", "description": "Monthly sales", "decorative": false}));
+        s.execute("object.altText", json!({"kind": "chart", "id": id, "decorative": true})).unwrap();
+        let alt = first_chart(&s).alt_text;
+        assert_eq!((alt.title.as_str(), alt.description.as_str(), alt.decorative), ("Sales", "Monthly sales", true));
+        assert_eq!(s.execute("object.altText", json!({"kind": "chart", "id": id})).unwrap()["decorative"], json!(true));
+        s.execute("edit.undo", json!({})).unwrap();
+        assert!(!first_chart(&s).alt_text.decorative);
+        let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+        let pic = s.execute("insert.picture", json!({"base64": png, "alt": "Logo"})).unwrap()["image"].as_u64().unwrap();
+        s.execute("object.altText", json!({"kind": "image", "id": pic, "title": "Brand", "description": null})).unwrap();
+        let img = s.active().unwrap().wb.active().unwrap().images[0].clone();
+        assert_eq!((img.alt_title.as_str(), img.alt.as_str()), ("Brand", ""));
+        assert!(s.execute("object.altText", json!({"kind": "image", "id": pic, "title": 3})).is_err());
+        assert!(s.execute("object.altText", json!({"kind": "chart", "id": 999, "title": "x"})).is_err());
     }
 
     #[test]

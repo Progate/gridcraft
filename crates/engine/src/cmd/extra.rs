@@ -61,8 +61,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             select_data
         ),
-        cmd!("chart.changeType", "Change Chart Type…", ["Chart Design", "Type"], None, "{chart?, type, subtype?}", has_doc, |s, p| s
-            .execute("chart.set", p.clone())),
+        cmd!(
+            "chart.changeType",
+            "Change Chart Type…",
+            ["Chart Design", "Type"],
+            None,
+            "{chart?, type, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series] (as chart.set)}",
+            has_doc,
+            |s, p| s.execute("chart.set", p.clone())
+        ),
         cmd!(
             "chart.move",
             "Move Chart…",
@@ -77,7 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Format Selection",
             ["Format", "Current Selection"],
             None,
-            "{chart?, series?: index, color?: hex}",
+            "{chart?, series?: index, color?: hex (null: Automatic), secondary?: bool (Format Data Series ▸ Plot Series On Secondary Axis; makes a column, line or area chart a combo)}",
             has_doc,
             format_series
         ),

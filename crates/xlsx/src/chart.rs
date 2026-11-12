@@ -224,6 +224,12 @@ pub fn read_chart(root: &El) -> Option<Chart> {
     let groups: Vec<(&El, ChartKind)> = plot.children.iter().filter_map(|g| group_kind(g).map(|k| (g, k))).collect();
     let (first, first_kind) = *groups.first()?;
     let first_axes = axis_ids(first);
+    // Excel's secondary axis is the value axis crossing at the maximum: groups plotted on it are
+    // secondary, wherever they sit in the plot area. Without one (or when every group uses it),
+    // a group whose axes differ from the first group's is.
+    let max_axes: Vec<&str> = plot.kids("valAx").filter(|a| a.child_val("crosses") == Some("max")).filter_map(|a| a.child_val("axId")).collect();
+    let on_max = |g: &El| g.kids("axId").filter_map(|a| a.attr("val")).any(|id| max_axes.contains(&id));
+    let by_max = groups.iter().any(|(g, _)| on_max(g)) && groups.iter().any(|(g, _)| !on_max(g));
     let mut series = vec![];
     for (gi, (g, k)) in groups.iter().enumerate() {
         for s in g.kids("ser") {
@@ -231,9 +237,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
             if groups.len() > 1 {
                 // Every series of a combo chart keeps its own group's kind, the first group's included.
                 ser.kind = Some(*k);
-            }
-            if gi > 0 {
-                ser.secondary = axis_ids(g) != first_axes;
+                ser.secondary = if by_max { on_max(g) } else { gi > 0 && axis_ids(g) != first_axes };
             }
             series.push(ser);
         }
@@ -287,6 +291,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         source: None,
         by_rows: false,
         pivot: root.path(&["pivotSource", "name"]).map(|n| strip_book(n.text.trim()).to_string()).filter(|n| !n.is_empty()),
+        alt_text: Default::default(),
     })
 }
 
@@ -753,6 +758,40 @@ fn strip_book(link: &str) -> &str {
     link.strip_prefix('[').and_then(|r| r.split_once(']')).map_or(link, |(_, rest)| rest)
 }
 
+/// A combo chart plot group: on the secondary axis, the group, its `(index, series)`.
+type ComboGroup<'a> = (bool, G, Vec<(usize, &'a Series)>);
+
+/// The plot groups of a combo chart as `(on the secondary axis, group, series)`: one group per
+/// chart type and axis, primary axis first, each axis's groups in Excel's order (area, column,
+/// line). A series without a kind of its own is a column when first and a line otherwise (as
+/// drawn); types a combo can't mix fall back to a column (bar, pie…) or a line (scatter, radar).
+/// With no series left on the primary axis, every series is written there.
+fn combo_groups<'a>(all: &[(usize, &'a Series)]) -> Vec<ComboGroup<'a>> {
+    let any_primary = all.iter().any(|(_, x)| !x.secondary);
+    let mut groups: Vec<ComboGroup<'a>> = Vec::new();
+    for &(i, x) in all {
+        let kind = x.kind.filter(|k| *k != ChartKind::Combo).unwrap_or(if i == 0 { ChartKind::ColumnClustered } else { ChartKind::Line });
+        let g = match group_for(kind) {
+            G::Bar { grouping, .. } => G::Bar { bar: false, grouping },
+            g @ (G::Line { .. } | G::Area { .. }) => g,
+            G::Scatter { .. } | G::Radar => G::Line { stacked: false, markers: false },
+            _ => G::Bar { bar: false, grouping: "clustered" },
+        };
+        let sec = x.secondary && any_primary;
+        match groups.iter_mut().find(|(s, gg, _)| *s == sec && *gg == g) {
+            Some((.., members)) => members.push((i, x)),
+            None => groups.push((sec, g, vec![(i, x)])),
+        }
+    }
+    let rank = |g: &G| match g {
+        G::Area { .. } => 0,
+        G::Bar { .. } => 1,
+        _ => 2,
+    };
+    groups.sort_by_key(|(sec, g, _)| (*sec, rank(g)));
+    groups
+}
+
 /// Chart part XML for a model chart on sheet `si`.
 pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book_name: &str) -> String {
     let mut s = String::from(
@@ -780,26 +819,16 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book_name: &str) -> Str
     let primary_g;
     let mut secondary: Option<G> = None;
     if ch.kind == ChartKind::Combo {
-        // Series without a kind of their own: the first is a column, the others lines (as drawn).
-        let kind = |i: usize, x: &Series| x.kind.filter(|k| *k != ChartKind::Combo).or((i > 0).then_some(ChartKind::Line));
-        let is_line = |k: Option<ChartKind>| matches!(k.map(group_for), Some(G::Line { .. } | G::Area { .. } | G::Radar | G::Scatter { .. }));
-        let bars: Vec<(usize, &Series)> = all.iter().filter(|(i, x)| !x.secondary && !is_line(kind(*i, x))).copied().collect();
-        let lines: Vec<(usize, &Series)> = all.iter().filter(|(i, x)| !x.secondary && is_line(kind(*i, x))).copied().collect();
-        let sec: Vec<(usize, &Series)> = all.iter().filter(|(_, x)| x.secondary).copied().collect();
-        primary_g = G::Bar { bar: false, grouping: "clustered" };
-        if !bars.is_empty() || (lines.is_empty() && sec.is_empty()) {
-            s.push_str(&group_xml(primary_g, &bars, ch, (1, 2), wb, si));
+        let mut groups = combo_groups(&all);
+        if groups.is_empty() {
+            groups.push((false, G::Bar { bar: false, grouping: "clustered" }, Vec::new()));
         }
-        if !lines.is_empty() {
-            s.push_str(&group_xml(G::Line { stacked: false, markers: false }, &lines, ch, (1, 2), wb, si));
-        }
-        if !sec.is_empty() {
-            let g = match sec.first().and_then(|(_, x)| x.kind).map(group_for) {
-                Some(b @ G::Bar { .. }) => b,
-                _ => G::Line { stacked: false, markers: false },
-            };
-            s.push_str(&group_xml(g, &sec, ch, (3, 4), wb, si));
-            secondary = Some(g);
+        primary_g = groups.iter().find(|(sec, ..)| !sec).map_or(G::Bar { bar: false, grouping: "clustered" }, |(_, g, _)| *g);
+        for (sec, g, members) in &groups {
+            s.push_str(&group_xml(*g, members, ch, if *sec { (3, 4) } else { (1, 2) }, wb, si));
+            if *sec {
+                secondary.get_or_insert(*g);
+            }
         }
     } else {
         primary_g = match group_for(ch.kind) {
@@ -879,8 +908,10 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book_name: &str) -> Str
         }
     }
     if secondary.is_some() {
-        s.push_str(&axis_xml(&Ax { cat: true, id: 3, cross: 4, pos: "b", delete: true, grid: false, title: None, crosses_max: false }));
+        // As Excel writes a secondary axis: its value axis on the right crossing the hidden
+        // secondary category axis at its maximum, then that category axis, deleted.
         s.push_str(&axis_xml(&Ax { cat: false, id: 4, cross: 3, pos: "r", delete: false, grid: false, title: None, crosses_max: true }));
+        s.push_str(&axis_xml(&Ax { cat: true, id: 3, cross: 4, pos: "b", delete: true, grid: false, title: None, crosses_max: false }));
     }
     if let Some(t) = &ch.data_table {
         let _ = write!(

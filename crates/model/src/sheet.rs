@@ -947,8 +947,17 @@ mod tests {
                 source: None,
                 by_rows: false,
                 pivot: None,
+                alt_text: Default::default(),
             }),
-            ObjKind::Image => s.images.push(Image { id, anchor, data: Arc::new(vec![]), mime: String::new(), alt: String::new() }),
+            ObjKind::Image => s.images.push(Image {
+                id,
+                anchor,
+                data: Arc::new(vec![]),
+                mime: String::new(),
+                alt: String::new(),
+                alt_title: String::new(),
+                decorative: false,
+            }),
             ObjKind::Shape | ObjKind::Equation => s.shapes.push(Shape {
                 id,
                 kind: if kind == ObjKind::Equation { ShapeKind::Equation } else { ShapeKind::default() },

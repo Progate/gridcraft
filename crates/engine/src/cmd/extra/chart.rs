@@ -254,8 +254,23 @@ pub(super) fn move_chart(s: &mut Session, p: &Json) -> Result<Json> {
 pub(super) fn format_series(s: &mut Session, p: &Json) -> Result<Json> {
     let idx = u32_param(p, "series").unwrap_or(0) as usize;
     let color = str_param(p, "color").and_then(Color::from_hex);
+    if p.get("secondary").is_some_and(|v| !v.is_boolean()) {
+        return Err(bad("chart.formatSelection", "`secondary` must be a boolean"));
+    }
+    let secondary = bool_param(p, "secondary");
+    // Without `color` the fill goes back to Automatic, unless the call only moves the series to another axis.
+    let set_color = p.get("color").is_some() || secondary.is_none();
     with_chart(s, p, |c| {
-        if let Some(se) = c.series.get_mut(idx) {
+        if secondary.is_some() && idx >= c.series.len() {
+            return Err(bad("chart.formatSelection", "no such series"));
+        }
+        if let Some(on) = secondary {
+            crate::cmd::insert::make_combo(c)?;
+            if let Some(se) = c.series.get_mut(idx) {
+                se.secondary = on;
+            }
+        }
+        if set_color && let Some(se) = c.series.get_mut(idx) {
             se.color = color;
         }
         Ok(())

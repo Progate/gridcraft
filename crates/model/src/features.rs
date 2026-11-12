@@ -617,6 +617,30 @@ pub struct Chart {
     /// whenever the PivotTable is refreshed or its layout changes.
     #[serde(default)]
     pub pivot: Option<String>,
+    /// Alt Text for screen readers (the drawing's `xdr:cNvPr` `title` and `descr`).
+    #[serde(default)]
+    pub alt_text: AltText,
+}
+
+/// Alternative text of a drawing object (Excel's Alt Text pane), stored on the object's
+/// `xdr:cNvPr`: `title`, `descr`, and the Office 2017 `adec:decorative` extension.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AltText {
+    pub title: String,
+    pub description: String,
+    /// Mark as decorative: screen readers skip the object.
+    pub decorative: bool,
+}
+
+impl AltText {
+    /// Longest title or description kept from a command, in characters.
+    pub const MAX_LEN: usize = 4096;
+
+    /// No title, no description and not decorative: nothing to write.
+    pub fn is_empty(&self) -> bool {
+        self.title.is_empty() && self.description.is_empty() && !self.decorative
+    }
 }
 
 impl Chart {
@@ -652,7 +676,14 @@ pub struct Image {
     #[serde(with = "crate::b64::shared")]
     pub data: std::sync::Arc<Vec<u8>>,
     pub mime: String,
+    /// Alt Text description (`descr`).
     pub alt: String,
+    /// Alt Text title (`title`).
+    #[serde(default)]
+    pub alt_title: String,
+    /// Mark as decorative (`adec:decorative`).
+    #[serde(default)]
+    pub decorative: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1151,6 +1182,7 @@ mod tests {
             source: None,
             by_rows: false,
             pivot: None,
+            alt_text: Default::default(),
         };
         let mut json = serde_json::to_value(&chart).expect("serialize chart");
         json.as_object_mut().expect("chart object").remove("hole_size");

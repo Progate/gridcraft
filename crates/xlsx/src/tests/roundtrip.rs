@@ -358,6 +358,8 @@ fn sample() -> Workbook {
         data: png.into(),
         mime: "image/png".into(),
         alt: "Logo \"x\"".into(),
+        alt_title: String::new(),
+        decorative: false,
     });
     s.shapes.push(Shape {
         math: Default::default(),
@@ -429,6 +431,7 @@ fn sample() -> Workbook {
         source: None,
         by_rows: false,
         pivot: None,
+        alt_text: Default::default(),
     };
     for kind in [
         ChartKind::ColumnClustered,

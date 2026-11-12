@@ -348,8 +348,13 @@ fn accessibility(s: &mut Session, _: &Json) -> Result<Json> {
     let mut issues = Vec::new();
     for sh in &d.wb.sheets {
         for im in &sh.images {
-            if im.alt.is_empty() {
+            if im.alt.is_empty() && !im.decorative {
                 issues.push(json!({"sheet": sh.name, "issue": "Missing alternative text", "object": format!("Picture {}", im.id)}));
+            }
+        }
+        for ch in &sh.charts {
+            if ch.alt_text.description.is_empty() && !ch.alt_text.decorative {
+                issues.push(json!({"sheet": sh.name, "issue": "Missing alternative text", "object": format!("Chart {}", ch.id)}));
             }
         }
         if !sh.merges.is_empty() {
