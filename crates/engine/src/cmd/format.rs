@@ -406,7 +406,7 @@ pub(crate) fn color_param(v: Option<&Json>) -> Option<Color> {
         Json::Object(o) => {
             let theme = o.get("theme")?.as_u64()? as u8;
             let tint = o.get("tint").and_then(Json::as_f64).unwrap_or(0.0);
-            Some(Color::Theme(theme.min(11), (tint.clamp(-1.0, 1.0) * 1000.0) as i16))
+            Some(Color::Theme(theme.min(11), (tint.clamp(-1.0, 1.0) * 1000.0).round() as i16))
         }
         _ => None,
     }

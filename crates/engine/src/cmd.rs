@@ -2,6 +2,7 @@
 //! `data.sortAscending`) plus primitive editing commands (`cell.set`, `selection.set`).
 
 pub mod analysis;
+pub mod cond_format;
 pub mod controls;
 pub mod data;
 pub mod draw;
