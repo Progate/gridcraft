@@ -173,6 +173,10 @@ pub struct Sheet {
     /// [`crate::Workbook::selected_sheets`].
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tab_selected: bool,
+    /// A chart sheet (Move Chart ▸ New sheet): a tab that holds one chart, `charts[0]`, shown
+    /// filling the window with no grid. Saved as an `xl/chartsheets/` part.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub chart_sheet: bool,
     /// Unmodelled file content of this sheet kept for saving (form controls, OLE objects, query
     /// tables). Goes away with the sheet; not in JSON.
     #[serde(skip)]
@@ -241,6 +245,7 @@ impl Sheet {
             view_top_left: CellRef::default(),
             view: SheetViewMode::Normal,
             tab_selected: false,
+            chart_sheet: false,
             preserved: None,
         }
     }

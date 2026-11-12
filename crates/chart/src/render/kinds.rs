@@ -59,33 +59,24 @@ pub(super) fn histogram(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx
 
 pub(super) fn waterfall(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let Some(s) = data.series.first() else { return };
-    let mut ncat = data.categories.len().max(s.values.len()).min(MAX_CATS);
+    let ncat = data.categories.len().max(s.values.len()).min(MAX_CATS);
     if ncat == 0 {
         return;
     }
-    let mut labels: Vec<String> = (0..ncat).map(|j| cat_label(data, j)).collect();
-    let mut vals: Vec<f64> = (0..ncat).map(|j| s.values.get(j).copied().flatten().unwrap_or(0.0)).collect();
-    let mut is_total = vec![false; ncat];
-    let last_total = labels.last().is_some_and(|l| l.to_lowercase().contains("total"));
-    if let Some(t) = is_total.last_mut() {
-        *t = last_total;
-    }
-    if !last_total {
-        labels.push("Total".into());
-        vals.push(0.0);
-        is_total.push(true);
-        ncat += 1;
-    }
+    let labels: Vec<String> = (0..ncat).map(|j| cat_label(data, j)).collect();
+    // As in Excel, a point is a total only when it is set as one (Set as total): its bar stands
+    // on zero at its own value, and the running sum goes on from there.
+    let totals = chart.series.first().map(|s| s.subtotals.as_slice()).unwrap_or_default();
     let mut bars = Vec::with_capacity(ncat);
     let mut cum = 0.0f64;
-    for (j, v) in vals.iter().enumerate() {
-        if is_total.get(j).copied().unwrap_or(false) {
-            let total = if last_total && j + 1 == ncat && *v != 0.0 { *v } else { cum };
-            bars.push((0.0, total, 0u8));
-            cum = total;
+    for j in 0..ncat {
+        let v = s.values.get(j).copied().flatten().unwrap_or(0.0);
+        if totals.contains(&(j as u32)) {
+            bars.push((0.0, v, 0u8));
+            cum = v;
         } else {
             let top = clean(cum + v);
-            bars.push((cum, top, if *v >= 0.0 { 1 } else { 2 }));
+            bars.push((cum, top, if v >= 0.0 { 1 } else { 2 }));
             cum = top;
         }
     }
@@ -107,7 +98,9 @@ pub(super) fn waterfall(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx
         };
         let x = plot.x + (j as f32 + 0.5) * cw - bw / 2.0;
         let (yb, yt) = (vy(*b), vy(*t));
-        ctx.rect(x, yb.min(yt), bw, (yb - yt).abs().max(0.5), color, None);
+        let (y, h) = (yb.min(yt), (yb - yt).abs().max(0.5));
+        ctx.rect(x, y, bw, h, color, None);
+        ctx.points.push((0, j, [x, y, bw, h]));
         if j + 1 < bars.len() && ncat <= 500 {
             ctx.out.push(Prim::Line { pts: vec![[x + bw, yt], [x + cw, yt]], color: AXIS, width: 0.75, dash: true });
         }

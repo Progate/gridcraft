@@ -550,6 +550,7 @@ fn resolve_from_workbook() {
             quartiles: Default::default(),
             smooth: false,
             trendlines: Vec::new(),
+            subtotals: Vec::new(),
         },
         Series {
             name: None,
@@ -562,6 +563,7 @@ fn resolve_from_workbook() {
             quartiles: Default::default(),
             smooth: false,
             trendlines: Vec::new(),
+            subtotals: Vec::new(),
         },
         Series {
             name: Some("Literal".into()),
@@ -574,6 +576,7 @@ fn resolve_from_workbook() {
             quartiles: Default::default(),
             smooth: false,
             trendlines: Vec::new(),
+            subtotals: Vec::new(),
         },
     ];
     let d = resolve(&wb, 0, &c);
@@ -613,6 +616,7 @@ fn resolve_from_workbook() {
             quartiles: Default::default(),
             smooth: false,
             trendlines: Vec::new(),
+            subtotals: Vec::new(),
         },
         Series {
             name: None,
@@ -625,6 +629,7 @@ fn resolve_from_workbook() {
             quartiles: Default::default(),
             smooth: false,
             trendlines: Vec::new(),
+            subtotals: Vec::new(),
         },
     ];
     let d = resolve(&wb, 0, &c);
@@ -642,6 +647,7 @@ fn resolve_from_workbook() {
         quartiles: Default::default(),
         smooth: false,
         trendlines: Vec::new(),
+        subtotals: Vec::new(),
     }];
     let d = resolve(&wb, 0, &c);
     assert_eq!(d.series[0].x.as_ref().map(|x| x.len()), Some(3));
@@ -660,6 +666,7 @@ fn resolve_from_workbook() {
         quartiles: Default::default(),
         smooth: false,
         trendlines: Vec::new(),
+        subtotals: Vec::new(),
     }];
     let d = resolve(&wb, 7, &c);
     assert_eq!(d.series.len(), 1);
@@ -1365,6 +1372,7 @@ fn pie_points_follow_workbook_theme() {
         quartiles: Default::default(),
         smooth: false,
         trendlines: Vec::new(),
+        subtotals: Vec::new(),
     }];
     let d = resolve(&wb, 0, &c);
     let expected = vec![series_color(&wb.theme, 0), series_color(&wb.theme, 1)];
@@ -1641,6 +1649,7 @@ fn a_series_named_by_a_name_on_a_sheet_with_an_apostrophe_resolves() {
         quartiles: Default::default(),
         smooth: false,
         trendlines: Vec::new(),
+        subtotals: Vec::new(),
     }];
     let d = resolve(&wb, 0, &c);
     assert_eq!(d.series.first().map(|s| s.name.as_str()), Some("Takings"));
@@ -1677,7 +1686,43 @@ fn a_series_named_by_a_name_on_a_sheet_with_a_bang_resolves() {
         quartiles: Default::default(),
         smooth: false,
         trendlines: Vec::new(),
+        subtotals: Vec::new(),
     }];
     let d = resolve(&wb, 0, &c);
     assert_eq!(d.series.first().map(|s| s.name.as_str()), Some("Takings"));
+}
+
+/// Waterfall points set as totals stand on zero at their own value, in the series colour; the
+/// others float from the running sum. Each bar can be picked by `point_at`.
+#[test]
+fn waterfall_totals_stand_on_zero_and_points_can_be_picked() {
+    let mut c = chart(ChartKind::Waterfall);
+    c.data_labels = false;
+    c.series = vec![Series { subtotals: vec![0, 3], ..Default::default() }];
+    let total = [10, 20, 30, 255];
+    let mut d = sample(ChartKind::Waterfall);
+    d.series = vec![series("Flow", &[100.0, 50.0, -30.0, 120.0], total, ChartKind::Waterfall)];
+    d.categories.truncate(4);
+    let prims = render(&c, &d, 400.0, 300.0, &ApproxMeasure);
+    let bars: Vec<(f32, f32, f32, f32, Rgba)> =
+        prims.iter().filter_map(|p| if let Prim::Rect { x, y, w, h, fill: Some(f), .. } = p { Some((*x, *y, *w, *h, *f)) } else { None }).collect();
+    // Bars, not the legend's swatches.
+    let totals: Vec<_> = bars.iter().filter(|b| b.4 == total && b.2 > 20.0).collect();
+    assert_eq!(totals.len(), 2, "{bars:?}");
+    // Both totals reach down to the same zero line; the 120 bar is taller than the 100 one.
+    let bottom = |b: &(f32, f32, f32, f32, Rgba)| b.1 + b.3;
+    assert!((bottom(totals[0]) - bottom(totals[1])).abs() < 0.5);
+    assert!(totals[1].3 > totals[0].3);
+    // Without totals no bar takes the total colour, and no "Total" bar is added.
+    c.series[0].subtotals.clear();
+    let plain = render(&c, &d, 400.0, 300.0, &ApproxMeasure);
+    assert!(!plain.iter().any(|p| matches!(p, Prim::Rect { fill: Some(f), w, .. } if *f == total && *w > 20.0)));
+    // The middle of every drawn bar picks its point.
+    c.series[0].subtotals = vec![0, 3];
+    for (j, b) in totals.iter().enumerate() {
+        let hit = point_at(&c, &d, 400.0, 300.0, &ApproxMeasure, b.0 + b.2 / 2.0, b.1 + b.3 / 2.0);
+        assert_eq!(hit, Some((0, [0, 3][j])));
+    }
+    assert_eq!(point_at(&c, &d, 400.0, 300.0, &ApproxMeasure, 1.0, 1.0), None);
+    assert_eq!(point_at(&chart(ChartKind::ColumnClustered), &sample(ChartKind::ColumnClustered), 400.0, 300.0, &ApproxMeasure, 200.0, 150.0), None);
 }

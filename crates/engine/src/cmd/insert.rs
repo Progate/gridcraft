@@ -116,7 +116,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Sparklines",
             ["Insert", "Sparklines"],
             None,
-            "{range: \"B2:M2\", location: \"N2\", type?: line|column|winLoss, markers?}",
+            "{range: \"B2:M2\" (or \"B4:M7\" with a location range), location: \"N2\" | \"N4:N7\" (one sparkline per cell, one group), type?: line|column|winLoss, markers?}",
             has_doc,
             insert_sparkline
         ),
@@ -659,93 +659,97 @@ pub fn chart_kind(t: &str, sub: &str) -> ChartKind {
 }
 
 /// Builds series from a block: first row/column as names/categories when they're text.
-pub fn series_from_range(sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> {
+pub fn series_from_range(wb: &Workbook, sh: &Sheet, r: RangeRef, by_rows: bool) -> Vec<Series> {
+    let rows: Vec<u32> = (r.start.row..=r.end.row).collect();
+    let cols: Vec<u32> = (r.start.col..=r.end.col).collect();
+    series_from_grid(wb, sh, &rows, &cols, by_rows).unwrap_or_default()
+}
+
+/// Series from the cells where `rows` cross `cols` (a block, or areas a multiple selection puts
+/// together), by Excel's rules: the top line is the series names when it holds text (its first
+/// cell aside); the first column is the category labels when it is text or dates, or when the
+/// cell above it is blank under a header line (years, X values); the rest are values. `None` when
+/// a series would have to span cells that are not next to each other.
+fn series_from_grid(wb: &Workbook, sh: &Sheet, rows: &[u32], cols: &[u32], by_rows: bool) -> Option<Vec<Series>> {
+    let (&top, &left) = (rows.first()?, cols.first()?);
     let q = gridcraft_formula::quote_sheet(&sh.name);
-    let abs = |r: RangeRef| {
-        format!(
-            "{q}!${}${}:${}${}",
-            gridcraft_core::col_to_letters(r.start.col),
-            r.start.row + 1,
-            gridcraft_core::col_to_letters(r.end.col),
-            r.end.row + 1
-        )
-    };
-    let abs1 = |c: CellRef| format!("{q}!${}${}", gridcraft_core::col_to_letters(c.col), c.row + 1);
+    let col = gridcraft_core::col_to_letters;
+    let abs = |(r0, r1): (u32, u32), (c0, c1): (u32, u32)| format!("{q}!${}${}:${}${}", col(c0), r0 + 1, col(c1), r1 + 1);
+    let abs1 = |row: u32, c: u32| format!("{q}!${}${}", col(c), row + 1);
     let is_text = |c: CellRef| sh.value(c).is_text() || sh.value(c).is_empty();
-    let header_row = r.height() > 1
-        && (r.start.col..=r.end.col).any(|c| sh.value(CellRef::new(r.start.row, c)).is_text())
-        && (r.start.col..=r.end.col).filter(|c| *c != r.start.col).all(|c| is_text(CellRef::new(r.start.row, c)));
+    // Dates down the first column (a month column beside sales) label the categories, as in Excel.
+    let is_date = |c: CellRef| {
+        sh.cell(c).is_some_and(|x| x.formula.is_none() && x.value.is_number() && crate::fill::is_date_format(wb.styles.get(x.style).num_fmt.as_str()))
+    };
+    let header_row = rows.len() > 1
+        && cols.iter().any(|c| sh.value(CellRef::new(top, *c)).is_text())
+        && cols.iter().skip(1).all(|c| is_text(CellRef::new(top, *c)));
     // A blank top-left cell above a header row marks the first column as the category labels even
     // when it holds numbers (years, X values), the usual spreadsheet convention, so it isn't
     // plotted as a series of its own (#287).
-    let blank_corner = header_row && sh.value(r.start).is_empty();
+    let blank_corner = header_row && sh.value(CellRef::new(top, left)).is_empty();
+    let data_rows = rows.get(usize::from(header_row)..).unwrap_or_default();
     let label_col =
-        r.width() > 1 && (blank_corner || (r.start.row + header_row as u32..=r.end.row).all(|row| is_text(CellRef::new(row, r.start.col))));
-    let data = RangeRef::new(CellRef::new(r.start.row + header_row as u32, r.start.col + label_col as u32), r.end);
+        cols.len() > 1 && (blank_corner || data_rows.iter().all(|row| is_text(CellRef::new(*row, left)) || is_date(CellRef::new(*row, left))));
+    let data_cols = cols.get(usize::from(label_col)..).unwrap_or_default();
+    // The first and last of a run of consecutive indexes.
+    let span = |idx: &[u32]| -> Option<(u32, u32)> {
+        let (first, last) = (*idx.first()?, *idx.last()?);
+        idx.windows(2).all(|w| w[1] == w[0].saturating_add(1)).then_some((first, last))
+    };
+    let series = |name: Option<String>, categories: Option<String>, values: String| Series { name, categories, values, ..Default::default() };
     let mut out = Vec::new();
     if !by_rows {
-        for c in data.start.col..=data.end.col {
-            out.push(Series {
-                name: header_row.then(|| abs1(CellRef::new(r.start.row, c))),
-                categories: label_col.then(|| abs(RangeRef::new(CellRef::new(data.start.row, r.start.col), CellRef::new(data.end.row, r.start.col)))),
-                values: abs(RangeRef::new(CellRef::new(data.start.row, c), CellRef::new(data.end.row, c))),
-                bubble_sizes: None,
-                color: None,
-                secondary: false,
-                kind: None,
-                quartiles: Default::default(),
-                smooth: false,
-                trendlines: Vec::new(),
-            });
+        let rs = span(data_rows)?;
+        for c in data_cols {
+            out.push(series(header_row.then(|| abs1(top, *c)), label_col.then(|| abs(rs, (left, left))), abs(rs, (*c, *c))));
         }
     } else {
-        for row in data.start.row..=data.end.row {
-            out.push(Series {
-                name: label_col.then(|| abs1(CellRef::new(row, r.start.col))),
-                categories: header_row
-                    .then(|| abs(RangeRef::new(CellRef::new(r.start.row, data.start.col), CellRef::new(r.start.row, data.end.col)))),
-                values: abs(RangeRef::new(CellRef::new(row, data.start.col), CellRef::new(row, data.end.col))),
-                bubble_sizes: None,
-                color: None,
-                secondary: false,
-                kind: None,
-                quartiles: Default::default(),
-                smooth: false,
-                trendlines: Vec::new(),
-            });
+        let cs = span(data_cols)?;
+        for row in data_rows {
+            out.push(series(label_col.then(|| abs1(*row, left)), header_row.then(|| abs((top, top), cs)), abs((*row, *row), cs)));
         }
     }
-    out
+    Some(out)
 }
 
-fn series_from_areas(sh: &Sheet, areas: &[RangeRef]) -> Result<(RangeRef, bool, Vec<Series>)> {
+/// Series from the areas of a selection. Several areas over the same columns (a header row and
+/// rows of data further down) or the same rows (a label column and columns of data further
+/// right) are read as one block, as Excel reads them.
+pub(crate) fn series_from_areas(wb: &Workbook, sh: &Sheet, areas: &[RangeRef]) -> Result<(RangeRef, bool, Vec<Series>)> {
     let Some(first) = areas.first().copied() else { return Err(EngineError::Other("Select data for the chart first.".into())) };
     let bounds = areas.iter().skip(1).fold(first, |r, area| r.union(area));
     if areas.len() == 1 {
         let by_rows = first.width() > first.height() + 1;
-        return Ok((bounds, by_rows, series_from_range(sh, first, by_rows)));
+        return Ok((bounds, by_rows, series_from_range(wb, sh, first, by_rows)));
     }
-    let valid_shape = first.width() == 1
-        && first.height() > 1
-        && areas.iter().skip(1).all(|area| area.width() == 1 && area.height() == first.height())
-        && first.iter().all(|cell| sh.value(cell).is_text() || sh.value(cell).is_empty());
-    if !valid_shape {
-        return Err(bad("insert.chart", "multi-area charts require a text category column followed by equal-height series columns"));
+    let same_cols = areas.iter().all(|a| a.start.col == first.start.col && a.end.col == first.end.col);
+    let same_rows = areas.iter().all(|a| a.start.row == first.start.row && a.end.row == first.end.row);
+    let lines = |pick: &dyn Fn(&RangeRef) -> (u32, u32)| -> Vec<u32> {
+        let mut v: Vec<u32> = areas
+            .iter()
+            .flat_map(|a| {
+                let (lo, hi) = pick(a);
+                lo..=hi
+            })
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let (rows, cols, by_rows) = if same_cols {
+        let rows = lines(&|a| (a.start.row, a.end.row));
+        let by_rows = first.width() as usize > rows.len() + 1;
+        (rows, (first.start.col..=first.end.col).collect::<Vec<u32>>(), by_rows)
+    } else if same_rows {
+        (((first.start.row..=first.end.row).collect()), lines(&|a| (a.start.col, a.end.col)), false)
+    } else {
+        return Err(bad("insert.chart", "the areas of a multiple selection must line up: the same columns, or the same rows"));
+    };
+    match series_from_grid(wb, sh, &rows, &cols, by_rows) {
+        Some(series) if !series.is_empty() => Ok((bounds, by_rows, series)),
+        _ => Err(bad("insert.chart", "each series must be in cells next to each other: select a header line and one block of data")),
     }
-    let category = series_from_range(sh, first, false).into_iter().next().map(|series| series.values);
-    let mut series = Vec::with_capacity(areas.len() - 1);
-    for area in &areas[1..] {
-        let mut area_series = series_from_range(sh, *area, false);
-        let Some(mut item) = area_series.pop() else {
-            return Err(EngineError::Other("Select data for the chart first.".into()));
-        };
-        if item.name.is_none() {
-            return Err(bad("insert.chart", "multi-area series columns require headers"));
-        }
-        item.categories = category.clone();
-        series.push(item);
-    }
-    Ok((bounds, false, series))
 }
 
 /// A scatter plot of a block without category labels takes its first column (or row) as the X
@@ -775,7 +779,7 @@ pub fn recommend_charts(s: &Session, p: &Json) -> Result<Vec<(&'static str, &'st
     let sheet = target_sheet(s, p)?;
     let d = s.doc()?;
     let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
-    let (_, by_rows, series) = series_from_areas(sh, &areas)?;
+    let (_, by_rows, series) = series_from_areas(&d.wb, sh, &areas)?;
     let ranges: Vec<RangeRef> = series
         .iter()
         .filter_map(|x| match gridcraft_formula::parse(&x.values) {
@@ -842,7 +846,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
     let d = s.doc()?;
     let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
     let kind = chart_kind(&t, &sub);
-    let (bounds, by_rows, mut series) = series_from_areas(sh, &areas)?;
+    let (bounds, by_rows, mut series) = series_from_areas(&d.wb, sh, &areas)?;
     if series.is_empty() {
         return Err(EngineError::Other("Select data for the chart first.".into()));
     }
@@ -1127,7 +1131,7 @@ fn chart_switch(s: &mut Session, p: &Json) -> Result<Json> {
             return Err(bad("chart.switchRowColumn", "range too large for a chart"));
         }
         let by_rows = !by_rows;
-        let series = series_from_range(ssh, r, by_rows);
+        let series = series_from_range(&cx.wb, ssh, r, by_rows);
         if let Some(c) = cx.sheet_mut(si)?.charts.get_mut(ci) {
             c.source.get_or_insert(src);
             c.by_rows = by_rows;
@@ -1170,21 +1174,77 @@ fn chart_delete(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn insert_sparkline(s: &mut Session, p: &Json) -> Result<Json> {
-    let src = str_param(p, "range").ok_or_else(|| bad("insert.sparkline", "missing `range`"))?.to_string();
-    let loc = cell_param(s, p, "location")?.ok_or_else(|| bad("insert.sparkline", "missing `location`"))?;
+    let src = str_param(p, "range").ok_or_else(|| bad("insert.sparkline", "missing `range`"))?.trim().to_string();
+    let loc_text = str_param(p, "location").ok_or_else(|| bad("insert.sparkline", "missing `location`"))?;
+    let sheet = s.doc()?.wb.active_sheet();
+    let (loc_sheet, loc_body) = gridcraft_core::split_sheet(loc_text.trim());
+    if let Some(n) = loc_sheet
+        && s.doc()?.wb.sheet_index(&n) != Some(sheet)
+    {
+        return Err(bad("insert.sparkline", "the location range must be on the active sheet"));
+    }
+    let loc = RangeRef::parse(loc_body).ok_or_else(|| bad("insert.sparkline", format!("invalid location range `{loc_text}`")))?;
     let kind = match str_param(p, "type") {
         Some("column") => SparklineKind::Column,
         Some("winLoss") => SparklineKind::WinLoss,
         _ => SparklineKind::Line,
     };
     let markers = bool_param(p, "markers").unwrap_or(false);
-    let sheet = s.doc()?.wb.active_sheet();
+    let sources = sparkline_sources(&src, loc)?;
     edit(s, |cx| {
         let sh = cx.sheet_mut(sheet)?;
-        sh.sparklines.retain(|x| x.cell != loc);
-        sh.sparklines.push(Sparkline { cell: loc, source: src.clone(), kind, color: Color::Theme(4, 0), markers });
-        Ok(Json::Null)
+        // As Excel's Create Sparklines over a location range: one sparkline per cell, all in one group.
+        let group = if sources.len() > 1 { sh.sparklines.iter().map(|x| x.group).max().unwrap_or(0).saturating_add(1) } else { 0 };
+        sh.sparklines.retain(|x| !loc.contains(x.cell));
+        for (cell, source) in &sources {
+            sh.sparklines.push(Sparkline { cell: *cell, source: source.clone(), kind, color: Color::Theme(4, 0), markers, group });
+        }
+        Ok(json!({"count": sources.len()}))
     })
+}
+
+/// Most sparklines one Create Sparklines makes.
+const MAX_SPARKLINES: u32 = 100_000;
+
+/// The (cell, data) of each sparkline Create Sparklines makes for data range `src` and
+/// location range `loc`: one cell takes the whole range; a row or column of `n` cells takes the
+/// data range's `n` rows (or, failing that, its `n` columns) in turn, as in Excel.
+fn sparkline_sources(src: &str, loc: RangeRef) -> Result<Vec<(CellRef, String)>> {
+    let one = loc.width() == 1 && loc.height() == 1;
+    if one {
+        return Ok(vec![(loc.start, src.to_string())]);
+    }
+    if loc.width() != 1 && loc.height() != 1 {
+        return Err(bad("insert.sparkline", "the location range must be a single row or column"));
+    }
+    let n = loc.width().max(loc.height());
+    if n > MAX_SPARKLINES {
+        return Err(bad("insert.sparkline", "the location range is too large"));
+    }
+    let (data_sheet, body) = gridcraft_core::split_sheet(src);
+    let data = RangeRef::parse(body).ok_or_else(|| bad("insert.sparkline", format!("invalid data range `{src}`")))?;
+    let by_rows = if data.height() == n {
+        true
+    } else if data.width() == n {
+        false
+    } else {
+        return Err(bad("insert.sparkline", "the data range must have one row or column for each cell of the location range"));
+    };
+    let prefix = data_sheet.map(|n| format!("{}!", gridcraft_core::quote_sheet(&n))).unwrap_or_default();
+    let cells = (0..n)
+        .map(|k| if loc.width() == 1 { CellRef::new(loc.start.row + k, loc.start.col) } else { CellRef::new(loc.start.row, loc.start.col + k) });
+    Ok(cells
+        .enumerate()
+        .map(|(k, cell)| {
+            let k = k as u32;
+            let part = if by_rows {
+                RangeRef::new(CellRef::new(data.start.row + k, data.start.col), CellRef::new(data.start.row + k, data.end.col))
+            } else {
+                RangeRef::new(CellRef::new(data.start.row, data.start.col + k), CellRef::new(data.end.row, data.start.col + k))
+            };
+            (cell, format!("{prefix}{}", part.a1()))
+        })
+        .collect())
 }
 
 fn insert_picture(s: &mut Session, p: &Json) -> Result<Json> {

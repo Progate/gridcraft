@@ -171,6 +171,8 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
         if obj.kind == ObjKind::Control {
             app.grid.focused_control = None;
         }
+        app.grid.object_menu_point =
+            (obj.kind == ObjKind::Chart).then(|| crate::chartview::chart_point_at(ui.painter(), geo, wb, wb.active_sheet(), sh, obj.id, p)).flatten();
         app.grid.object_menu = Some((geo.mirror_pos(p), obj.kind.name(), obj.id));
         return;
     }

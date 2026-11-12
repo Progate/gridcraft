@@ -47,6 +47,7 @@ fn series(name: &str, values: &str) -> Series {
         smooth: false,
         trendlines: Vec::new(),
         quartiles: Default::default(),
+        subtotals: Vec::new(),
     }
 }
 

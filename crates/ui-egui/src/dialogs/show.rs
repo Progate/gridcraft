@@ -1,6 +1,6 @@
 use super::about::about;
 use super::analysis::{analysis_toolpak, cancel_solver_options, goal_seek, in_solver_options, solver, solver_results};
-use super::charts::{combo_chart, recommended_charts, select_data};
+use super::charts::{combo_chart, move_chart, recommended_charts, select_data};
 use super::command_search::command_search;
 use super::cond_format_rules::manage_rules;
 use super::data::{advanced_filter_form, data_validation_form, remove_duplicates_form, remove_duplicates_message, sort};
@@ -261,6 +261,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "recommendedCharts" => recommended_charts(app, ui, &mut d, &mut confirm, &mut open),
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
                 "comboChart" => combo_chart(app, ui, &mut d, &mut confirm, &mut open),
+                "moveChart" => move_chart(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm, &mut open),
                 "scenarioManager" => super::scenarios::scenario_manager(app, ui, &mut d, &mut confirm, &mut open),

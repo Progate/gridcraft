@@ -499,6 +499,10 @@ pub struct Series {
     /// Trendlines fitted to this series (Excel allows several per series).
     #[serde(default)]
     pub trendlines: Vec<Trendline>,
+    /// Waterfall: the points (0-based) set as totals (Format Data Point ▸ Set as total), drawn as
+    /// full bars from zero. Saved as the chartex series' `cx:layoutPr/cx:subtotals`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtotals: Vec<u32>,
 }
 
 /// Regression a trendline fits (`c:trendlineType`).
@@ -1085,6 +1089,14 @@ pub struct Sparkline {
     pub kind: SparklineKind,
     pub color: Color,
     pub markers: bool,
+    /// Sparklines with the same non-zero group were made together (Create Sparklines over a
+    /// location range) and are saved as one `x14:sparklineGroup`; 0 is a group of its own.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub group: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 // ---------------------------------------------------------------- filter & sort

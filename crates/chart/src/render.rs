@@ -56,6 +56,9 @@ pub(crate) const MAX_WEDGES: usize = 2_048;
 struct Ctx<'a> {
     out: Vec<Prim>,
     m: &'a dyn Measure,
+    /// Where data points were drawn, for [`point_at`]: (series, point, `[x, y, w, h]`). Only the
+    /// kinds whose points can be picked one by one record theirs.
+    points: Vec<(usize, usize, [f32; 4])>,
 }
 
 #[cfg(test)]
@@ -209,11 +212,22 @@ pub(crate) fn sanitized(d: &ChartData) -> Cow<'_, ChartData> {
 
 /// Lays out and draws a chart into a `w`×`h` box at the origin. Empty for a degenerate box.
 pub fn render(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure) -> Vec<Prim> {
+    layout(chart, data, w, h, m).map(|ctx| finalize(ctx.out, w, h)).unwrap_or_default()
+}
+
+/// The data point drawn under `(x, y)` (in the coordinates of [`render`]'s box) as (series,
+/// point), for kinds whose points can be picked one by one (waterfall); `None` elsewhere.
+pub fn point_at(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure, x: f32, y: f32) -> Option<(usize, usize)> {
+    let ctx = layout(chart, data, w, h, m)?;
+    ctx.points.iter().rev().find(|(_, _, [px, py, pw, ph])| x >= *px && x <= px + pw && y >= *py && y <= py + ph).map(|(s, j, _)| (*s, *j))
+}
+
+fn layout<'a>(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &'a dyn Measure) -> Option<Ctx<'a>> {
     if !(w.is_finite() && h.is_finite()) || w < 1.0 || h < 1.0 || w > 1e7 || h > 1e7 {
-        return vec![];
+        return None;
     }
     let data = sanitized(data);
-    let mut ctx = Ctx { out: Vec::new(), m };
+    let mut ctx = Ctx { out: Vec::new(), m, points: Vec::new() };
     ctx.out.push(Prim::Rect { x: 0.0, y: 0.0, w, h, fill: Some(WHITE), stroke: Some((GRID, 1.0)), radius: 0.0 });
     let pad = (w.min(h) * 0.04).clamp(2.0, 10.0);
     let mut area = Bx { x: pad, y: pad, w: w - 2.0 * pad, h: h - 2.0 * pad };
@@ -232,7 +246,7 @@ pub fn render(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure) 
     if area.ok() && !data.series.is_empty() {
         draw_kind(&mut ctx, chart, &data, area);
     }
-    finalize(ctx.out, w, h)
+    Some(ctx)
 }
 
 fn draw_kind(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {

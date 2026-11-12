@@ -1116,6 +1116,32 @@ impl Dialog {
                     json!({"chart": id, "range": eq(&range), "range0": eq(&range), "categories": eq(&cats), "categories0": eq(&cats), "names": names, "remove": []}),
                 )
             }
+            "moveChart" => {
+                // Chart Design ▸ Move Chart: New sheet (a chart sheet, named Chart1… like Excel's
+                // グラフ1… in Japanese) or Object in a worksheet.
+                let id = p("chart").as_u64();
+                let found = app.session.active().and_then(|doc| {
+                    let si = doc.wb.active_sheet();
+                    let sh = doc.wb.sheet(si)?;
+                    sh.charts.iter().find(|c| Some(u64::from(c.id)) == id)?;
+                    let stem = if app.ui.language == crate::i18n::Language::Ja { "グラフ" } else { "Chart" };
+                    let taken = |n: &str| doc.wb.sheets.iter().any(|s| s.name.eq_ignore_ascii_case(n));
+                    let name = (1..=10_000).map(|n| format!("{stem}{n}")).find(|n| !taken(n)).unwrap_or_default();
+                    let worksheets: Vec<String> = doc.wb.sheets.iter().filter(|s| !s.chart_sheet).map(|s| s.name.clone()).collect();
+                    let object = if sh.chart_sheet { worksheets.first().cloned().unwrap_or_default() } else { sh.name.clone() };
+                    let new_name = if sh.chart_sheet { sh.name.clone() } else { name };
+                    Some((new_name, object, worksheets, sh.chart_sheet))
+                });
+                let Some((name, object, worksheets, on_chart_sheet)) = found else {
+                    app.message = Some(("Move Chart".into(), "Select a chart first.".into()));
+                    return None;
+                };
+                Dialog::custom(
+                    "moveChart",
+                    "Move Chart",
+                    json!({"chart": id, "where": if on_chart_sheet { "newSheet" } else { "object" }, "newSheet": name, "sheet": object, "sheets": worksheets}),
+                )
+            }
             "comboChart" => {
                 // Change Chart Type ▸ Combo: a chart type and a Secondary Axis box per series.
                 let id = p("chart").as_u64();

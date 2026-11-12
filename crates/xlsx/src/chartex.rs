@@ -64,6 +64,20 @@ fn text(tx: &El) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
+/// Most points a waterfall series keeps as totals; a file can list any number.
+const MAX_SUBTOTALS: usize = 10_000;
+
+/// A waterfall series' totals (`cx:layoutPr/cx:subtotals/cx:idx`), sorted and without repeats.
+fn subtotals(series: &El) -> Vec<u32> {
+    let mut out: Vec<u32> = series
+        .path(&["layoutPr", "subtotals"])
+        .map(|st| st.kids("idx").filter_map(|i| i.attr_u32("val")).take(MAX_SUBTOTALS).collect())
+        .unwrap_or_default();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 pub fn read_chartex(root: &El) -> Option<Chart> {
     let chart = root.child("chart")?;
     let plot = chart.child("plotArea")?;
@@ -109,6 +123,7 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
                 .path(&["spPr", "solidFill"])
                 .and_then(dml_color)
                 .filter(|c| *c != gridcraft_model::Color::Theme(4 + (series.len() % 6) as u8, 0)),
+            subtotals: subtotals(s),
             ..Default::default()
         });
     }
@@ -296,8 +311,12 @@ pub fn write_chartex(wb: &Workbook, si: usize, ch: &Chart, names: &mut Vec<Strin
         let points = || crate::chart::ref_values(wb, si, &ser.values).unwrap_or_default().into_iter().take(10_000).enumerate();
         match ch.kind {
             ChartKind::Waterfall => {
+                // Decreases take the next accent and totals the one after, as the legend shows.
                 for (j, v) in points() {
-                    if v.as_f64().is_some_and(|n| n < 0.0) {
+                    let total = ser.subtotals.contains(&(j as u32));
+                    if total {
+                        let _ = write!(s, "<cx:dataPt idx=\"{j}\">{}</cx:dataPt>", fill_xml(&accent(i + 2), false));
+                    } else if v.as_f64().is_some_and(|n| n < 0.0) {
                         let _ = write!(s, "<cx:dataPt idx=\"{j}\">{}</cx:dataPt>", fill_xml(&accent(i + 1), false));
                     }
                 }
@@ -326,6 +345,13 @@ pub fn write_chartex(wb: &Workbook, si: usize, ch: &Chart, names: &mut Vec<Strin
                 );
             }
             ChartKind::Treemap => s.push_str("<cx:layoutPr><cx:parentLabelLayout val=\"overlapping\"/></cx:layoutPr>"),
+            ChartKind::Waterfall if !ser.subtotals.is_empty() => {
+                s.push_str("<cx:layoutPr><cx:subtotals>");
+                for j in &ser.subtotals {
+                    let _ = write!(s, "<cx:idx val=\"{j}\"/>");
+                }
+                s.push_str("</cx:subtotals></cx:layoutPr>");
+            }
             _ => {}
         }
         s.push_str("</cx:series>");

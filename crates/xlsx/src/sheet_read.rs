@@ -939,7 +939,10 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                     }
                 }
                 "sparklineGroups" => {
-                    for g in c.kids("sparklineGroup") {
+                    for (gi, g) in c.kids("sparklineGroup").enumerate() {
+                        // A group of several sparklines stays one group; a lone one needs no id.
+                        let n = g.child("sparklines").map_or(0, |s| s.kids("sparkline").count());
+                        let group = if n > 1 { u32::try_from(gi + 1).unwrap_or(u32::MAX) } else { 0 };
                         let kind = match g.attr("type") {
                             Some("column") => SparklineKind::Column,
                             Some("stacked") => SparklineKind::WinLoss,
@@ -950,7 +953,7 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                         for s in g.child("sparklines").map(|s| s.kids("sparkline").collect::<Vec<_>>()).unwrap_or_default() {
                             let source = s.child("f").map(|f| f.text.trim().to_string()).unwrap_or_default();
                             if let Some(cell) = s.child("sqref").and_then(|q| CellRef::parse(q.text.trim())) {
-                                sheet.sparklines.push(Sparkline { cell, source, kind, color, markers });
+                                sheet.sparklines.push(Sparkline { cell, source, kind, color, markers, group });
                             }
                         }
                     }

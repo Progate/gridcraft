@@ -59,6 +59,10 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
     let wb: Arc<Workbook> = d.wb.clone();
     let si = wb.active_sheet();
     let Some(sh) = wb.sheet(si) else { return };
+    if sh.chart_sheet {
+        show_chart_sheet(app, ui, &resp, rect, &wb, si, sh);
+        return;
+    }
     let sel = d.selection.clone();
     let place = (d.uid, si);
     let mut view = app.view();
@@ -387,6 +391,24 @@ fn show_grid_interactions(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Re
     fill_options_tag(app, ui, geo, sh);
     object_menu(app, ui);
     error_check_tag(app, ui, geo, sh);
+}
+
+/// A chart sheet: its chart fills the window, with no grid or headings. The chart is selected
+/// (the Chart Design and Format tabs show), and a right-click opens its menu as on a worksheet.
+fn show_chart_sheet(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, rect: Rect, wb: &Workbook, si: usize, sh: &Sheet) {
+    crate::chartview::paint_chart_sheet(ui.painter(), rect, wb, si, sh);
+    let chart = sh.charts.first().map(|c| gridcraft_engine::model::ObjRef::new(gridcraft_engine::model::ObjKind::Chart, c.id));
+    if app.selected_object.is_none() || app.selected_object.is_some_and(|o| Some(o) != chart) {
+        app.selected_object = chart;
+    }
+    if let Some(o) = chart
+        && (resp.secondary_clicked() || resp.drag_started_by(egui::PointerButton::Secondary))
+        && let Some(p) = resp.interact_pointer_pos()
+    {
+        app.grid.object_menu_point = crate::chartview::chart_sheet_point_at(ui.painter(), rect, wb, si, sh, p);
+        app.grid.object_menu = Some((p, o.kind.name(), o.id));
+    }
+    object_menu(app, ui);
 }
 
 fn update_zoom_glide(app: &mut SheetApp, ui: &egui::Ui, place: (u64, usize), zoom: u16, now: f64) {

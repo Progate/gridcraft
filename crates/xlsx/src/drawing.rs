@@ -498,6 +498,23 @@ pub enum Obj<'a> {
 
 /// The drawing part for a sheet's objects (relationship ids already assigned).
 pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
+    drawing_xml(sheet, theme, objs, false)
+}
+
+/// The drawing part of a chart sheet: its chart in an `xdr:absoluteAnchor` at the origin, the
+/// chart's size, as Excel writes it (the chart fills the window whatever the size says).
+pub fn write_chart_sheet_drawing(sheet: &Sheet, theme: &Theme, obj: &Obj<'_>) -> String {
+    drawing_xml(sheet, theme, std::slice::from_ref(obj), true)
+}
+
+/// `xdr:absoluteAnchor` opening at the origin with the anchor's size.
+fn absolute_open(a: &Anchor) -> (String, &'static str) {
+    let e = |v: f32| ((v.max(0.0) as f64) * EMU_PER_PX).round() as i64;
+    (format!("<xdr:absoluteAnchor><xdr:pos x=\"0\" y=\"0\"/><xdr:ext cx=\"{}\" cy=\"{}\"/>", e(a.width), e(a.height)), "</xdr:absoluteAnchor>")
+}
+
+fn drawing_xml(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>], absolute: bool) -> String {
+    let anchor_open = |sheet: &Sheet, a: &Anchor| if absolute { absolute_open(a) } else { anchor_open(sheet, a) };
     let mut s = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<xdr:wsDr xmlns:xdr=\"http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\">",
     );

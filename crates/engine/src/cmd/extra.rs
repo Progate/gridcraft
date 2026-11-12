@@ -23,7 +23,7 @@ mod window;
 
 pub(crate) use cells::is_checkbox_cell;
 use cells::{background, checkbox, draw_border, new_cell_style, recently_used, theme_colors, theme_fonts, toggle_checkbox, use_in_formula};
-use chart::{add_element, change_colors, format_series, move_chart, quick_layout, select_data};
+use chart::{add_element, change_colors, format_series, move_chart, quick_layout, select_data, set_as_total};
 use data::{from_csv, from_table_range, queries, table_resize};
 use objects::{align, arrange, rotate, selection_pane, shape_fill, shape_outline};
 pub(crate) use scripts::has_scripts;
@@ -76,7 +76,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Move Chart…",
             ["Chart Design", "Location"],
             None,
-            "{chart?, sheet?: name (moves to that sheet), at?: \"B2\"}",
+            "{chart?, newSheet?: name (New sheet: a chart sheet holding the chart, before its sheet), sheet?: name (Object in: that worksheet; a name no sheet has makes a new chart sheet), at?: \"B2\"}",
             has_doc,
             move_chart
         ),
@@ -88,6 +88,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{chart?, series?: index, color?: hex (null: Automatic), secondary?: bool (Format Data Series ▸ Plot Series On Secondary Axis; makes a column, line or area chart a combo)}",
             has_doc,
             format_series
+        ),
+        cmd!(
+            "chart.setAsTotal",
+            "Set as Total",
+            ["Format", "Current Selection"],
+            None,
+            "{chart?, series?: index (default 0), point: index (0-based), on?: bool (default true)} — waterfall data point drawn as a total from zero (Format Data Point ▸ Set as total)",
+            has_doc,
+            set_as_total
         ),
         cmd!(
             "chart.shapeFill",

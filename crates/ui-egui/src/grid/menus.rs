@@ -606,11 +606,24 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                 items.extend([("Format Control…", "ui:formatControl"), ("-", "")]);
             }
             items.push(("Delete", "object.delete"));
+            // Right-clicking a waterfall bar selects that data point, whose menu offers Set as Total.
+            let point = app.grid.object_menu_point.filter(|_| kind == "chart");
+            let total = point.and_then(|(si, pi)| {
+                let d = app.session.active()?;
+                let ch = d.wb.sheet(d.wb.active_sheet())?.charts.iter().find(|c| c.id == id)?;
+                (ch.kind == gridcraft_engine::model::ChartKind::Waterfall)
+                    .then(|| ch.series.get(si).is_some_and(|s| s.subtotals.contains(&(pi as u32))))
+            });
+            if total.is_some() {
+                items.push(("Set as Total", "ui:setAsTotal"));
+                items.push(("-", ""));
+            }
             if kind == "chart" {
                 items.extend([
                     ("-", ""),
                     ("Select Data…", "ui:selectData"),
                     ("Change Chart Type…", "ui:comboChart"),
+                    ("Move Chart…", "ui:moveChart"),
                     ("Format Chart Area…", "ui:formatChart"),
                 ]);
             }
@@ -623,12 +636,20 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                     ui.separator();
                     continue;
                 }
-                if ui.add(egui::Button::new(lang.tr(label)).frame(false).min_size(vec2(190.0, 20.0))).clicked() {
+                let text =
+                    if action == "ui:setAsTotal" && total == Some(true) { format!("✓ {}", lang.tr(label)) } else { lang.tr(label).to_string() };
+                if ui.add(egui::Button::new(text).frame(false).min_size(vec2(190.0, 20.0))).clicked() {
                     close = true;
                     match action {
                         "ui:selectData" => app.open_dialog("selectData", json!({"chart": id})),
+                        "ui:setAsTotal" => {
+                            if let Some((si, pi)) = point {
+                                app.run_or_alert("chart.setAsTotal", json!({"chart": id, "series": si, "point": pi, "on": total != Some(true)}));
+                            }
+                        }
                         "ui:formatChart" => app.grid.pane = Some("formatChart".into()),
                         "ui:comboChart" => app.open_dialog("comboChart", json!({"chart": id})),
+                        "ui:moveChart" => app.open_dialog("moveChart", json!({"chart": id})),
                         "ui:altText" => app.open_dialog("altText", json!({"kind": kind, "id": id})),
                         "ui:editText" => app.open_dialog("formatControl", json!({"id": id, "textOnly": true})),
                         "ui:assignAction" => app.open_dialog("assignAction", json!({"id": id})),

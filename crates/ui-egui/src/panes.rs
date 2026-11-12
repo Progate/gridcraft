@@ -330,6 +330,22 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
                 });
             }
         }
+        // Format Data Point ▸ Series Options ▸ Set as total, point by point (the first series:
+        // a waterfall chart plots one).
+        if chart.kind == gridcraft_chart::ChartKind::Waterfall
+            && let Some(s) = chart.series.first()
+        {
+            let d = data.as_ref().and_then(|d| d.series.first().map(|x| (d, x)));
+            let n = d.map_or(0, |(d, x)| d.categories.len().max(x.values.len())).min(500);
+            ui.label(egui::RichText::new(lang.tr("Format Data Point")).strong());
+            for j in 0..n {
+                let cat = data.as_ref().and_then(|d| d.categories.get(j)).cloned().unwrap_or_else(|| (j + 1).to_string());
+                let mut on = s.subtotals.contains(&(j as u32));
+                if ui.checkbox(&mut on, format!("{cat}: {}", lang.tr("Set as total"))).changed() {
+                    app.run_or_alert("chart.setAsTotal", json!({"chart": id, "series": 0, "point": j, "on": on}));
+                }
+            }
+        }
         if axis_choice && ui.button(lang.tr("Change Series Chart Type…")).clicked() {
             app.open_dialog("comboChart", json!({"chart": id}));
         }

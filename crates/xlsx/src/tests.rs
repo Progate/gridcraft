@@ -9,6 +9,7 @@ mod chart_combo_kinds;
 mod chart_data_table;
 mod chart_ref_offsets;
 mod chart_secondary_axis;
+mod chart_sheets;
 mod controls_tests;
 mod csv_tests;
 mod doc_protection_tests;

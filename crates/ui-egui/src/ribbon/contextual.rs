@@ -175,6 +175,11 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("comboChart", json!({"chart": id}));
         }
     });
+    let __k = big_button(ui, Icon::Chart, "Move\nChart", "Move Chart", false);
+    control_keytip(app, ui, &__k, "chart.move");
+    if __k.clicked() {
+        app.open_dialog("moveChart", json!({"chart": id}));
+    }
     if big_button(ui, Icon::Settings, "Format\nPane", "Format Chart pane", false).clicked() {
         app.grid.pane = Some("formatChart".into());
     }

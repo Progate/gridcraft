@@ -354,8 +354,25 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
             continue;
         };
         if rel.kind == "chartsheet" {
-            // Kept as it is and written back in place (see `passthrough`); nothing to model.
-            file_to_model.push(None);
+            // A chart sheet whose chart GridCraft reads becomes a model chart sheet; any other is
+            // kept as it is and written back in place (see `passthrough`).
+            match read_chart_sheet(&mut cx, &rel.target, &name) {
+                Ok(Some(mut sheet)) => {
+                    sheet.name = names.unique(&name, i);
+                    sheet.file_id = se.attr_u32("sheetId").unwrap_or(0);
+                    sheet.visibility = match se.attr("state") {
+                        Some("hidden") => Visibility::Hidden,
+                        Some("veryHidden") => Visibility::VeryHidden,
+                        _ => Visibility::Visible,
+                    };
+                    legacy_formulas.push((wb.sheets.len(), vec![]));
+                    file_to_model.push(Some(wb.sheets.len()));
+                    wb.sheets.push(Arc::new(sheet));
+                }
+                Ok(None) => file_to_model.push(None),
+                Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),
+                Err(_) => file_to_model.push(None),
+            }
             continue;
         }
         if rel.kind != "worksheet" {
@@ -580,4 +597,27 @@ pub fn parse_print_titles(text: &str) -> (TitleSpan, TitleSpan) {
         }
     }
     (rows, cols)
+}
+
+/// A chart sheet as a model chart sheet: the first chart of its drawing. `None` (and none of the
+/// warnings reading it gave) when it holds no chart GridCraft reads, so that it is kept instead.
+fn read_chart_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Option<Sheet>, IoError> {
+    let warned = cx.report.warnings.len();
+    let Some(x) = cx.optional_xml(part)? else { return Ok(None) };
+    let rels = cx.pkg.rels(part)?;
+    let Some(rel) = x.child("drawing").and_then(|d| d.attr("id")).and_then(|id| rels.iter().find(|r| r.id == id)) else { return Ok(None) };
+    let target = rel.target.clone();
+    let mut sheet = Sheet::new(name);
+    crate::drawing::read_drawing(cx, &target, &mut sheet)?;
+    if sheet.charts.is_empty() {
+        cx.report.warnings.truncate(warned);
+        return Ok(None);
+    }
+    sheet.charts.truncate(1);
+    sheet.images.clear();
+    sheet.shapes.clear();
+    sheet.slicers.clear();
+    cx.slicer_frames.clear();
+    sheet.chart_sheet = true;
+    Ok(Some(sheet))
 }

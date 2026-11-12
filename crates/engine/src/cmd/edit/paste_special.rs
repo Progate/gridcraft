@@ -106,6 +106,7 @@ pub(super) fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
             let side =
                 src_sheet.spill.keys().chain(src_sheet.cell_pictures.keys()).chain(src_sheet.comments.keys()).chain(src_sheet.hyperlinks.keys());
             held.extend(side.chain(moved_formulas.keys()).chain(moved_pictures.keys()).filter(|c| src.contains(**c)).map(|c| offset(*c)));
+            held.extend(src_sheet.sparklines.iter().map(|x| x.cell).filter(|c| src.contains(*c)).map(offset));
             held
         };
         let skip_cells = matches!(what, What::Validation | What::ColumnWidths);
@@ -321,6 +322,13 @@ pub(super) fn paste_special(s: &mut Session, p: &Json) -> Result<Json> {
                             }
                             if let Some(h) = src_sheet.hyperlinks.get(&sc).cloned() {
                                 cx.sheet_mut(dest_sheet)?.hyperlinks.insert(dest, h);
+                            }
+                            // A sparkline comes with its cell, its data range moved along (Excel
+                            // keeps it in its group on the same sheet).
+                            let sh = cx.sheet_mut(dest_sheet)?;
+                            sh.sparklines.retain(|x| x.cell != dest);
+                            if let Some(sp) = src_sheet.sparklines.iter().find(|x| x.cell == sc).and_then(|sp| crate::fill::sparkline_at(sp, dest)) {
+                                sh.sparklines.push(sp);
                             }
                             cx.sheet_mut(dest_sheet)?.set_cell(dest, new);
                         }

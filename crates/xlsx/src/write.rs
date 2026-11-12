@@ -487,6 +487,7 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     out.part("docProps/core.xml", Some("application/vnd.openxmlformats-package.core-properties+xml"), core.into_bytes());
     let mut app = String::from(XML_DECL);
     app.push_str("<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\" xmlns:vt=\"http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes\"><Application>GridCraft</Application>");
+    app.push_str(&titles_of_parts(wb));
     if !company.is_empty() {
         let _ = write!(app, "<Company>{}</Company>", esc(&company));
     }
@@ -529,6 +530,24 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     zip.finish()
 }
 
+/// `HeadingPairs` and `TitlesOfParts` of `docProps/app.xml`, as Excel writes them: the
+/// worksheet names, then the chart sheet names, each group counted under its heading.
+fn titles_of_parts(wb: &Workbook) -> String {
+    let worksheets: Vec<&str> = wb.sheets.iter().filter(|s| !s.chart_sheet).map(|s| s.name.as_str()).collect();
+    let charts: Vec<&str> = wb.sheets.iter().filter(|s| s.chart_sheet).map(|s| s.name.as_str()).collect();
+    let groups: Vec<(&str, &Vec<&str>)> = [("Worksheets", &worksheets), ("Charts", &charts)].into_iter().filter(|(_, v)| !v.is_empty()).collect();
+    let mut x = format!("<HeadingPairs><vt:vector size=\"{}\" baseType=\"variant\">", groups.len() * 2);
+    for (heading, names) in &groups {
+        let _ = write!(x, "<vt:variant><vt:lpstr>{heading}</vt:lpstr></vt:variant><vt:variant><vt:i4>{}</vt:i4></vt:variant>", names.len());
+    }
+    let _ = write!(x, "</vt:vector></HeadingPairs><TitlesOfParts><vt:vector size=\"{}\" baseType=\"lpstr\">", worksheets.len() + charts.len());
+    for name in worksheets.iter().chain(&charts) {
+        let _ = write!(x, "<vt:lpstr>{}</vt:lpstr>", esc(name));
+    }
+    x.push_str("</vt:vector></TitlesOfParts>");
+    x
+}
+
 fn write_sheets(
     wb: &Workbook,
     out: &mut Out,
@@ -543,17 +562,30 @@ fn write_sheets(
     let mut ids = crate::passthrough::SheetIds::new(wb, &kept);
     // Grouped sheets are each saved with `tabSelected`, as Excel saves a selection of tabs.
     let grouped = wb.selected_sheets();
+    let (mut worksheets, mut chart_sheets) = (0usize, 0usize);
     for (i, sheet) in wb.sheets.iter().enumerate() {
         sheets_xml.push_str(&kept.sheet_entries(i, false, &mut ids));
         let selected = i == active || (grouped.len() > 1 && grouped.contains(&i));
-        let (xml, mut rels) = crate::sheet_write::write_sheet(wb, i, selected, out);
-        pivots.add_sheet(wb, i, out, &mut rels);
-        let name = format!("xl/worksheets/sheet{}.xml", i + 1);
-        out.part(&name, Some(CT_WORKSHEET), xml.into_bytes());
-        if !rels.is_empty() {
-            out.part(&format!("xl/worksheets/_rels/sheet{}.xml.rels", i + 1), None, rels.xml().into_bytes());
-        }
-        let rid = wb_rels.add("worksheet", &format!("worksheets/sheet{}.xml", i + 1));
+        let rid = if sheet.chart_sheet {
+            // Chart sheets are numbered on their own, as Excel numbers them.
+            chart_sheets += 1;
+            let (xml, rels) = crate::sheet_write::write_chart_sheet(wb, i, selected, out);
+            out.part(&format!("xl/chartsheets/sheet{chart_sheets}.xml"), Some(crate::sheet_write::CT_CHARTSHEET), xml.into_bytes());
+            if !rels.is_empty() {
+                out.part(&format!("xl/chartsheets/_rels/sheet{chart_sheets}.xml.rels"), None, rels.xml().into_bytes());
+            }
+            wb_rels.add("chartsheet", &format!("chartsheets/sheet{chart_sheets}.xml"))
+        } else {
+            worksheets += 1;
+            let n = worksheets;
+            let (xml, mut rels) = crate::sheet_write::write_sheet(wb, i, selected, out);
+            pivots.add_sheet(wb, i, out, &mut rels);
+            out.part(&format!("xl/worksheets/sheet{n}.xml"), Some(CT_WORKSHEET), xml.into_bytes());
+            if !rels.is_empty() {
+                out.part(&format!("xl/worksheets/_rels/sheet{n}.xml.rels"), None, rels.xml().into_bytes());
+            }
+            wb_rels.add("worksheet", &format!("worksheets/sheet{n}.xml"))
+        };
         let state = match sheet.visibility {
             Visibility::Visible => "",
             _ if !any_visible && i == active => "",

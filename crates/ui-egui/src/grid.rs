@@ -269,6 +269,9 @@ pub struct GridState {
     pub fill_tag: Option<FillTag>,
     /// The right-clicked chart, picture, shape or slicer: where to open its menu, its kind and id.
     pub object_menu: Option<(Pos2, &'static str, u32)>,
+    /// The data point of a waterfall chart the right-click landed on (series, point), for the
+    /// menu's Set as Total.
+    pub object_menu_point: Option<(usize, usize)>,
     pub marching_phase: f32,
     /// The selection outline on its way to a new selection.
     pub glide: crate::selection_glide::SelectionGlide,

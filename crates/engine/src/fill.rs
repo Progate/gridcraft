@@ -49,7 +49,7 @@ impl FillMode {
 
 /// Whether a number format shows a calendar date (`YYYY-MM-DD` and `m/d/yyyy h:mm` do; `0 "days"`
 /// and `h:mm` don't).
-fn is_date_format(fmt: &str) -> bool {
+pub(crate) fn is_date_format(fmt: &str) -> bool {
     NumberFormat::parse(fmt).kind() == FormatKind::Date
 }
 
@@ -1167,4 +1167,52 @@ mod tests {
         assert!(holds_source_in_corner(RangeRef::parse("B1:B2").unwrap(), RangeRef::parse("A1:B4").unwrap()));
         assert!(!holds_source_in_corner(RangeRef::parse("A:A").unwrap(), RangeRef::parse("1:1").unwrap()));
     }
+}
+
+/// A copy of sparkline `sp` in cell `to`, its data range moved as far as the cell moved, as
+/// Excel copies and fills a sparkline (the range is relative). `None` when the range would leave
+/// the sheet or isn't a range.
+pub(crate) fn sparkline_at(sp: &gridcraft_model::Sparkline, to: CellRef) -> Option<gridcraft_model::Sparkline> {
+    let dr = i64::from(to.row) - i64::from(sp.cell.row);
+    let dc = i64::from(to.col) - i64::from(sp.cell.col);
+    let (sheet, body) = gridcraft_core::split_sheet(sp.source.trim());
+    let r = RangeRef::parse(body)?;
+    let moved = RangeRef::new(r.start.offset(dr, dc)?, r.end.offset(dr, dc)?);
+    let prefix = sheet.map(|n| format!("{}!", gridcraft_core::quote_sheet(&n))).unwrap_or_default();
+    Some(gridcraft_model::Sparkline { cell: to, source: format!("{prefix}{}", moved.a1()), ..sp.clone() })
+}
+
+/// Fill carries the sparklines of `src` across `target`, as Excel's fill handle does: each
+/// target cell takes the sparkline of the source cell it repeats, its data range moved along,
+/// in that sparkline's group (a lone sparkline and its copies become a group).
+pub(crate) fn fill_sparklines(cx: &mut Ctx, sheet: usize, src: RangeRef, target: RangeRef) -> Result<()> {
+    let sh = cx.sheet_mut(sheet)?;
+    let sources: Vec<usize> = sh.sparklines.iter().enumerate().filter(|(_, x)| src.contains(x.cell)).map(|(i, _)| i).collect();
+    if sources.is_empty() || target.count() > MAX_FILL_CELLS {
+        return Ok(());
+    }
+    let mut next_group = sh.sparklines.iter().map(|x| x.group).max().unwrap_or(0);
+    for &i in &sources {
+        if let Some(sp) = sh.sparklines.get_mut(i)
+            && sp.group == 0
+        {
+            next_group = next_group.saturating_add(1);
+            sp.group = next_group;
+        }
+    }
+    let by_cell: std::collections::HashMap<CellRef, gridcraft_model::Sparkline> =
+        sources.iter().filter_map(|&i| sh.sparklines.get(i)).map(|x| (x.cell, x.clone())).collect();
+    let (h, w) = (i64::from(src.height()), i64::from(src.width()));
+    let mut added = vec![];
+    for t in target.iter().filter(|t| !src.contains(*t)) {
+        let sr = i64::from(src.start.row) + (i64::from(t.row) - i64::from(src.start.row)).rem_euclid(h);
+        let sc = i64::from(src.start.col) + (i64::from(t.col) - i64::from(src.start.col)).rem_euclid(w);
+        let (Ok(sr), Ok(sc)) = (u32::try_from(sr), u32::try_from(sc)) else { continue };
+        if let Some(sp) = by_cell.get(&CellRef::new(sr, sc)).and_then(|sp| sparkline_at(sp, t)) {
+            added.push(sp);
+        }
+    }
+    sh.sparklines.retain(|x| src.contains(x.cell) || !target.contains(x.cell));
+    sh.sparklines.extend(added);
+    Ok(())
 }

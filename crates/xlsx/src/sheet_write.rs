@@ -292,22 +292,39 @@ fn write_sheet_extensions(s: &mut String, sheet: &Sheet, prio: &[u32], slicers: 
     }
     if !sheet.sparklines.is_empty() {
         let _ = write!(s, "<ext uri=\"{{05C60535-1F16-4fd2-B633-F4F36F0B64E0}}\" xmlns:x14=\"{X14_NS}\"><x14:sparklineGroups xmlns:xm=\"{XM_NS}\">");
+        // One `x14:sparklineGroup` per group, in the order its first sparkline comes, with that
+        // sparkline's settings; a sparkline of group 0 is a group of its own.
+        let mut members: std::collections::BTreeMap<u32, Vec<&gridcraft_model::Sparkline>> = Default::default();
+        for sp in sheet.sparklines.iter().filter(|sp| sp.group != 0) {
+            members.entry(sp.group).or_default().push(sp);
+        }
         for sp in &sheet.sparklines {
+            let group = if sp.group == 0 {
+                vec![sp]
+            } else {
+                // The group goes out with its first sparkline; later ones find it gone.
+                match members.remove(&sp.group) {
+                    Some(g) => g,
+                    None => continue,
+                }
+            };
             let ty = match sp.kind {
                 SparklineKind::Line => "",
                 SparklineKind::Column => " type=\"column\"",
                 SparklineKind::WinLoss => " type=\"stacked\"",
             };
-            let src =
-                if sp.source.contains('!') { sp.source.clone() } else { format!("{}!{}", gridcraft_formula::quote_sheet(&sheet.name), sp.source) };
             let color = if sp.color == Color::Auto { "rgb=\"FF376092\"".to_string() } else { color_attrs(&sp.color) };
             let _ = write!(
                 s,
-                "<x14:sparklineGroup displayEmptyCellsAs=\"gap\"{ty}{}><x14:colorSeries {color}/><x14:sparklines><x14:sparkline><xm:f>{}</xm:f><xm:sqref>{}</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup>",
+                "<x14:sparklineGroup displayEmptyCellsAs=\"gap\"{ty}{}><x14:colorSeries {color}/><x14:sparklines>",
                 if sp.markers { " markers=\"1\"" } else { "" },
-                esc(&src),
-                sp.cell.a1()
             );
+            for m in group {
+                let src =
+                    if m.source.contains('!') { m.source.clone() } else { format!("{}!{}", gridcraft_formula::quote_sheet(&sheet.name), m.source) };
+                let _ = write!(s, "<x14:sparkline><xm:f>{}</xm:f><xm:sqref>{}</xm:sqref></x14:sparkline>", esc(&src), m.cell.a1());
+            }
+            s.push_str("</x14:sparklines></x14:sparklineGroup>");
         }
         s.push_str("</x14:sparklineGroups></ext>");
     }
@@ -367,6 +384,60 @@ fn write_sheet_notes(s: &mut String, sheet: &Sheet, si: usize, kept: &crate::pas
     s.push_str(&kept.elements(&controls));
 }
 
+/// Writes chart `ch` of sheet `si` as a chart (or chartex) part with what it needs, related from
+/// a drawing through `drels`; returns that relationship's id.
+fn write_chart_part(wb: &Workbook, si: usize, ch: &gridcraft_model::Chart, drels: &mut Rels, out: &mut Out) -> String {
+    out.charts += 1;
+    if crate::chartex::is_chartex(ch.kind) {
+        let n = out.charts;
+        let xml = crate::chartex::write_chartex(wb, si, ch, &mut out.chart_names);
+        out.part(&format!("xl/charts/chartEx{n}.xml"), Some(crate::chartex::CT_CHARTEX), xml.into_bytes());
+        // Excel expects a chartex part's style and colour parts.
+        out.part(&format!("xl/charts/style{n}.xml"), Some(crate::chartex::CT_STYLE), crate::chartex::style_xml().into_bytes());
+        out.part(&format!("xl/charts/colors{n}.xml"), Some(crate::chartex::CT_COLORS), crate::chartex::colors_xml().into_bytes());
+        let mut crels = Rels::default();
+        crels.add_uri(crate::chartex::REL_STYLE, &format!("style{n}.xml"));
+        crels.add_uri(crate::chartex::REL_COLORS, &format!("colors{n}.xml"));
+        out.part(&format!("xl/charts/_rels/chartEx{n}.xml.rels"), None, crels.xml().into_bytes());
+        drels.add_uri(crate::chartex::REL_CHARTEX, &format!("../charts/chartEx{n}.xml"))
+    } else {
+        let name = format!("xl/charts/chart{}.xml", out.charts);
+        out.part(&name, Some(CT_CHART), crate::chart::write_chart(wb, si, ch, &out.book_name).into_bytes());
+        drels.add("chart", &format!("../charts/chart{}.xml", out.charts))
+    }
+}
+
+/// Content type of a chart sheet part.
+pub const CT_CHARTSHEET: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml";
+
+/// A chart sheet (`xl/chartsheets/sheetN.xml`) and its relationships, as Excel writes one: the
+/// view zoomed to fit the window and one drawing holding the chart.
+pub fn write_chart_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (String, Rels) {
+    let mut rels = Rels::default();
+    let mut s = format!("{XML_DECL}<chartsheet xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_REL}\"><sheetPr/><sheetViews><sheetView");
+    let Some(sheet) = wb.sheet(si) else {
+        s.push_str(" workbookViewId=\"0\"/></sheetViews></chartsheet>");
+        return (s, rels);
+    };
+    if selected {
+        s.push_str(" tabSelected=\"1\"");
+    }
+    s.push_str(" zoomToFit=\"1\" workbookViewId=\"0\"/></sheetViews><pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/>");
+    if let Some(ch) = sheet.charts.first() {
+        out.drawings += 1;
+        let dn = out.drawings;
+        let mut drels = Rels::default();
+        let rid = write_chart_part(wb, si, ch, &mut drels, out);
+        let xml = crate::drawing::write_chart_sheet_drawing(sheet, &wb.theme, &Obj::Chart(ch, rid));
+        out.part(&format!("xl/drawings/drawing{dn}.xml"), Some(CT_DRAWING), xml.into_bytes());
+        out.part(&format!("xl/drawings/_rels/drawing{dn}.xml.rels"), None, drels.xml().into_bytes());
+        let rid = rels.add("drawing", &format!("../drawings/drawing{dn}.xml"));
+        let _ = write!(s, "<drawing r:id=\"{rid}\"/>");
+    }
+    s.push_str("</chartsheet>");
+    (s, rels)
+}
+
 fn write_sheet_drawing(
     s: &mut String,
     wb: &Workbook,
@@ -393,24 +464,7 @@ fn write_sheet_drawing(
             objs.push(Obj::Image(img, rid));
         }
         for ch in &sheet.charts {
-            out.charts += 1;
-            let rid = if crate::chartex::is_chartex(ch.kind) {
-                let n = out.charts;
-                let xml = crate::chartex::write_chartex(wb, si, ch, &mut out.chart_names);
-                out.part(&format!("xl/charts/chartEx{n}.xml"), Some(crate::chartex::CT_CHARTEX), xml.into_bytes());
-                // Excel expects a chartex part's style and colour parts.
-                out.part(&format!("xl/charts/style{n}.xml"), Some(crate::chartex::CT_STYLE), crate::chartex::style_xml().into_bytes());
-                out.part(&format!("xl/charts/colors{n}.xml"), Some(crate::chartex::CT_COLORS), crate::chartex::colors_xml().into_bytes());
-                let mut crels = Rels::default();
-                crels.add_uri(crate::chartex::REL_STYLE, &format!("style{n}.xml"));
-                crels.add_uri(crate::chartex::REL_COLORS, &format!("colors{n}.xml"));
-                out.part(&format!("xl/charts/_rels/chartEx{n}.xml.rels"), None, crels.xml().into_bytes());
-                drels.add_uri(crate::chartex::REL_CHARTEX, &format!("../charts/chartEx{n}.xml"))
-            } else {
-                let name = format!("xl/charts/chart{}.xml", out.charts);
-                out.part(&name, Some(CT_CHART), crate::chart::write_chart(wb, si, ch, &out.book_name).into_bytes());
-                drels.add("chart", &format!("../charts/chart{}.xml", out.charts))
-            };
+            let rid = write_chart_part(wb, si, ch, &mut drels, out);
             objs.push(Obj::Chart(ch, rid));
         }
         for sh in &sheet.shapes {

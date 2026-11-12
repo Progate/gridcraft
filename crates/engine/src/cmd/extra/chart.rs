@@ -168,20 +168,41 @@ pub(super) fn select_data(s: &mut Session, p: &Json) -> Result<Json> {
     // A new data range rebuilds the series, as in Excel's Select Data › Chart data range.
     let rebuilt = match str_param(p, "range") {
         Some(range) => {
-            let range = range.trim_start_matches('=');
-            let (sheet_name, body) = split_sheet(range);
-            let src_si = match sheet_name {
-                Some(n) => d.wb.sheet_index(&n).ok_or_else(|| bad("chart.selectData", "no such sheet"))?,
-                None => d.wb.active_sheet(),
-            };
-            let r = RangeRef::parse(body).ok_or_else(|| bad("chart.selectData", "not a range"))?;
-            if r.count() > 1_000_000 {
+            let range = range.trim().trim_start_matches('=');
+            // One area, or several (Ctrl-selected), all on one sheet.
+            let mut src_si = None;
+            let mut areas = vec![];
+            for part in gridcraft_core::split_areas(range) {
+                let (sheet_name, body) = split_sheet(part.trim());
+                let si = match sheet_name {
+                    Some(n) => d.wb.sheet_index(&n).ok_or_else(|| bad("chart.selectData", "no such sheet"))?,
+                    None => src_si.unwrap_or(d.wb.active_sheet()),
+                };
+                if src_si.is_some_and(|s| s != si) {
+                    return Err(bad("chart.selectData", "the data must be on one sheet"));
+                }
+                src_si = Some(si);
+                let r = RangeRef::parse(body.trim_start_matches('(').trim_end_matches(')')).ok_or_else(|| bad("chart.selectData", "not a range"))?;
+                areas.push(r);
+            }
+            let src_si = src_si.ok_or_else(|| bad("chart.selectData", "not a range"))?;
+            if areas.iter().fold(0_u64, |n, r| n.saturating_add(r.count())) > 1_000_000 {
                 return Err(bad("chart.selectData", "range too large for a chart"));
             }
             let src = d.wb.sheet(src_si).ok_or(EngineError::NoDocument)?;
-            let by_rows = bool_param(p, "byRows").unwrap_or(r.width() > r.height() + 1);
-            let series = crate::cmd::insert::series_from_range(src, r, by_rows);
-            Some((series, format!("{}!{}", gridcraft_formula::quote_sheet(&src.name), r.a1()), by_rows))
+            let q = gridcraft_formula::quote_sheet(&src.name);
+            let source = areas.iter().map(|r| format!("{q}!{}", r.a1())).collect::<Vec<_>>().join(",");
+            let (series, by_rows) = match (areas.as_slice(), bool_param(p, "byRows")) {
+                ([r], by_rows) => {
+                    let by_rows = by_rows.unwrap_or(r.width() > r.height() + 1);
+                    (crate::cmd::insert::series_from_range(&d.wb, src, *r, by_rows), by_rows)
+                }
+                _ => {
+                    let (_, by_rows, series) = crate::cmd::insert::series_from_areas(&d.wb, src, &areas)?;
+                    (series, by_rows)
+                }
+            };
+            Some((series, source, by_rows))
         }
         None => None,
     };
@@ -233,22 +254,120 @@ pub(super) fn select_data(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
+/// Size of a chart on a new chart sheet (Excel's default chart sheet, in pixels at 96 dpi); the
+/// chart sheet shows it zoomed to fit the window.
+const CHART_SHEET_SIZE: (f32, f32) = (910.0, 661.0);
+/// Size of a chart moved from a chart sheet onto a worksheet: a new chart's.
+const EMBEDDED_SIZE: (f32, f32) = (480.0, 288.0);
+
+/// Move Chart: to a new chart sheet (`newSheet`, or a `sheet` name no sheet has yet) or as an
+/// object onto a worksheet (`sheet`). A chart sheet the chart leaves goes away, as in Excel.
 pub(super) fn move_chart(s: &mut Session, p: &Json) -> Result<Json> {
     let (si, ci) = find_chart(s, p)?;
-    let target = match p.get("sheet").and_then(Json::as_str) {
-        Some(n) => Some(s.doc()?.wb.sheet_index(n).ok_or_else(|| bad("chart.move", "no such sheet"))?),
-        None => None,
+    let wb = &s.doc()?.wb;
+    let from_chart_sheet = wb.sheet(si).is_some_and(|sh| sh.chart_sheet);
+    let named = |k: &str| str_param(p, k).map(str::trim).filter(|n| !n.is_empty()).map(str::to_string);
+    // Some(name): a new chart sheet; None: onto worksheet `dest`.
+    let (new_sheet, dest) = match (named("newSheet"), named("sheet")) {
+        (Some(n), _) => (Some(n), si),
+        (None, Some(n)) => match wb.sheet_index(&n) {
+            Some(i) => (None, i),
+            None => (Some(n), si),
+        },
+        (None, None) => (None, si),
     };
-    let at = cell_param_on(s, p, "at", target.unwrap_or(si))?;
-    edit(s, |cx| {
-        let mut chart = cx.sheet_mut(si)?.charts.remove(ci);
-        if let Some(a) = at {
+    if let Some(n) = &new_sheet {
+        if wb.protected_structure {
+            return Err(EngineError::Other("The workbook is protected and cannot be changed.".into()));
+        }
+        wb.check_sheet_name(n, None).map_err(EngineError::Other)?;
+    } else if wb.sheet(dest).is_some_and(|sh| sh.chart_sheet) {
+        if dest == si {
+            return Ok(json!({"chart": wb.sheet(si).and_then(|sh| sh.charts.get(ci)).map(|c| c.id)}));
+        }
+        return Err(bad("chart.move", "a chart sheet holds one chart; choose a worksheet"));
+    }
+    if from_chart_sheet && new_sheet.is_some() {
+        // Excel offers New sheet for a chart sheet's chart as a rename of the sheet.
+        let n = new_sheet.unwrap_or_default();
+        return s.execute("sheet.rename", json!({"sheet": si, "name": n}));
+    }
+    let at = if new_sheet.is_some() { None } else { cell_param_on(s, p, "at", dest)? };
+    let d = s.doc_mut()?;
+    let (active, inserted, removed) = crate::cmd::commit(d, |cx| {
+        let charts = &mut cx.sheet_mut(si)?.charts;
+        if ci >= charts.len() {
+            return Err(bad("chart", "no such chart"));
+        }
+        let mut chart = charts.remove(ci);
+        if let Some(name) = new_sheet {
+            // The new chart sheet goes before the sheet the chart was on, as in Excel.
+            chart.anchor = gridcraft_model::Anchor {
+                cell: CellRef::new(0, 0),
+                dx: 0.0,
+                dy: 0.0,
+                width: CHART_SHEET_SIZE.0,
+                height: CHART_SHEET_SIZE.1,
+                mode: gridcraft_model::AnchorMode::Absolute,
+            };
+            let mut sheet = gridcraft_model::Sheet::new(name);
+            sheet.chart_sheet = true;
+            sheet.show_gridlines = false;
+            sheet.show_headings = false;
+            sheet.charts.push(chart);
+            cx.wb.sheets.insert(si, std::sync::Arc::new(sheet));
+            for n in cx.wb.names.iter_mut() {
+                if let Some(sc) = n.scope.as_mut()
+                    && *sc >= si
+                {
+                    *sc += 1;
+                }
+            }
+            cx.wb.set_active_sheet(si);
+            *cx.sel = crate::Selection::default();
+            cx.structural = true;
+            return Ok((si, Some(si), None));
+        }
+        if from_chart_sheet {
+            chart.anchor = gridcraft_model::Anchor {
+                cell: at.unwrap_or_else(|| CellRef::new(1, 1)),
+                width: EMBEDDED_SIZE.0,
+                height: EMBEDDED_SIZE.1,
+                ..Default::default()
+            };
+        } else if let Some(a) = at {
             chart.anchor.cell = a;
         }
-        let dest = target.unwrap_or(si);
         cx.sheet_mut(dest)?.charts.push(chart);
-        Ok(Json::Null)
-    })
+        if !from_chart_sheet {
+            return Ok((cx.wb.active_sheet(), None, None));
+        }
+        // The emptied chart sheet goes, with the names scoped to it.
+        cx.wb.sheets.remove(si);
+        cx.wb.names.retain(|n| n.scope != Some(si));
+        for n in cx.wb.names.iter_mut() {
+            if let Some(sc) = n.scope.as_mut()
+                && *sc > si
+            {
+                *sc -= 1;
+            }
+        }
+        let dest = if dest > si { dest - 1 } else { dest };
+        cx.wb.set_active_sheet(dest);
+        *cx.sel = crate::Selection::default();
+        cx.structural = true;
+        Ok((dest, None, Some(si)))
+    })?;
+    if let Some(i) = inserted {
+        d.sheet_selections.insert(i.min(d.sheet_selections.len()), crate::Selection::default());
+    }
+    if let Some(i) = removed
+        && i < d.sheet_selections.len()
+    {
+        d.sheet_selections.remove(i);
+    }
+    let name = d.wb.sheet(active).map(|sh| sh.name.clone()).unwrap_or_default();
+    Ok(json!({"sheet": name, "index": active}))
 }
 
 pub(super) fn format_series(s: &mut Session, p: &Json) -> Result<Json> {
@@ -272,6 +391,34 @@ pub(super) fn format_series(s: &mut Session, p: &Json) -> Result<Json> {
         }
         if set_color && let Some(se) = c.series.get_mut(idx) {
             se.color = color;
+        }
+        Ok(())
+    })
+}
+
+/// Most points a waterfall series can have set as totals.
+const MAX_SUBTOTALS: usize = 10_000;
+
+/// Format Data Point ▸ Set as total on a waterfall chart (also the data point's right-click menu).
+pub(super) fn set_as_total(s: &mut Session, p: &Json) -> Result<Json> {
+    let idx = u32_param(p, "series").unwrap_or(0) as usize;
+    let point = u32_param(p, "point").ok_or_else(|| bad("chart.setAsTotal", "missing `point`"))?;
+    if p.get("on").is_some_and(|v| !v.is_boolean()) {
+        return Err(bad("chart.setAsTotal", "`on` must be a boolean"));
+    }
+    let on = bool_param(p, "on").unwrap_or(true);
+    with_chart(s, p, |c| {
+        if c.kind != gridcraft_model::ChartKind::Waterfall {
+            return Err(bad("chart.setAsTotal", "only a waterfall chart has totals"));
+        }
+        let se = c.series.get_mut(idx).ok_or_else(|| bad("chart.setAsTotal", "no such series"))?;
+        match (on, se.subtotals.binary_search(&point)) {
+            (true, Err(at)) if se.subtotals.len() < MAX_SUBTOTALS => se.subtotals.insert(at, point),
+            (true, Err(_)) => return Err(bad("chart.setAsTotal", "too many totals")),
+            (false, Ok(at)) => {
+                se.subtotals.remove(at);
+            }
+            _ => {}
         }
         Ok(())
     })

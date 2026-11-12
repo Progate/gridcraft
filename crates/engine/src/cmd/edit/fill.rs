@@ -34,6 +34,7 @@ pub(super) fn fill_dir(s: &mut Session, p: &Json, dr: i64, dc: i64) -> Result<Js
     let skip = s.doc()?.wb.sheet(sheet).map(|sh| super::filtered_rows(sh, r)).unwrap_or_default();
     edit(s, |cx| {
         crate::fill::fill_except(cx, sheet, src, r, crate::fill::FillMode::Copy, &skip)?;
+        crate::fill::fill_sparklines(cx, sheet, src, r)?;
         Ok(Json::Null)
     })
 }
@@ -65,6 +66,9 @@ pub(super) fn auto_fill(s: &mut Session, p: &Json) -> Result<Json> {
     }
     edit(s, |cx| {
         crate::fill::fill(cx, sheet, src, target, mode)?;
+        if !matches!(mode, crate::fill::FillMode::ValuesOnly | crate::fill::FillMode::Formats) {
+            crate::fill::fill_sparklines(cx, sheet, src, target)?;
+        }
         *cx.sel = crate::Selection { active: src.start, anchor: src.start, ranges: vec![target.union(&src)] };
         Ok(Json::Null)
     })

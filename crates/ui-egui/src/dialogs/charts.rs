@@ -253,3 +253,58 @@ pub(super) fn combo_chart(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
         }
     }
 }
+
+/// Move Chart (グラフの移動): "Choose where you want the chart to be placed:" New sheet, with
+/// the chart sheet's name, or Object in, with a worksheet.
+pub(super) fn move_chart(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let lang = crate::i18n::current(ui.ctx());
+    let text = |d: &Dialog, k: &str| d.values.get(k).and_then(Json::as_str).unwrap_or("").to_string();
+    let mut place = text(d, "where");
+    let mut name = text(d, "newSheet");
+    let mut sheet = text(d, "sheet");
+    let sheets: Vec<String> = d
+        .values
+        .get("sheets")
+        .and_then(Json::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    ui.label(lang.tr("Choose where you want the chart to be placed:"));
+    ui.add_space(4.0);
+    egui::Grid::new("gridcraft.move_chart").num_columns(2).spacing(vec2(12.0, 8.0)).show(ui, |ui| {
+        if ui.radio(place == "newSheet", lang.tr("New sheet:")).clicked() {
+            place = "newSheet".into();
+        }
+        let r = ui.add_enabled(place == "newSheet", egui::TextEdit::singleline(&mut name).desired_width(200.0));
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::TextInput, true, lang.tr("New sheet:")));
+        ui.end_row();
+        if ui.radio(place == "object", lang.tr("Object in:")).clicked() {
+            place = "object".into();
+        }
+        ui.add_enabled_ui(place == "object", |ui| {
+            craft_ui::ComboBox::from_id_salt("gridcraft.move_chart_sheet").width(200.0).selected_text(sheet.clone()).show_ui(ui, |ui| {
+                for n in &sheets {
+                    if ui.selectable_label(*n == sheet, n).clicked() {
+                        sheet = n.clone();
+                    }
+                }
+            });
+        });
+        ui.end_row();
+    });
+    d.values.insert("where".into(), json!(place));
+    d.values.insert("newSheet".into(), json!(name));
+    d.values.insert("sheet".into(), json!(sheet));
+    ok_cancel(ui, confirm, open);
+    if *confirm {
+        *confirm = false;
+        let chart = d.values.get("chart").cloned().unwrap_or(Json::Null);
+        let params = if place == "newSheet" { json!({"chart": chart, "newSheet": name}) } else { json!({"chart": chart, "sheet": sheet}) };
+        match app.run("chart.move", params) {
+            Ok(_) => {
+                *open = false;
+                app.selected_object = None;
+            }
+            Err(e) => app.message = Some((d.title.clone(), crate::clean_error(&e))),
+        }
+    }
+}

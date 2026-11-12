@@ -517,6 +517,47 @@ fn selection_frame(p: &Painter, r: Rect) {
     }
 }
 
+/// The data point (series, point) of chart `id` under `p`, for kinds whose points can be picked
+/// (waterfall), laid out as [`paint_objects`] draws the chart.
+pub fn chart_point_at(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &Sheet, id: u32, at: Pos2) -> Option<(usize, usize)> {
+    let ch = sh.charts.iter().find(|c| c.id == id)?;
+    let r = anchor_rect(geo, sh, &ch.anchor);
+    let z = geo.z.max(0.01);
+    let data = gridcraft_chart::resolve(wb, si, ch);
+    let m = EguiMeasure { painter: p, z: geo.z };
+    let local = (at - r.min) / z;
+    gridcraft_chart::point_at(ch, &data, ch.anchor.width, ch.anchor.height, &m, local.x, local.y)
+}
+
+/// The rect a chart sheet's chart fills inside the window area `area`: a small margin all
+/// round, like Excel's zoomed-to-fit chart sheet.
+pub fn chart_sheet_rect(area: Rect) -> Rect {
+    area.shrink((area.width().min(area.height()) * 0.02).clamp(4.0, 16.0))
+}
+
+/// Paints a chart sheet: its chart filling `area` (no grid), on the sheet's backdrop.
+pub fn paint_chart_sheet(p: &Painter, area: Rect, wb: &Workbook, si: usize, sh: &Sheet) {
+    let t = Tokens::get(p.ctx());
+    p.rect_filled(area, 0.0, t.sheet_track);
+    let Some(ch) = sh.charts.first() else { return };
+    let r = chart_sheet_rect(area);
+    p.rect_filled(r.translate(vec2(0.0, 1.5)), 2.0, Color32::from_black_alpha(18));
+    p.rect_filled(r, 0.0, t.grid_bg);
+    let data = gridcraft_chart::resolve(wb, si, ch);
+    let m = EguiMeasure { painter: p, z: 1.0 };
+    let prims = gridcraft_chart::render(ch, &data, r.width(), r.height(), &m);
+    paint_prims(&p.with_clip_rect(r.intersect(p.clip_rect())), r.min, &prims, 1.0);
+}
+
+/// The data point under `at` of a chart sheet's chart drawn in `area` (see [`chart_point_at`]).
+pub fn chart_sheet_point_at(p: &Painter, area: Rect, wb: &Workbook, si: usize, sh: &Sheet, at: Pos2) -> Option<(usize, usize)> {
+    let ch = sh.charts.first()?;
+    let r = chart_sheet_rect(area);
+    let data = gridcraft_chart::resolve(wb, si, ch);
+    let m = EguiMeasure { painter: p, z: 1.0 };
+    gridcraft_chart::point_at(ch, &data, r.width(), r.height(), &m, at.x - r.min.x, at.y - r.min.y)
+}
+
 /// Where object `o` sits on the sheet (logical coordinates), when it exists on `sh`.
 pub fn object_rect(geo: &Geo, sh: &Sheet, o: ObjRef) -> Option<Rect> {
     sh.object_anchor(o).map(|a| anchor_rect(geo, sh, &a))
