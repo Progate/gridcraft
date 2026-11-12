@@ -60,16 +60,31 @@ pub fn starts_with_date(wb: &Workbook, sheet: usize, src: RangeRef) -> bool {
     cell.formula.is_none() && cell.value.is_number() && is_date_format(wb.styles.get(cell.style).num_fmt.as_str())
 }
 
-/// Built-in custom lists.
+/// Built-in custom lists: Excel's own (English and Japanese weekdays and months, quarters, the
+/// twelve branches and ten stems) and `Q1`..`Q4`. Japanese numbered entries come with ASCII and
+/// full-width digits, each its own list, so a fill keeps the digits it starts from.
 fn lists() -> Vec<Vec<String>> {
     let short_days: Vec<String> = WEEKDAYS.iter().map(|d| d.get(..3).unwrap_or(d).to_string()).collect();
     let short_months: Vec<String> = MONTHS.iter().map(|m| m.get(..3).unwrap_or(m).to_string()).collect();
+    let words = |s: &str| s.split(' ').map(str::to_string).collect::<Vec<_>>();
+    let wide = |n: u32| n.to_string().chars().map(|c| char::from_u32(c as u32 - '0' as u32 + '０' as u32).unwrap_or(c)).collect::<String>();
+    let ja_days = words("日 月 火 水 木 金 土");
     vec![
         short_days,
         WEEKDAYS.iter().map(|s| s.to_string()).collect(),
         short_months,
         MONTHS.iter().map(|s| s.to_string()).collect(),
         vec!["Q1".into(), "Q2".into(), "Q3".into(), "Q4".into()],
+        ja_days.iter().map(|d| format!("{d}曜日")).collect(),
+        ja_days,
+        (1..=12).map(|m| format!("{m}月")).collect(),
+        (1..=12).map(|m| format!("{}月", wide(m))).collect(),
+        words("一月 二月 三月 四月 五月 六月 七月 八月 九月 十月 十一月 十二月"),
+        words("睦月 如月 弥生 卯月 皐月 水無月 文月 葉月 長月 神無月 霜月 師走"),
+        (1..=4).map(|q| format!("第{q}四半期")).collect(),
+        (1..=4).map(|q| format!("第{}四半期", wide(q))).collect(),
+        words("子 丑 寅 卯 辰 巳 午 未 申 酉 戌 亥"),
+        words("甲 乙 丙 丁 戊 己 庚 辛 壬 癸"),
     ]
 }
 
@@ -951,6 +966,38 @@ mod tests {
         s.execute("insert.table", serde_json::json!({"range": "D1:E3"})).unwrap();
         s.execute("edit.flashFill", serde_json::json!({"range": "E3"})).unwrap();
         assert_eq!(texts(&s, "E1:E3"), ["Code", "AL", "AT"]);
+    }
+
+    #[test]
+    fn autofill_continues_excel_built_in_lists() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        let mut fill = |start: &str, target: &str| {
+            s.execute("cell.set", serde_json::json!({"cell": "C2", "input": start})).unwrap();
+            s.execute("edit.autoFill", serde_json::json!({"source": "C2", "target": target})).unwrap();
+            let out = texts(&s, target);
+            s.execute("edit.clearAll", serde_json::json!({"range": "C1:C20"})).unwrap();
+            out
+        };
+        assert_eq!(fill("月", "C2:C8"), ["月", "火", "水", "木", "金", "土", "日"]);
+        assert_eq!(fill("月曜日", "C2:C4"), ["月曜日", "火曜日", "水曜日"]);
+        assert_eq!(fill("11月", "C2:C4"), ["11月", "12月", "1月"]);
+        assert_eq!(fill("１１月", "C2:C4"), ["１１月", "１２月", "１月"]);
+        assert_eq!(fill("十一月", "C2:C4"), ["十一月", "十二月", "一月"]);
+        assert_eq!(fill("霜月", "C2:C4"), ["霜月", "師走", "睦月"]);
+        assert_eq!(fill("第3四半期", "C2:C4"), ["第3四半期", "第4四半期", "第1四半期"]);
+        assert_eq!(fill("第１四半期", "C2:C3"), ["第１四半期", "第２四半期"]);
+        assert_eq!(fill("亥", "C2:C3"), ["亥", "子"]);
+        assert_eq!(fill("壬", "C2:C4"), ["壬", "癸", "甲"]);
+        assert_eq!(fill("Sat", "C2:C3"), ["Sat", "Sun"]);
+        assert_eq!(fill("December", "C2:C3"), ["December", "January"]);
+        assert_eq!(fill("第1回", "C2:C4"), ["第1回", "第2回", "第3回"]);
+        // Up the sheet the list runs backwards.
+        assert_eq!(fill("月", "C1:C2"), ["日", "月"]);
+        // Ctrl+drag copies.
+        s.execute("cell.set", serde_json::json!({"cell": "C2", "input": "月"})).unwrap();
+        s.execute("edit.autoFill", serde_json::json!({"source": "C2", "target": "C2:C4", "mode": "alternate"})).unwrap();
+        assert_eq!(texts(&s, "C2:C4"), ["月", "月", "月"]);
     }
 
     #[test]
