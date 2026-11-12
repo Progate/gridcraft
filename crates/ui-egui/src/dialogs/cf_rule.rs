@@ -403,6 +403,102 @@ pub(super) fn open(app: &SheetApp, params: &Json) -> Dialog {
     d
 }
 
+/// A quick rule dialog (Highlight Cells Rules and Top/Bottom Rules items): the value or count,
+/// and the format, a preset or Custom Format…. `params`: `type`, `title`, and the rule's own
+/// `operator`, `rank`, `bottom`, `percent` or `below`.
+pub(super) fn quick(app: &SheetApp, params: &Json) -> Dialog {
+    use super::Field::{Choice, Note, Number, Text};
+    let p = |k: &str| params.get(k).cloned().unwrap_or(Json::Null);
+    let ty = p("type").as_str().unwrap_or("cellIs").to_string();
+    let title = p("title").as_str().unwrap_or("Conditional Formatting").to_string();
+    let mut fields = vec![];
+    let mut format_label = "Quick Rule|with";
+    match ty.as_str() {
+        "cellIs" => {
+            let label = match p("operator").as_str() {
+                Some("lessThan" | "less") => "Format cells that are LESS THAN:",
+                Some("between") => "Format cells that are BETWEEN:",
+                Some("equal") => "Format cells that are EQUAL TO:",
+                _ => "Format cells that are GREATER THAN:",
+            };
+            fields.push(Text { key: "value", label });
+            if p("operator").as_str() == Some("between") {
+                fields.push(Text { key: "value2", label: "Rule|and" });
+            }
+        }
+        "containsText" => fields.push(Text { key: "text", label: "Format cells that contain the text:" }),
+        "timePeriod" => fields.push(Choice { key: "period", label: "Format cells that contain a date occurring:", options: PERIODS.to_vec() }),
+        "duplicate" | "unique" => fields.push(Choice {
+            key: "type",
+            label: "Format cells that contain:",
+            options: vec![("duplicate", "Values|Duplicate"), ("unique", "Values|Unique")],
+        }),
+        "top10" => {
+            let bottom = p("bottom").as_bool() == Some(true);
+            let label = if bottom { "Format cells that rank in the BOTTOM:" } else { "Format cells that rank in the TOP:" };
+            fields.push(Number { key: "rank", label });
+            if p("percent").as_bool() == Some(true) {
+                fields.push(Note("%".into()));
+            }
+        }
+        "aboveAverage" => {
+            let below = p("below").as_bool() == Some(true);
+            fields.push(Note(if below { "Format cells that are BELOW AVERAGE:" } else { "Format cells that are ABOVE AVERAGE:" }.into()));
+            format_label = "for the selected range with";
+        }
+        _ => fields.push(Text { key: "formula", label: "Format values where this formula is true:" }),
+    }
+    fields.push(Choice {
+        key: "preset",
+        label: format_label,
+        options: vec![
+            ("lightRedFillDarkRedText", "Light Red Fill with Dark Red Text"),
+            ("yellowFillDarkYellowText", "Yellow Fill with Dark Yellow Text"),
+            ("greenFillDarkGreenText", "Green Fill with Dark Green Text"),
+            ("lightRedFill", "Light Red Fill"),
+            ("redText", "Red Text"),
+            ("redBorder", "Red Border"),
+            ("custom", "Custom Format…"),
+        ],
+    });
+    let mut d = Dialog::form("cfQuick", &title, "home.conditionalFormat", fields, json!({"preset": "lightRedFillDarkRedText", "period": "today"}));
+    if ty == "expression" {
+        let (sheet, applies_to) = app
+            .session
+            .active()
+            .map(|doc| {
+                (
+                    doc.wb.active().map(|sh| sh.name.clone()).unwrap_or_default(),
+                    doc.selection.ranges.iter().map(gridcraft_engine::core::RangeRef::a1).collect::<Vec<_>>().join(","),
+                )
+            })
+            .unwrap_or_default();
+        d.pick = Some(RefPick {
+            key: "formula",
+            sheet,
+            caret: 0,
+            point: None,
+            anchor: gridcraft_engine::core::CellRef::new(0, 0),
+            refocus: false,
+            applies_to,
+        });
+    }
+    d.values.insert("type".into(), json!(ty));
+    for key in ["operator", "rank", "bottom", "percent", "below"] {
+        if !p(key).is_null() {
+            d.values.insert(key.into(), p(key));
+        }
+    }
+    d
+}
+
+/// Custom Format… in a quick rule dialog opens Format Cells for the rule's own format.
+pub(super) fn open_custom_format(app: &mut SheetApp, d: &mut Dialog) {
+    if d.name == "cfQuick" && d.values.remove("openFormat").is_some() {
+        app.open_dialog("formatCells", json!({"dxf": true, "style": d.values.get("style")}));
+    }
+}
+
 /// Points the grid at the box that takes references for the chosen type: the formula, or the
 /// first Cell Value box. Other types take none, so a click on the grid selects as usual.
 fn sync_pick(d: &mut Dialog) {

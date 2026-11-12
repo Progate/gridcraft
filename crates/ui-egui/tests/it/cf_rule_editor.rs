@@ -46,7 +46,7 @@ fn new_rule(fields: &[(&str, Json)]) -> CfRule {
 }
 
 #[test]
-fn every_rule_type_of_new_formatting_rule() {
+fn the_value_based_rule_types_of_new_formatting_rule() {
     let r = new_rule(&[("formatStyle", json!("3color"))]);
     assert!(matches!(&r, CfRule::ColorScale { stops } if stops.len() == 3 && stops[1].0 == CfValueKind::Percentile(50.0)), "{r:?}");
     let r = new_rule(&[
@@ -72,6 +72,10 @@ fn every_rule_type_of_new_formatting_rule() {
         matches!(&r, CfRule::IconSet { set, thresholds, .. } if set == "3Arrows" && thresholds[1] == CfValueKind::Percent(40.0) && thresholds[2] == CfValueKind::Number(80.0)),
         "{r:?}"
     );
+}
+
+#[test]
+fn the_other_rule_types_of_new_formatting_rule() {
     let r = new_rule(&[("ruleType", json!("contain")), ("operator", json!("greaterThan")), ("value", json!("5000"))]);
     assert!(matches!(&r, CfRule::CellIs { a, .. } if a == "5000"), "{r:?}");
     let r =

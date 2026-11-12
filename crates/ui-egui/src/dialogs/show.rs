@@ -449,10 +449,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
             }
         });
     window_shown(ctx, &mut d, collapsed.is_some(), shown.map(|r| r.response.rect));
-    // Custom Format… in a quick rule dialog opens Format Cells for the rule's own format.
-    if d.name == "cfQuick" && d.values.remove("openFormat").is_some() {
-        app.open_dialog("formatCells", json!({"dxf": true, "style": d.values.get("style")}));
-    }
+    super::cf_rule::open_custom_format(app, &mut d);
     // Hyperlinks inside dialogs (About ▸ Contributors) open through the host's `open_url`, since
     // the native shell has no browser integration of its own.
     if let Some(open_url) = &app.services.open_url {
