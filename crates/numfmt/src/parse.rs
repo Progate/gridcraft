@@ -22,6 +22,12 @@ pub(crate) enum DatePart {
     AmPm,
     /// `A/P` with the letters as typed.
     AP(char, char),
+    /// `aaa` (土) or `aaaa` (土曜日): the weekday in Japanese.
+    WeekdayJa(u8),
+    /// `g` (R), `gg` (令) or `ggg` (令和): the Japanese era.
+    Era(u8),
+    /// `e` or `ee` after an era: the year of the era.
+    EraYear(u8),
 }
 
 impl DatePart {
@@ -31,7 +37,7 @@ impl DatePart {
     }
 
     pub(crate) fn is_calendar(self) -> bool {
-        matches!(self, DatePart::Year(_) | DatePart::Month(_) | DatePart::Day(_))
+        matches!(self, DatePart::Year(_) | DatePart::Month(_) | DatePart::Day(_) | DatePart::WeekdayJa(_) | DatePart::Era(_) | DatePart::EraYear(_))
     }
 }
 
@@ -422,6 +428,42 @@ fn tokenize(src: &str) -> Raw {
             'A' | 'a' if starts_with_ci(&cs, i, "am/pm") => {
                 toks.push(Tok::Date(DatePart::AmPm));
                 i += 5;
+                continue;
+            }
+            // `aaa`/`aaaa`: the weekday in Japanese (土, 土曜日).
+            'A' | 'a' if starts_with_ci(&cs, i, "aaa") => {
+                let mut n = 0usize;
+                while cs.get(i + n).is_some_and(|d| d.eq_ignore_ascii_case(&'a')) {
+                    n += 1;
+                }
+                toks.push(Tok::Date(DatePart::WeekdayJa(n.min(255) as u8)));
+                i += n;
+                continue;
+            }
+            // `g`, `gg`, `ggg` before the era's year `e`: the Japanese era (R, 令, 令和). Any
+            // other `g` stays a literal letter, as before.
+            'G' | 'g'
+                if {
+                    let n = cs.get(i..).map_or(0, |r| r.iter().take_while(|d| d.eq_ignore_ascii_case(&'g')).count());
+                    n <= 3 && cs.get(i + n).is_some_and(|d| d.eq_ignore_ascii_case(&'e'))
+                } =>
+            {
+                let mut n = 0usize;
+                while cs.get(i + n).is_some_and(|d| d.eq_ignore_ascii_case(&'g')) {
+                    n += 1;
+                }
+                toks.push(Tok::Date(DatePart::Era(n.min(255) as u8)));
+                i += n;
+                continue;
+            }
+            // `e` after an era is the era's year (`ggge` is 令和8); otherwise a four-digit year.
+            'e' | 'E' if toks.iter().any(|t| matches!(t, Tok::Date(DatePart::Era(_)))) => {
+                let mut n = 0usize;
+                while cs.get(i + n).is_some_and(|d| d.eq_ignore_ascii_case(&'e')) {
+                    n += 1;
+                }
+                toks.push(Tok::Date(DatePart::EraYear(n.min(255) as u8)));
+                i += n;
                 continue;
             }
             'A' | 'a' if starts_with_ci(&cs, i, "a/p") => {

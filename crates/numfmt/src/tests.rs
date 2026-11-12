@@ -1283,4 +1283,24 @@ fn japanese_colour_names_render_and_are_stored_in_english() {
     ] {
         assert_eq!(canonical_code(code), code);
     }
+fn japanese_weekdays_and_eras() {
+    // 2026-11-14 is a Saturday (serial 46340).
+    let sat = 46340.0;
+    assert_eq!(f("aaa", sat), "土");
+    assert_eq!(f("aaaa", sat), "土曜日");
+    assert_eq!(f("m/d(aaa)", sat), "11/14(土)");
+    assert_eq!(f("m\"月\"d\"日\"(aaaa)", sat), "11月14日(土曜日)");
+    assert_eq!(text_function(&Value::Number(sat), "aaa", DateSystem::D1900), Ok("土".into()));
+    assert_eq!(f("[$-ja-JP]ggge\"年\"m\"月\"d\"日\"", sat), "令和8年11月14日");
+    assert_eq!(f("[$-411]gge\"年\"", sat), "令8年");
+    assert_eq!(f("[$-411]ge.m.d", sat), "R8.11.14");
+    assert_eq!(f("gggee", sat), "令和08");
+    // The first day of an era, and the day before it.
+    let reiwa = gridcraft_core::date::serial_from_ymd(DateSystem::D1900, 2019, 5, 1).unwrap_or_default();
+    assert_eq!(f("ggge", reiwa), "令和1");
+    assert_eq!(f("ggge", reiwa - 1.0), "平成31");
+    assert_eq!(f("ge", 1.0), "M33");
+    // A `g` that is not before an era year stays a letter, and `e` alone is still the year.
+    assert_eq!(f("0 \"k\"g", 5.0), "5 kg");
+    assert_eq!(f("e", sat), "2026");
 }

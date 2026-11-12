@@ -173,6 +173,24 @@ pub(crate) fn render_date(sec: &Section, v: f64, sys: DateSystem) -> Option<Out>
                     DatePart::ElapsedS(n) => push_padded(text, total_ms / 1000, n),
                     DatePart::AmPm => text.push_str(if hour >= 12 { "PM" } else { "AM" }),
                     DatePart::AP(a, p) => text.push(if hour >= 12 { p } else { a }),
+                    DatePart::WeekdayJa(n) => {
+                        let i = dt.weekday as usize;
+                        let name = if n >= 4 { JA_WEEKDAYS.get(i) } else { JA_WEEKDAYS_ABBR.get(i) };
+                        text.push_str(name.copied().unwrap_or(""));
+                    }
+                    DatePart::Era(n) => {
+                        if let Some((name, initial, _)) = ja_era(&dt) {
+                            match n {
+                                1 => text.push(initial),
+                                2 => text.extend(name.chars().take(1)),
+                                _ => text.push_str(name),
+                            }
+                        }
+                    }
+                    DatePart::EraYear(n) => match ja_era(&dt) {
+                        Some((.., year)) => push_padded(text, year, n),
+                        None => push_padded(text, i64::from(dt.year), n),
+                    },
                 }
             }
             Tok::Fill(c) => out.fill(*c),
@@ -760,4 +778,16 @@ mod tests {
         assert_eq!(approximate(0.0, 9), (0, 1));
         assert_eq!(approximate(0.999, 9), (1, 1));
     }
+}
+
+const JA_WEEKDAYS: [&str; 7] = ["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"];
+const JA_WEEKDAYS_ABBR: [&str; 7] = ["日", "月", "火", "水", "木", "金", "土"];
+
+/// The Japanese era of a Gregorian date: its name, its initial and the year of the era.
+fn ja_era(dt: &gridcraft_core::date::DateTime) -> Option<(&'static str, char, i64)> {
+    let ymd = (dt.year, dt.month, dt.day);
+    gridcraft_core::parse::JA_ERAS
+        .iter()
+        .find(|(_, _, y, m, d)| ymd >= (*y, *m, *d))
+        .map(|(name, initial, y, ..)| (*name, *initial, i64::from(dt.year) - i64::from(*y) + 1))
 }
