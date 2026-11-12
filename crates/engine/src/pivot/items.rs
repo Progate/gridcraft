@@ -239,6 +239,68 @@ impl Acc {
     }
 }
 
+/// The words a PivotTable writes into its report: English, or Japanese as Japanese Excel
+/// writes them (行ラベル, 総計, 東 集計, 合計 / 売上).
+pub struct Captions {
+    pub row_labels: &'static str,
+    pub column_labels: &'static str,
+    pub grand_total: &'static str,
+    /// After an item's label in its subtotal (`East Total`, `東 集計`), and the header of the
+    /// one data column when Σ Values is in Rows.
+    pub total: &'static str,
+    /// The Σ Values field's header in a tabular or outline layout.
+    pub values: &'static str,
+    /// Before a value field's name in its grand total row (`Total Sum of Sales`).
+    pub total_of: &'static str,
+    pub japanese: bool,
+}
+
+pub static CAPTIONS_EN: Captions = Captions {
+    row_labels: "Row Labels",
+    column_labels: "Column Labels",
+    grand_total: "Grand Total",
+    total: "Total",
+    values: "Values",
+    total_of: "Total",
+    japanese: false,
+};
+pub static CAPTIONS_JA: Captions = Captions {
+    row_labels: "行ラベル",
+    column_labels: "列ラベル",
+    grand_total: "総計",
+    total: "集計",
+    values: "値",
+    total_of: "全体の",
+    japanese: true,
+};
+
+/// The captions for a workbook in `region`.
+pub fn captions(region: &gridcraft_core::Region) -> &'static Captions {
+    if region.is_japanese() { &CAPTIONS_JA } else { &CAPTIONS_EN }
+}
+
+/// A value field's automatic name: `Sum of Sales`, or in Japanese `合計 / 売上`.
+pub fn value_name(f: PivotFunc, field: &str, japanese: bool) -> String {
+    if japanese { format!("{} / {field}", func_caption_ja(f)) } else { format!("{} of {field}", func_caption(f)) }
+}
+
+/// Japanese Excel's name for a summary function, as in a value field's name (`合計 / 売上`).
+pub fn func_caption_ja(f: PivotFunc) -> &'static str {
+    match f {
+        PivotFunc::Sum => "合計",
+        PivotFunc::Count => "データの個数",
+        PivotFunc::Average => "平均",
+        PivotFunc::Max => "最大",
+        PivotFunc::Min => "最小",
+        PivotFunc::Product => "積",
+        PivotFunc::CountNumbers => "数値の個数",
+        PivotFunc::StdDev => "標本標準偏差",
+        PivotFunc::StdDevP => "標準偏差",
+        PivotFunc::Var => "標本分散",
+        PivotFunc::VarP => "分散",
+    }
+}
+
 /// Excel's caption verb for a function ("Sum of Sales"). Count Numbers is captioned "Count of
 /// Sales", as Excel names it and as the XLSX reader names a value field saved without a name.
 pub fn func_caption(f: PivotFunc) -> &'static str {

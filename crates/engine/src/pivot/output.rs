@@ -1,4 +1,4 @@
-use super::items::{Acc, FieldItems, Node, is_collapsed};
+use super::items::{Acc, Captions, FieldItems, Node, is_collapsed};
 use super::{
     BorderLine, BorderStyle, Color, Fill, HAlign, HashMap, MAX_COLS, MAX_OUTPUT_CELLS, MAX_ROWS, NumFmt, PivotField, PivotLayout, PivotTable, Style,
     Value,
@@ -147,6 +147,8 @@ pub(super) struct Ctx<'a> {
     pub(super) vpos: Option<usize>,
     /// Value field captions.
     pub(super) val_names: Vec<String>,
+    /// The words written into the report (Grand Total, East Total).
+    pub(super) cap: &'static Captions,
 }
 
 impl Ctx<'_> {
@@ -261,7 +263,7 @@ impl Ctx<'_> {
                         leaf: false,
                         path: prefix.clone(),
                         values: true,
-                        labels: vec![(col, Value::text(caption(&label, "Total")), indent, None)],
+                        labels: vec![(col, Value::text(caption(&label, self.cap.total)), indent, None)],
                         vi,
                     });
                 }
@@ -328,7 +330,7 @@ impl Ctx<'_> {
                         leaf: false,
                         path: prefix.clone(),
                         values: true,
-                        labels: vec![(col, Value::text(caption(&label, "Total")), 0, None)],
+                        labels: vec![(col, Value::text(caption(&label, self.cap.total)), 0, None)],
                         vi,
                     });
                 }

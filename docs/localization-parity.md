@@ -57,6 +57,14 @@ Cell text now uses shared Unicode bidi layout while retaining logical source ind
   month 7) for `ddd`/`dddd` after `mmm`/`mmmm`; a `B2` section showing only the weekday uses
   the real weekday for serials 0–59 and gives `#VALUE!` for the last days of 9999. Excel's
   Buddhist-year `b`/`bb`/`bbbb` tokens are not supported.
+- **Regional format (ja-JP).** `app.region.set` (the app follows the interface language, the CLI
+  takes `run --locale`) picks the region typed entry is read in. Japanese reads full-width input,
+  year-first and `年月日` dates, era dates, `時分` and `午前/午後` times and yen amounts, shows
+  built-in formats 14 and 22 as `yyyy/m/d`, defaults Currency, Accounting and Comma Style to yen,
+  captions PivotTables and subtotals in Japanese and writes Japanese Excel's built-in date ids
+  (27–36, 50–58, which every workbook now reads). Number formats show `aaa`/`aaaa` weekdays and
+  `g`/`gg`/`ggg` with `e` eras in any region. The other regions in `gridcraft-core::region` have
+  their data but no entry or display rules yet.
 - **Script support.** System-font fallback for CJK, Thai and Hebrew landed in #38 (closes #32;
   #142 is still open pending confirmation). Native CJK fallback also probes Flatpak's read-only
   `/run/host/fonts`, `/run/host/local-fonts` and `/run/host/user-fonts` layouts, so installed

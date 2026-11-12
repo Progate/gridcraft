@@ -238,6 +238,21 @@ pub(super) fn subtotal(s: &mut Session, p: &Json) -> Result<Json> {
         "product" => "Product",
         _ => "Total",
     };
+    // The total rows' captions: `East Total` and `Grand Total`, or as Japanese Excel writes them,
+    // `東 集計` and `総計` (`東 平均` and `全体の平均`).
+    let japanese = s.doc()?.wb.region.is_japanese();
+    let (label, grand) = if japanese {
+        match func {
+            "count" => ("個数", "全体の個数".to_string()),
+            "average" => ("平均", "全体の平均".to_string()),
+            "max" => ("最大", "全体の最大".to_string()),
+            "min" => ("最小", "全体の最小".to_string()),
+            "product" => ("積", "全体の積".to_string()),
+            _ => ("集計", "総計".to_string()),
+        }
+    } else {
+        (label, format!("Grand {label}"))
+    };
     // Group boundaries (header in the first row).
     let d = s.doc()?;
     let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
@@ -278,7 +293,7 @@ pub(super) fn subtotal(s: &mut Session, p: &Json) -> Result<Json> {
     let last = r.end.row + inserted + 1;
     let lbl = CellRef::new(last, group_col).a1();
     s.execute("home.insertRows", json!({"sheet": sheet, "rows": format!("{}:{}", last + 1, last + 1)}))?;
-    s.execute("cell.set", json!({"sheet": sheet, "cell": lbl, "input": format!("Grand {label}")}))?;
+    s.execute("cell.set", json!({"sheet": sheet, "cell": lbl, "input": grand}))?;
     for c in &cols {
         let range = RangeRef::new(CellRef::new(first, *c), CellRef::new(last - 1, *c)).a1();
         s.execute("cell.set", json!({"sheet": sheet, "cell": CellRef::new(last, *c).a1(), "input": format!("=SUBTOTAL({code},{range})")}))?;

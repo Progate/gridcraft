@@ -102,8 +102,8 @@ fn unique_value_name(pt: &PivotTable, base: &str, except: Option<usize>) -> Stri
     (2..10_000).map(|k| format!("{base}{k}")).find(|n| !taken(n)).unwrap_or_else(|| base.to_string())
 }
 
-fn auto_name(f: PivotFunc, field: &str) -> String {
-    format!("{} of {field}", pv::func_caption(f))
+fn auto_name(f: PivotFunc, field: &str, japanese: bool) -> String {
+    pv::value_name(f, field, japanese)
 }
 
 /// Adds `field` to an area (moving it out of the other axis areas).
@@ -147,7 +147,7 @@ pub(super) fn add_to_area(pt: &mut PivotTable, src: &pv::Source, placement: Area
                     }
                     n.to_string()
                 }
-                _ => auto_name(f, &field),
+                _ => auto_name(f, &field, src.japanese),
             };
             let nm = unique_value_name(pt, &base, None);
             let v = PivotValue { source_col: field, func: f, name: nm, show_as: PivotShowAs::Normal, number_format: None };
@@ -540,8 +540,9 @@ pub(super) fn value_settings(s: &mut Session, p: &Json) -> Result<Json> {
                 cur.name.eq_ignore_ascii_case(base) || cur.name.strip_prefix(base).is_some_and(|r| r.chars().all(|c| c.is_ascii_digit()))
             };
             let legacy = cur.func == PivotFunc::CountNumbers && is_auto(&format!("Count Numbers of {}", cur.source_col));
-            if is_auto(&auto_name(cur.func, &cur.source_col)) || legacy {
-                v.name = unique_value_name(pt, &auto_name(f, &cur.source_col), Some(i));
+            // A name made in either language follows; the new one is in the workbook's region.
+            if is_auto(&auto_name(cur.func, &cur.source_col, false)) || is_auto(&auto_name(cur.func, &cur.source_col, true)) || legacy {
+                v.name = unique_value_name(pt, &auto_name(f, &cur.source_col, src.japanese), Some(i));
             }
         }
         if let Some(n) = &name {

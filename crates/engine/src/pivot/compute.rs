@@ -1,4 +1,4 @@
-use super::items::{Acc, FieldItems, Grouping, build_tree, collect_siblings, field_grouping, is_collapsed, item_label};
+use super::items::{Acc, Captions, FieldItems, Grouping, build_tree, captions, collect_siblings, field_grouping, is_collapsed, item_label};
 use super::output::{
     AggMap, CellKind, ColKind, ColSpec, Ctx, Grid, Line, LineKind, Output, RowKind, ValSrc, caption, data_cols_exceed_sheet, flatten_cols,
 };
@@ -195,23 +195,39 @@ struct HeaderInput<'a> {
     k: usize,
     l: usize,
     headers_on: bool,
+    cap: &'a Captions,
 }
 
 fn write_headers(g: &mut Grid, input: HeaderInput<'_>) -> Result<(), String> {
-    let HeaderInput { vals, row_fields, col_fields, col_items, col_fmts, vpos, data_cols, specs, row_levels, compact, on_rows, k, l, headers_on } =
-        input;
+    let HeaderInput {
+        vals,
+        row_fields,
+        col_fields,
+        col_items,
+        col_fmts,
+        vpos,
+        data_cols,
+        specs,
+        row_levels,
+        compact,
+        on_rows,
+        k,
+        l,
+        headers_on,
+        cap,
+    } = input;
     let val_name = |vi: usize| vals.get(vi).map(|(_, v)| v.name.clone()).unwrap_or_default();
     let row_header = |g: &mut Grid, r: usize| {
         if row_levels == 0 || !headers_on {
             return;
         }
         if compact {
-            g.set(r, 0, Value::text("Row Labels"), CellKind::Header, 0, None);
+            g.set(r, 0, Value::text(cap.row_labels), CellKind::Header, 0, None);
         } else {
             // One column per row field, Σ Values ("Values") at its place.
             let mut names: Vec<&str> = row_fields.iter().map(|f| f.source_col.as_str()).collect();
             if let Some(p) = vpos {
-                names.insert(p.min(names.len()), "Values");
+                names.insert(p.min(names.len()), cap.values);
             }
             for (i, name) in names.into_iter().enumerate() {
                 g.set(r, i, Value::text(name), CellKind::Header, 0, None);
@@ -227,18 +243,18 @@ fn write_headers(g: &mut Grid, input: HeaderInput<'_>) -> Result<(), String> {
             match vi {
                 Some(vi) => g.set(r, l + j, Value::text(val_name(*vi)), CellKind::Header, 0, None),
                 // Values on rows, no column field: the one data column is the grand total.
-                None if on_rows => g.set(r, l + j, Value::text("Total"), CellKind::Header, 0, None),
+                None if on_rows => g.set(r, l + j, Value::text(cap.total), CellKind::Header, 0, None),
                 None => {}
             }
         }
     } else {
-        let cap = g.push_row(RowKind::Header)?;
+        let cap_row = g.push_row(RowKind::Header)?;
         if l > 0 && k == 1 {
-            g.set(cap, 0, Value::text(val_name(0)), CellKind::Header, 0, None);
+            g.set(cap_row, 0, Value::text(val_name(0)), CellKind::Header, 0, None);
         }
         if headers_on {
-            let caption = if compact { "Column Labels".to_string() } else { col_fields.first().map(|f| f.source_col.clone()).unwrap_or_default() };
-            g.set(cap, l, Value::text(caption), CellKind::Header, 0, None);
+            let caption = if compact { cap.column_labels.to_string() } else { col_fields.first().map(|f| f.source_col.clone()).unwrap_or_default() };
+            g.set(cap_row, l, Value::text(caption), CellKind::Header, 0, None);
         }
         let levels = col_fields.len() + usize::from(k > 1 && !on_rows);
         let first_level = g.rows.len();
@@ -270,14 +286,14 @@ fn write_headers(g: &mut Grid, input: HeaderInput<'_>) -> Result<(), String> {
                     let label = spec.path.last().and_then(|it| col_items.get(lv).map(|fi| fi.label(*it))).unwrap_or_default();
                     let text = match vi {
                         Some(vi) if k > 1 => caption(&label, &val_name(*vi)),
-                        _ => caption(&label, "Total"),
+                        _ => caption(&label, cap.total),
                     };
                     g.set(first_level + lv, c, Value::text(text), CellKind::ColLabel, 0, None);
                 }
                 ColKind::Grand => {
                     let text = match vi {
-                        Some(vi) if k > 1 => format!("Total {}", val_name(*vi)),
-                        _ => "Grand Total".to_string(),
+                        Some(vi) if k > 1 => format!("{} {}", cap.total_of, val_name(*vi)),
+                        _ => cap.grand_total.to_string(),
                     };
                     g.set(first_level, c, Value::text(text), CellKind::ColLabel, 0, None);
                 }
@@ -554,6 +570,7 @@ fn data_columns(specs: &[ColSpec], has_column_fields: bool, on_rows: bool, value
 
 pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut probe: Option<&mut Probe>) -> Result<Output, String> {
     let fmt_of = |c: usize| src.formats.get(c).cloned().unwrap_or_else(|| "General".into());
+    let cap = captions(wb.region);
     let rows: Vec<(usize, &PivotField)> = pt.rows.iter().filter_map(|f| src.col(&f.source_col).map(|c| (c, f))).collect();
     let cols: Vec<(usize, &PivotField)> = pt.columns.iter().filter_map(|f| src.col(&f.source_col).map(|c| (c, f))).collect();
     // Value fields: a source column, or a calculated field evaluated on sums (see `pivot_calc`).
@@ -626,7 +643,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
     let level0: Vec<u32> = row_tree.iter().map(|n| n.item).collect();
 
     let val_names: Vec<String> = vals.iter().map(|(_, v)| v.name.clone()).collect();
-    let ctx = Ctx { pt, rows: row_fields.clone(), row_items, row_fmts: row_fmts.clone(), vpos, val_names: val_names.clone() };
+    let ctx = Ctx { pt, rows: row_fields.clone(), row_items, row_fmts: row_fmts.clone(), vpos, val_names: val_names.clone(), cap };
     let mut lines: Vec<Line> = Vec::new();
     if row_levels == 0 {
         lines.push(Line { kind: LineKind::Item(false), leaf: true, path: vec![], values: true, labels: vec![], vi: None });
@@ -647,9 +664,9 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
                 vi,
             };
             if on_rows {
-                lines.extend(val_names.iter().enumerate().map(|(vi, name)| grand(format!("Total {name}"), Some(vi))));
+                lines.extend(val_names.iter().enumerate().map(|(vi, name)| grand(format!("{} {name}", cap.total_of), Some(vi))));
             } else {
-                lines.push(grand("Grand Total".into(), None));
+                lines.push(grand(cap.grand_total.into(), None));
             }
         }
     }
@@ -730,6 +747,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
             k,
             l,
             headers_on: pt.show_headers,
+            cap,
         },
     )?;
     let val_name = |vi: usize| vals.get(vi).map(|(_, value)| value.name.clone()).unwrap_or_default();
@@ -775,7 +793,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
             {
                 parts.push(val_name(*vi));
             } else if parts.is_empty() {
-                parts.push("Total".into());
+                parts.push(cap.total.into());
             }
             Some(((l + j) as u32, parts.join(" - ")))
         })

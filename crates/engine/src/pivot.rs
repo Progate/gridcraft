@@ -27,7 +27,7 @@ use charts::rebind_charts;
 pub use charts::{chart_link, chart_series, clear_output, links_to, parse_chart_link};
 use compute::compute_from;
 pub use compute::{NOT_A_VALUE_CELL, detail_cells, detail_records};
-pub use items::{Grouping, distinct_labels, field_grouping, func_caption, item_label};
+pub use items::{CAPTIONS_EN, CAPTIONS_JA, Captions, Grouping, captions, distinct_labels, field_grouping, func_caption, func_caption_ja, item_label, value_name};
 #[cfg(test)]
 use output::data_cols_exceed_sheet;
 pub use output::{CellKind, OutCell, Output, RowKind};
@@ -58,6 +58,9 @@ pub struct Source {
     /// Numeric with a date number format.
     pub dates: Vec<bool>,
     pub rows: Vec<Vec<Value>>,
+    /// The workbook is in the Japanese region: value fields added to the report are named the
+    /// way Japanese Excel names them (`合計 / 売上`).
+    pub japanese: bool,
 }
 
 impl Source {
@@ -183,7 +186,7 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
         *n = *n && *a;
     }
     let dates = numeric.iter().zip(formats.iter()).map(|(n, f)| *n && crate::display::parsed(f).is_date()).collect();
-    Ok(Source { sheet: si, range: r, headers, formats, numeric, dates, rows })
+    Ok(Source { sheet: si, range: r, headers, formats, numeric, dates, rows, japanese: wb.region.is_japanese() })
 }
 
 /// Computes a PivotTable report from the workbook.
