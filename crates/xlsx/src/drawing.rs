@@ -173,7 +173,10 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
                 "graphicFrame" => {
                     let Some(gd) = obj.path(&["graphic", "graphicData"]) else { continue };
                     let uri = gd.attr("uri").unwrap_or("");
-                    if let Some(rid) = gd.child("chart").and_then(|c| c.attr("id")) {
+                    if let Some(name) = gd.child("slicer").and_then(|sl| sl.attr("name")) {
+                        // Placed once the sheet's slicer part is read (`sheet_read::read_sheet_slicers`).
+                        cx.slicer_frames.push((name.to_string(), anchor));
+                    } else if let Some(rid) = gd.child("chart").and_then(|c| c.attr("id")) {
                         let Some(rel) = rels.iter().find(|r| r.id == rid) else {
                             cx.warn(format!("a chart without its chart part was skipped ({part}, object {n})"));
                             continue;
@@ -449,6 +452,8 @@ pub enum Obj<'a> {
     Image(&'a Image, String),
     Chart(&'a gridcraft_model::Chart, String),
     Shape(&'a Shape),
+    /// A slicer's frame, by its written name.
+    Slicer(String, &'a Anchor),
 }
 
 /// The drawing part for a sheet's objects (relationship ids already assigned).
@@ -496,6 +501,12 @@ pub fn write_drawing(sheet: &Sheet, theme: &Theme, objs: &[Obj<'_>]) -> String {
                     id - 1,
                     xfrm(&ch.anchor, "xdr:xfrm")
                 );
+            }
+            Obj::Slicer(name, anchor) => {
+                let (open, close) = anchor_open(sheet, anchor);
+                close_tag = close;
+                s.push_str(&open);
+                s.push_str(&crate::slicer::frame_xml(name, id, anchor, &xfrm));
             }
             Obj::Shape(sh) if sh.kind == ShapeKind::Equation => {
                 let (open, close) = anchor_open(sheet, &sh.anchor);

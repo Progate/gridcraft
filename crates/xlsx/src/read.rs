@@ -46,6 +46,12 @@ pub struct Ctx<'a> {
     pub known_function: Option<&'a dyn Fn(&str) -> bool>,
     /// The code of the workbook's Python cells, from its Python part.
     pub python: crate::python_part::ScriptsIn,
+    /// The workbook's slicer caches.
+    pub slicer_caches: Vec<crate::slicer::CacheIn>,
+    /// Slicer frames of the worksheet being read: name and anchor, from its drawing.
+    pub slicer_frames: Vec<(String, gridcraft_model::Anchor)>,
+    /// Tables of the worksheet being read: file id, model index and `tableColumn` ids.
+    pub table_file_ids: Vec<(u32, usize, Vec<u32>)>,
 }
 
 impl Ctx<'_> {
@@ -267,6 +273,9 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
         shared_formula_bytes: 0,
         known_function,
         python: Default::default(),
+        slicer_caches: vec![],
+        slicer_frames: vec![],
+        table_file_ids: vec![],
     };
     let root_rels = cx.pkg.rels("")?;
     let wb_part = find_rel(&root_rels, "officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "xl/workbook.xml".into());
@@ -318,6 +327,14 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
     // Legacy formula cells per model sheet, rewritten once names and tables are known.
     let mut legacy_formulas: Vec<(usize, Vec<gridcraft_core::CellRef>)> = vec![];
     let mut pivot_caches = crate::pivot::CachesIn::new(&wb_xml, &wb_rels);
+    for rel in wb_rels.iter().filter(|r| r.kind == "slicerCache") {
+        match cx.optional_xml(&rel.target) {
+            Ok(Some(x)) => cx.slicer_caches.extend(crate::slicer::read_cache(&x)),
+            Ok(None) => {}
+            Err(IoError::TooLarge(m)) => return Err(IoError::TooLarge(m)),
+            Err(e) => cx.warn(format!("slicer cache {} could not be read: {e}", rel.target)),
+        }
+    }
     let sheet_els: Vec<El> = wb_xml.child("sheets").map(|s| s.kids("sheet").cloned().collect()).unwrap_or_default();
     let mut names = SheetNames::default();
     for (i, se) in sheet_els.iter().enumerate() {
@@ -376,6 +393,10 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
     if let Some(dn) = wb_xml.child("definedNames") {
         for d in dn.kids("definedName") {
             let Some(name) = d.attr("name") else { continue };
+            // A slicer cache's #N/A name is written again with the slicer (or goes with it).
+            if cx.slicer_caches.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
+                continue;
+            }
             let scope = match d.attr_u32("localSheetId") {
                 Some(i) => match file_to_model.get(i as usize).copied().flatten() {
                     Some(m) => Some(m),

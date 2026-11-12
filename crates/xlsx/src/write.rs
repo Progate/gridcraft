@@ -131,6 +131,9 @@ pub struct Out {
     /// Authors of threaded comments, in first-use order; written to `xl/persons/person.xml`.
     pub persons: Vec<String>,
     pub table_id: u32,
+    /// Slicer parts written so far, and the names (and cache parts) of the slicers written.
+    pub slicers: u32,
+    pub slicer_names: crate::slicer::Names,
     pub dynamic_arrays: bool,
     pub needs_calc: bool,
     pub cell_pictures: crate::richdata::PicturesOut,
@@ -278,6 +281,8 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
         ctrl_props: 0,
         persons: vec![],
         table_id: 0,
+        slicers: 0,
+        slicer_names: crate::slicer::Names::new(wb),
         dynamic_arrays: false,
         needs_calc: false,
         cell_pictures: Default::default(),
@@ -300,7 +305,11 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     let mut wb_rels = Rels::default();
     let (sheets_xml, kept, pivots) = write_sheets(wb, &mut out, active, &mut wb_rels);
 
-    let names = write_defined_names(wb, &kept, &out.chart_names);
+    let mut names = write_defined_names(wb, &kept, &out.chart_names);
+    // A slicer cache's name is also a workbook name, which Excel defines as #N/A.
+    for (cache, _) in &out.slicer_names.written {
+        let _ = write!(names, "<definedName name=\"{}\">#N/A</definedName>", esc_attr(cache));
+    }
 
     let mut w = format!("{XML_DECL}<workbook xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_REL}\">");
     // A workbook read from a file keeps its <fileVersion> as it was: Excel trusts the saved values
@@ -360,7 +369,8 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     }
     w.push_str("/>");
     w.push_str(&pivots.workbook_xml(&mut wb_rels));
-    let exts = crate::passthrough::workbook_elements(wb, "ext");
+    let cache_rids: Vec<String> = out.slicer_names.written.iter().map(|(_, part)| wb_rels.add_uri(crate::slicer::REL_SLICER_CACHE, part)).collect();
+    let exts = crate::slicer::workbook_ext(&cache_rids) + &crate::passthrough::workbook_elements(wb, "ext");
     if !exts.is_empty() {
         let _ = write!(w, "<extLst>{exts}</extLst>");
     }

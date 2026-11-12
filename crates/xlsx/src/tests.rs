@@ -30,6 +30,7 @@ mod shape_text_rtl;
 mod shared_media;
 mod sheet_data_pin;
 mod sheet_names;
+mod slicer_tests;
 mod smooth_roundtrip;
 mod trendline_roundtrip;
 mod xls_dv_tests;

@@ -196,25 +196,36 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
     let prio = write_sheet_rules(&mut s, sheet, &mut rels, out);
     let kept = write_sheet_printing(&mut s, sheet, &mut rels, out);
 
-    write_sheet_drawing(&mut s, wb, si, sheet, &mut rels, out);
+    // Table names and ids are settled first: slicer caches name their table by id.
+    let mut used_names: HashSet<String> = HashSet::new();
+    let table_ids: Vec<(String, u32)> = tables
+        .iter()
+        .map(|(t, _)| {
+            out.table_id += 1;
+            (table_name(&t.name, &mut used_names, out.table_id), out.table_id)
+        })
+        .collect();
+    let slicer_tables: Vec<(&str, u32, &[String])> =
+        tables.iter().zip(&table_ids).map(|((t, cols), (_, id))| (t.name.as_str(), *id, cols.as_slice())).collect();
+    let slicers = crate::slicer::plan(&sheet.slicers, &slicer_tables, &mut out.slicer_names);
+
+    write_sheet_drawing(&mut s, wb, si, sheet, &slicers, &mut rels, out);
     write_sheet_notes(&mut s, sheet, si, &kept, &mut rels, out);
+    let slicer_ext = write_sheet_slicers(&slicers, &mut rels, out);
     // Tables.
     if !tables.is_empty() {
         let mut parts = String::new();
-        let mut used_names: HashSet<String> = HashSet::new();
-        for (t, cols) in &tables {
+        for ((t, cols), (name, table_id)) in tables.iter().zip(&table_ids) {
             out.tables += 1;
-            out.table_id += 1;
             let n = out.tables;
-            let name = table_name(&t.name, &mut used_names, out.table_id);
-            let xml = table_xml(t, cols, &name, out.table_id, out);
+            let xml = table_xml(t, cols, name, *table_id, out);
             out.part(&format!("xl/tables/table{n}.xml"), Some(CT_TABLE), xml.into_bytes());
             let rid = rels.add("table", &format!("../tables/table{n}.xml"));
             let _ = write!(parts, "<tablePart r:id=\"{rid}\"/>");
         }
         let _ = write!(s, "<tableParts count=\"{}\">{parts}</tableParts>", tables.len());
     }
-    write_sheet_extensions(&mut s, sheet, &prio);
+    write_sheet_extensions(&mut s, sheet, &prio, slicer_ext.as_deref());
     s.push_str("</worksheet>");
     (s, rels)
 }
@@ -228,7 +239,29 @@ struct CellWriteInput<'a> {
     dynamic_range: Option<&'a RangeRef>,
 }
 
-fn write_sheet_extensions(s: &mut String, sheet: &Sheet, prio: &[u32]) {
+/// The sheet's slicer part and one cache part per slicer; returns the worksheet extension that
+/// names the slicer part.
+fn write_sheet_slicers(slicers: &[crate::slicer::Planned<'_>], rels: &mut Rels, out: &mut Out) -> Option<String> {
+    if slicers.is_empty() {
+        return None;
+    }
+    out.slicers += 1;
+    let n = out.slicers;
+    out.part(&format!("xl/slicers/slicer{n}.xml"), Some(crate::slicer::CT_SLICER), crate::slicer::slicers_xml(slicers).into_bytes());
+    let rid = rels.add_uri(crate::slicer::REL_SLICER, &format!("../slicers/slicer{n}.xml"));
+    for p in slicers {
+        let k = out.slicer_names.written.len() + 1;
+        out.part(
+            &format!("xl/slicerCaches/slicerCache{k}.xml"),
+            Some(crate::slicer::CT_SLICER_CACHE),
+            crate::slicer::table_cache_xml(p).into_bytes(),
+        );
+        out.slicer_names.written.push((p.cache.clone(), format!("slicerCaches/slicerCache{k}.xml")));
+    }
+    Some(crate::slicer::sheet_ext(&rid))
+}
+
+fn write_sheet_extensions(s: &mut String, sheet: &Sheet, prio: &[u32], slicers: Option<&str>) {
     // Excel 2010 extensions: solid data bars, then sparklines.
     let solid_bars: Vec<(&CondFormat, u32)> = sheet
         .cond_formats
@@ -237,7 +270,8 @@ fn write_sheet_extensions(s: &mut String, sheet: &Sheet, prio: &[u32]) {
         .filter(|(_, cf)| !cf.ranges.is_empty() && matches!(cf.rule, CfRule::DataBar { gradient: false, .. }))
         .map(|(i, cf)| (cf, prio.get(i).copied().unwrap_or(1)))
         .collect();
-    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() {
+    let any = !solid_bars.is_empty() || !sheet.sparklines.is_empty() || slicers.is_some();
+    if any {
         s.push_str("<extLst>");
     }
     if !solid_bars.is_empty() {
@@ -275,7 +309,10 @@ fn write_sheet_extensions(s: &mut String, sheet: &Sheet, prio: &[u32]) {
         }
         s.push_str("</x14:sparklineGroups></ext>");
     }
-    if !solid_bars.is_empty() || !sheet.sparklines.is_empty() {
+    if let Some(ext) = slicers {
+        s.push_str(ext);
+    }
+    if any {
         s.push_str("</extLst>");
     }
 }
@@ -328,9 +365,17 @@ fn write_sheet_notes(s: &mut String, sheet: &Sheet, si: usize, kept: &crate::pas
     s.push_str(&kept.elements(&controls));
 }
 
-fn write_sheet_drawing(s: &mut String, wb: &Workbook, si: usize, sheet: &Sheet, rels: &mut Rels, out: &mut Out) {
-    // Drawing: pictures, charts, shapes.
-    if !sheet.images.is_empty() || !sheet.charts.is_empty() || !sheet.shapes.is_empty() {
+fn write_sheet_drawing(
+    s: &mut String,
+    wb: &Workbook,
+    si: usize,
+    sheet: &Sheet,
+    slicers: &[crate::slicer::Planned<'_>],
+    rels: &mut Rels,
+    out: &mut Out,
+) {
+    // Drawing: pictures, charts, shapes, slicers.
+    if !sheet.images.is_empty() || !sheet.charts.is_empty() || !sheet.shapes.is_empty() || !slicers.is_empty() {
         out.drawings += 1;
         let dn = out.drawings;
         let mut drels = Rels::default();
@@ -368,6 +413,9 @@ fn write_sheet_drawing(s: &mut String, wb: &Workbook, si: usize, sheet: &Sheet, 
         }
         for sh in &sheet.shapes {
             objs.push(Obj::Shape(sh));
+        }
+        for p in slicers {
+            objs.push(Obj::Slicer(p.name.clone(), &p.slicer.anchor));
         }
         out.part(&format!("xl/drawings/drawing{dn}.xml"), Some(CT_DRAWING), crate::drawing::write_drawing(sheet, &wb.theme, &objs).into_bytes());
         if !drels.is_empty() {

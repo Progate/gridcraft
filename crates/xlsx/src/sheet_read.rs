@@ -330,6 +330,13 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
                             && let Some(mut t) = read_table(cx, &x)
                         {
                             t.id = cx.next_object_id();
+                            if let Some(file_id) = x.attr_u32("id") {
+                                let ids = x
+                                    .child("tableColumns")
+                                    .map(|c| c.kids("tableColumn").map(|tc| tc.attr_u32("id").unwrap_or(0)).collect())
+                                    .unwrap_or_default();
+                                cx.table_file_ids.push((file_id, sheet.tables.len(), ids));
+                            }
                             sheet.tables.push(t);
                         }
                     }
@@ -340,6 +347,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
             _ => {}
         }
     }
+    read_sheet_slicers(cx, &rels, &mut sheet)?;
     let read_controls = read_form_controls(cx, &root, &rels, &mut sheet);
     // Comments are related to the sheet without an element in it.
     for rel in rels.iter().filter(|r| r.kind == "comments") {
@@ -363,6 +371,62 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
         }
     }
     Ok((sheet, read_controls))
+}
+
+/// Table slicers: the sheet's slicer parts, each slicer's cache (table and column) and its
+/// drawing frame. The selection is the table's AutoFilter on that column; it moves to the sheet
+/// filter, where the slicer commands keep it.
+fn read_sheet_slicers(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet) -> Result<(), IoError> {
+    let frames = std::mem::take(&mut cx.slicer_frames);
+    let tables = std::mem::take(&mut cx.table_file_ids);
+    for rel in rels.iter().filter(|r| r.kind == "slicer") {
+        let Some(x) = cx.optional_xml(&rel.target)? else { continue };
+        for sl in crate::slicer::read_slicers(&x) {
+            let Some(cache) = cx.slicer_caches.iter().find(|c| c.name.eq_ignore_ascii_case(&sl.cache)).cloned() else {
+                cx.warn(format!("slicer \"{}\" has no cache and was skipped", sl.name));
+                continue;
+            };
+            let Some((table_id, column_id)) = cache.table else {
+                cx.warn(format!("slicer \"{}\" filters a PivotTable, which is not supported; it was skipped", sl.name));
+                continue;
+            };
+            let found = tables.iter().find(|(id, _, _)| *id == table_id).and_then(|(_, ti, ids)| {
+                let ci = ids.iter().position(|c| *c == column_id)?;
+                let t = sheet.tables.get(*ti)?;
+                Some((*ti, ci, t.columns.get(ci)?.name.clone()))
+            });
+            let Some((ti, ci, column)) = found else {
+                cx.warn(format!("slicer \"{}\" filters a table on another sheet, which is not supported; it was skipped", sl.name));
+                continue;
+            };
+            let Some(anchor) = frames.iter().find(|(n, _)| n.eq_ignore_ascii_case(&sl.name)).map(|(_, a)| *a) else {
+                cx.warn(format!("slicer \"{}\" is not on the sheet's drawing and was skipped", sl.name));
+                continue;
+            };
+            let Some(t) = sheet.tables.get_mut(ti) else { continue };
+            let offset = ci as u32;
+            let selected = t.filter.iter().find(|(o, _)| *o == offset).and_then(|(_, c)| match c {
+                gridcraft_model::FilterCriterion::Values { values, .. } => Some(values.clone()),
+                _ => None,
+            });
+            // The engine keeps a table's live filter in the sheet's AutoFilter over the table.
+            if sheet.autofilter.is_none() && !t.filter.is_empty() {
+                sheet.autofilter = Some(gridcraft_model::AutoFilter { range: t.range, criteria: std::mem::take(&mut t.filter) });
+            }
+            let table = t.name.clone();
+            let id = cx.next_object_id();
+            sheet.slicers.push(gridcraft_model::Slicer {
+                id,
+                table,
+                caption: sl.caption.unwrap_or_else(|| column.clone()),
+                column,
+                anchor,
+                selected,
+                columns: sl.columns,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Buttons, scroll bars and spin buttons: the `<controls>` list (also inside
