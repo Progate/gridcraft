@@ -29,6 +29,7 @@ pub fn build_params(d: &Dialog) -> Json {
                 m.remove("text");
             }
         }
+        "textImport" => return super::text_import::import_params(d),
         "pivotGroup" => {
             if let Some(m) = v.as_object_mut() {
                 // Typing a bound turns its Auto box off, as in Excel's Grouping dialog.
@@ -90,15 +91,7 @@ pub fn build_params(d: &Dialog) -> Json {
                 }
             }
         }
-        "textToColumns" => {
-            let mut delims = Vec::new();
-            for (k, c) in [("tab", "\t"), ("semicolon", ";"), ("comma", ","), ("space", " ")] {
-                if d.values.get(k).and_then(Json::as_bool) == Some(true) {
-                    delims.push(json!(c));
-                }
-            }
-            v["delimiters"] = Json::Array(delims);
-        }
+        "textToColumns" => return super::text_to_columns::params(d),
         "removeDuplicates" => {
             // The unticked columns go out as the ticked ones (`columns`); all ticked compares every column.
             let unchecked: Vec<&str> =
@@ -206,6 +199,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "assignAction" => 440.0,
         "zoom" => 220.0,
         "pasteSpecial" => 480.0,
+        "textImport" => 780.0,
+        "textToColumns" => 600.0,
         _ => 380.0,
     };
     let window_id = egui::Id::unique("dialog").with(&d.name);
@@ -241,6 +236,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "find" => find(app, ui, &mut d),
                 "goTo" => go_to(app, ui, &mut d, &mut confirm),
                 "zoom" => zoom(ui, &mut d, &mut confirm, &mut open),
+                "textImport" => super::text_import::text_import(app, ui, &mut d, &mut confirm, &mut open),
+                "textToColumns" => super::text_to_columns::text_to_columns(app, ui, &mut d, &mut confirm, &mut open),
                 "sort" => sort(app, ui, &mut d, &mut confirm),
                 "nameManager" => name_manager(app, ui, &mut d, &mut open),
                 "pasteName" => paste_name(app, ui, &mut d, &mut confirm, &mut open),

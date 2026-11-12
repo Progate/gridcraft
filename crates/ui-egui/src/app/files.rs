@@ -1,6 +1,20 @@
 use super::{Json, Notice, NoticeKind, OpenWindow, SheetApp, clean_error, json};
 
 impl SheetApp {
+    /// Data ▸ Get Data ▸ From Text/CSV: pick a text file, then Excel's preview dialog (File
+    /// Origin, Delimiter, Data Type Detection) loads it into this workbook as a table.
+    pub fn import_text_file(&mut self) {
+        if let Some(start) = &self.services.open_async {
+            self.text_import_pending = true;
+            start();
+        } else if let Some(pick) = &self.services.pick_open
+            && let Some(path) = pick()
+        {
+            self.run_or_alert("data.fromTextCsv", json!({"path": path, "prompt": true}));
+            self.after_engine();
+        }
+    }
+
     pub fn open_path(&mut self, path: &str) {
         match self.run("file.open", json!({"path": path})) {
             Ok(r) => self.after_open(Some(path), &r),
@@ -85,6 +99,11 @@ impl SheetApp {
             .unwrap_or_default();
         for (name, bytes) in arrived {
             let b64 = gridcraft_engine::io::base64_encode(&bytes);
+            if std::mem::take(&mut self.text_import_pending) {
+                self.run_or_alert("data.fromTextCsv", json!({"name": &name, "base64": &b64, "prompt": true}));
+                self.after_engine();
+                continue;
+            }
             match self.run("file.open", json!({"name": &name, "base64": &b64})) {
                 // A file picked from File › Open (web) arrives here: show it, not the Backstage.
                 Ok(r) => {

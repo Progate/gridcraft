@@ -46,3 +46,53 @@ fn confirming_text_to_columns_splits_on_the_ticked_delimiter() {
     let read = h.state_mut().run("sheet.read", json!({"range": "A1:B2"})).unwrap();
     assert_eq!(read["values"], json!([["a", "b"], ["c", "d"]]), "{read}");
 }
+
+#[test]
+fn text_to_columns_wizard_splits_fixed_width_with_column_formats() {
+    let mut h = harness();
+    h.state_mut().run("range.setValues", json!({"range": "A1", "values": [["'0101 2025/04/01 x"], ["'0102 2025/04/02 y"]]})).unwrap();
+    h.state_mut().run("selection.set", json!({"range": "A1:A2"})).unwrap();
+    control(&mut h, "ui.dialog", json!({"name": "textToColumns"}));
+    h.run_steps(2);
+    control(&mut h, "ui.dialog.set", json!({"field": "type", "value": "fixed"}));
+    control(&mut h, "ui.dialog.set", json!({"field": "breaks", "value": [5, 16]}));
+    control(&mut h, "ui.dialog.set", json!({"field": "step", "value": 3}));
+    control(&mut h, "ui.dialog.set", json!({"field": "columns", "value": ["text", "ymd", "skip"]}));
+    h.run_steps(2);
+    let r = control(&mut h, "ui.dialog.confirm", json!({}));
+    assert_eq!(r["ok"], json!(true), "{r}");
+    let app = h.state();
+    let d = app.session.active().unwrap();
+    let sh = d.wb.active().unwrap();
+    let cell = |a: &str| sh.value(gridcraft_engine::core::CellRef::parse(a).unwrap());
+    assert_eq!(cell("A1").display(), "0101");
+    assert!(matches!(cell("B2"), gridcraft_engine::core::Value::Number(_)), "a date");
+    assert_eq!(cell("C1").display(), "", "the skipped column isn't imported");
+}
+
+#[test]
+fn from_text_csv_preview_loads_into_this_workbook() {
+    let mut h = harness();
+    let csv = "code,name\n0101,bread\n0102,milk\n";
+    control(
+        &mut h,
+        "ui.dialog",
+        json!({"name": "textImport", "name_": "", "text": csv, "encoding": "auto", "delimiter": "auto", "detect": "first200"}),
+    );
+    h.run_steps(3);
+    {
+        let d = h.state().dialog.as_ref().expect("the preview is up");
+        assert_eq!(d.name(), "textImport");
+        assert_eq!(d.values["encoding"], "65001", "the detected origin shows");
+        assert_eq!(d.values["delimiter"], "comma");
+    }
+    control(&mut h, "ui.dialog.set", json!({"field": "detect", "value": "none"}));
+    h.run_steps(2);
+    let r = control(&mut h, "ui.dialog.confirm", json!({}));
+    assert_eq!(r["ok"], json!(true), "{r}");
+    let d = h.state().session.active().unwrap();
+    assert_eq!(d.wb.sheets.len(), 2, "loaded on a new sheet of this workbook");
+    let sh = d.wb.active().unwrap();
+    assert_eq!(sh.value(gridcraft_engine::core::CellRef::parse("A2").unwrap()).display(), "0101");
+    assert_eq!(sh.tables.len(), 1);
+}

@@ -30,6 +30,8 @@ mod ref_edit;
 mod scenarios;
 mod show;
 mod spelling;
+mod text_import;
+mod text_to_columns;
 mod zoom;
 
 use analysis::toolpak_defaults;
@@ -645,21 +647,11 @@ impl Dialog {
                 },
             ),
             "pageSetup" => page_setup::open(app, p("tab").as_str()),
-            "textToColumns" => Dialog::form(
-                "textToColumns",
-                "Convert Text to Columns",
-                "data.textToColumns",
-                vec![
-                    Check { key: "tab", label: "Tab" },
-                    Check { key: "semicolon", label: "Semicolon" },
-                    Check { key: "comma", label: "Comma" },
-                    Check { key: "space", label: "Space" },
-                    Text { key: "other", label: "Other:" },
-                    Check { key: "treatConsecutive", label: "Treat consecutive delimiters as one" },
-                    Text { key: "destination", label: "Destination:" },
-                ],
-                json!({"tab": true, "comma": true, "destination": active}),
-            ),
+            "textToColumns" => {
+                let mut d = Dialog::custom("textToColumns", "Convert Text to Columns Wizard - Step 1 of 3", text_to_columns::defaults(&active));
+                d.command = Some("data.textToColumns");
+                d
+            }
             "removeDuplicates" => Dialog::form(
                 "removeDuplicates",
                 "Remove Duplicates",
@@ -965,6 +957,17 @@ impl Dialog {
                 vec![Text { key: "name", label: "Name:" }, Text { key: "formula", label: "Formula:" }],
                 json!({"pivot": p("pivot"), "name": p("name"), "formula": p("formula")}),
             ),
+            "textImport" => {
+                // Excel titles the preview with the file's name.
+                let title = params
+                    .get("name")
+                    .and_then(Json::as_str)
+                    .or(params.get("path").and_then(Json::as_str))
+                    .map(|n| std::path::Path::new(n).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(n).to_string());
+                let mut d = Dialog::custom("textImport", &title.unwrap_or_else(|| "From Text/CSV".into()), params.clone());
+                d.command = Some("data.fromTextCsv");
+                d
+            }
             "pivotGroup" => {
                 // Excel's Grouping dialog: Auto ▸ Starting at / Ending at and By for numbers, By for dates.
                 let fields = if p("kind").as_str() == Some("date") {

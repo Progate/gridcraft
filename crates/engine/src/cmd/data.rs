@@ -28,8 +28,8 @@ pub(crate) use filter::{apply_filter, grow_autofilter};
 use filter::{clear_filter, filter_by, reapply, toggle_filter};
 use grouping::{detail, group, outline_settings, show_levels, subtotal};
 use sort::{quick_sort, sort};
-#[cfg(test)]
-use tools::split_delimited;
+/// Text to Columns' field splitting, for the wizard's preview.
+pub use tools::split_delimited;
 use tools::{remove_duplicates, text_to_columns};
 pub use validation::{check_validation, list_items};
 use validation::{circle_invalid, validate_cmd, validation};
@@ -84,7 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text to Columns",
             ["Data", "Data Tools"],
             None,
-            "{range?, delimiters?: [\",\", \"\\t\", \" \", \";\"], other?: \"|\", fixedWidths?: [5, 10], treatConsecutive?: bool, textQualifier?: \"\\\"\", destination?: \"B1\"}",
+            "{range?, delimiters?: [\",\", \"\\t\", \" \", \";\"], other?: \"|\", fixedWidths?: [5, 10], treatConsecutive?: bool, textQualifier?: \"\\\"\", destination?: \"B1\", columns?: [general|text|ymd|mdy|dmy|ydm|myd|dym|skip] (step 3 Column data format, per column)}: fixedWidths are the break positions (characters from the start)",
             has_doc,
             text_to_columns
         ),

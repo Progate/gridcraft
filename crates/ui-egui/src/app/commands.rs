@@ -387,6 +387,9 @@ impl SheetApp {
         }
         match name {
             "open" => {
+                // File ▸ Open opens what arrives as a workbook, whatever an earlier
+                // From Text/CSV pick was waiting for.
+                self.text_import_pending = false;
                 if let Some(start) = &self.services.open_async {
                     start();
                 } else if let Some(pick) = &self.services.pick_open

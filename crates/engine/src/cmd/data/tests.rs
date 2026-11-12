@@ -430,6 +430,26 @@ fn t2c_fixed_widths_are_positions_in_any_order_without_duplicates() {
 }
 
 #[test]
+fn t2c_column_formats_keep_text_parse_dates_and_skip() {
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("cell.set", json!({"cell": "A1", "input": "'0101,01-04-2025,x,7"})).unwrap();
+    let r = s.execute(
+        "data.textToColumns",
+        json!({"range": "A1", "delimiters": [","], "columns": ["text", "dmy", "skip", "general"], "destination": "C1"}),
+    );
+    r.unwrap();
+    let d = s.doc().unwrap();
+    let sh = d.wb.active().unwrap();
+    assert_eq!(sh.value(CellRef::new(0, 2)), gridcraft_core::Value::text("0101"));
+    let date = gridcraft_core::date::serial_from_ymd(d.wb.date_system, 2025, 4, 1).unwrap();
+    assert_eq!(sh.value(CellRef::new(0, 3)), gridcraft_core::Value::Number(date));
+    assert_eq!(crate::display::cell_text(&d.wb, sh, CellRef::new(0, 3)), "2025/4/1");
+    assert_eq!(sh.value(CellRef::new(0, 4)), gridcraft_core::Value::Number(7.0), "the skipped column's place is taken");
+    assert!(s.execute("data.textToColumns", json!({"range": "A1", "columns": ["bogus"]})).is_err());
+}
+
+#[test]
 fn split() {
     assert_eq!(split_delimited("a,b,,c", &[','], false, '"'), ["a", "b", "", "c"]);
     assert_eq!(split_delimited("a,b,,c", &[','], true, '"'), ["a", "b", "c"]);

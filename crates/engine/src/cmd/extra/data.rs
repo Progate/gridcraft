@@ -1,4 +1,4 @@
-use super::{CellRef, EngineError, Json, RangeRef, Result, Session, TableColumn, TotalsFn, Value, bad, edit, json, ok, str_param, target_range};
+use super::{CellRef, EngineError, Json, RangeRef, Result, Session, TableColumn, TotalsFn, bad, edit, json, ok, str_param, target_range};
 
 pub(super) fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
     let r = str_param(p, "range").and_then(RangeRef::parse).ok_or_else(|| bad("table.resize", "missing `range`"))?;
@@ -59,79 +59,69 @@ fn too_many_cells() -> EngineError {
 }
 
 pub(super) fn from_csv(s: &mut Session, p: &Json) -> Result<Json> {
-    let bytes = if let Some(t) = str_param(p, "text") {
-        t.as_bytes().to_vec()
-    } else if let Some(path) = str_param(p, "path") {
-        crate::io::read_file(path)?
-    } else {
+    const C: &str = "data.fromTextCsv";
+    if ["path", "base64", "text"].iter().all(|k| p.get(*k).is_none()) {
         s.ui_requests.push(crate::UiRequest::Dialog("open".into(), json!({})));
         return ok();
-    };
-    let text = String::from_utf8_lossy(&bytes);
+    }
+    let encoding = super::text_import::encoding_param(C, p)?;
+    if p.get("prompt").and_then(Json::as_bool) == Some(true) {
+        // Excel's import preview (File Origin, Delimiter, Data Type Detection, Load): the
+        // interface asks `data.textPreview` for what each choice loads.
+        let mut params = json!({"encoding": "auto", "delimiter": "auto", "detect": "first200"});
+        for k in ["path", "name", "base64", "text", "sheet"] {
+            if let Some(v) = p.get(k) {
+                params[k] = v.clone();
+            }
+        }
+        s.ui_requests.push(crate::UiRequest::Dialog("textImport".into(), params));
+        return ok();
+    }
+    let bytes = super::text_import::source_bytes(C, p)?;
+    let text = gridcraft_xlsx::decode_with(&bytes, encoding);
+    if !text.trim_start().starts_with('[') {
+        return super::text_import::load(s, p, &bytes, encoding, MAX_IMPORT_CELLS);
+    }
     // JSON array of objects → rows.
-    let rows: Vec<Vec<Json>> =
-        if text.trim_start().starts_with('[') {
-            let arr: Vec<Json> = serde_json::from_str(&text).map_err(|e| bad("data.getData", e.to_string()))?;
-            let mut keys: Vec<String> = Vec::new();
-            let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-            for o in &arr {
-                if let Some(m) = o.as_object() {
-                    for k in m.keys() {
-                        if !seen.contains(k.as_str()) {
-                            // Stop collecting at the column limit.
-                            if keys.len() >= gridcraft_core::MAX_COLS as usize {
-                                return Err(EngineError::Other("The data has more fields than a sheet has columns.".into()));
-                            }
-                            seen.insert(k.as_str());
-                            keys.push(k.clone());
+    let rows: Vec<Vec<Json>> = if text.trim_start().starts_with('[') {
+        let arr: Vec<Json> = serde_json::from_str(&text).map_err(|e| bad("data.getData", e.to_string()))?;
+        let mut keys: Vec<String> = Vec::new();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for o in &arr {
+            if let Some(m) = o.as_object() {
+                for k in m.keys() {
+                    if !seen.contains(k.as_str()) {
+                        // Stop collecting at the column limit.
+                        if keys.len() >= gridcraft_core::MAX_COLS as usize {
+                            return Err(EngineError::Other("The data has more fields than a sheet has columns.".into()));
                         }
+                        seen.insert(k.as_str());
+                        keys.push(k.clone());
                     }
                 }
             }
-            if arr.len() as u64 + 1 > u64::from(gridcraft_core::MAX_ROWS) {
-                return Err(EngineError::Other("The data has more rows than a sheet has.".into()));
-            }
-            if (arr.len() as u64 + 1).saturating_mul(keys.len().max(1) as u64) > MAX_IMPORT_CELLS {
-                return Err(too_many_cells());
-            }
-            let mut out = vec![keys.iter().map(|k| json!(k)).collect::<Vec<_>>()];
-            for o in &arr {
-                out.push(keys.iter().map(|k| o.get(k).cloned().unwrap_or(Json::Null)).collect());
-            }
-            out
-        } else {
-            let delim = str_param(p, "delimiter")
-                .and_then(|d| d.chars().next())
-                .unwrap_or(if text.lines().next().is_some_and(|l| l.contains('\t')) { '\t' } else { ',' });
-            let opts = gridcraft_xlsx::CsvOptions { delimiter: delim as u8, max_used_cells: Some(MAX_IMPORT_CELLS), ..Default::default() };
-            // The cell limit is enforced while parsing, before an oversized file is stored.
-            let wb = gridcraft_xlsx::read_csv(&bytes, &opts).map_err(|e| match e {
-                gridcraft_xlsx::IoError::TooLarge(_) => too_many_cells(),
-                e => EngineError::Other(e.to_string()),
-            })?;
-            let sh = wb.sheet(0).ok_or(EngineError::NoDocument)?;
-            let Some(u) = sh.used_range() else { return Err(EngineError::Other("The file is empty.".into())) };
-            if u.count() > MAX_IMPORT_CELLS {
-                return Err(too_many_cells());
-            }
-            (u.start.row..=u.end.row)
-                .map(|r| {
-                    (u.start.col..=u.end.col)
-                        .map(|c| match sh.value(CellRef::new(r, c)) {
-                            Value::Number(n) => json!(n),
-                            Value::Bool(b) => json!(b),
-                            Value::Empty => Json::Null,
-                            v => json!(v.display()),
-                        })
-                        .collect()
-                })
-                .collect()
-        };
+        }
+        if arr.len() as u64 + 1 > u64::from(gridcraft_core::MAX_ROWS) {
+            return Err(EngineError::Other("The data has more rows than a sheet has.".into()));
+        }
+        if (arr.len() as u64 + 1).saturating_mul(keys.len().max(1) as u64) > MAX_IMPORT_CELLS {
+            return Err(too_many_cells());
+        }
+        let mut out = vec![keys.iter().map(|k| json!(k)).collect::<Vec<_>>()];
+        for o in &arr {
+            out.push(keys.iter().map(|k| o.get(k).cloned().unwrap_or(Json::Null)).collect());
+        }
+        out
+    } else {
+        return Err(EngineError::Other("Nothing to import.".into()));
+    };
     if rows.is_empty() || rows.len() > 1_048_576 {
         return Err(EngineError::Other("Nothing to import.".into()));
     }
     let name = str_param(p, "sheet").map(str::to_string).or_else(|| {
-        str_param(p, "path").and_then(|x| std::path::Path::new(x).file_stem().and_then(std::ffi::OsStr::to_str).map(|f| f.chars().take(31).collect()))
+        str_param(p, "path")
+            .or_else(|| str_param(p, "name"))
+            .and_then(|x| std::path::Path::new(x).file_stem().and_then(std::ffi::OsStr::to_str).map(|f| f.chars().take(31).collect()))
     });
     let r = s.execute("home.insertSheet", json!({"name": name})).or_else(|_| s.execute("home.insertSheet", json!({})))?;
     let w = rows.iter().map(Vec::len).max().unwrap_or(1).max(1);

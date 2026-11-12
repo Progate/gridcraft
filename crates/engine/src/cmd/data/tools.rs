@@ -191,9 +191,22 @@ pub(super) fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
     let consecutive = bool_param(p, "treatConsecutive").unwrap_or(false);
     let quote = str_param(p, "textQualifier").and_then(|q| q.chars().next()).unwrap_or('"');
     let dest = cell_param_on(s, p, "destination", sheet)?.unwrap_or(r.start);
+    let formats: Vec<ColumnFormat> = match p.get("columns").and_then(Json::as_array) {
+        Some(a) => a
+            .iter()
+            .take(gridcraft_core::MAX_COLS as usize)
+            .map(|f| {
+                let f = f.as_str().unwrap_or("general");
+                ColumnFormat::parse(f)
+                    .ok_or_else(|| bad("data.textToColumns", format!("unknown column format `{f}` (general|text|ymd|mdy|dmy|ydm|myd|dym|skip)")))
+            })
+            .collect::<Result<_>>()?,
+        None => vec![],
+    };
     edit(s, |cx| {
         let Some(sh) = cx.wb.sheet(sheet) else { return Ok(()) };
-        let mut out: Vec<(CellRef, String)> = Vec::new();
+        let sys = cx.wb.date_system;
+        let mut out: Vec<(CellRef, String, ColumnFormat)> = Vec::new();
         for (i, row) in (r.start.row..=r.end.row).enumerate() {
             let text = sh.value(CellRef::new(row, r.start.col)).display();
             let parts: Vec<String> = match &fixed {
@@ -211,11 +224,40 @@ pub(super) fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
                 }
                 None => split_delimited(&text, &delims, consecutive, quote),
             };
-            for (j, part) in parts.into_iter().enumerate() {
-                out.push((CellRef::new(dest.row + i as u32, dest.col + j as u32), part));
+            // Skipped columns aren't imported: the next column takes their place.
+            let mut j = 0u32;
+            for (k, part) in parts.into_iter().enumerate() {
+                let format = formats.get(k).copied().unwrap_or(ColumnFormat::General);
+                if format == ColumnFormat::Skip {
+                    continue;
+                }
+                out.push((CellRef::new(dest.row + i as u32, dest.col + j), part, format));
+                j += 1;
             }
         }
-        for (c, t) in out {
+        let mut text_style = None;
+        let mut date_style = None;
+        for (c, t, format) in out {
+            let typed = match format {
+                ColumnFormat::Text if !t.is_empty() => {
+                    let st = *text_style.get_or_insert_with(|| {
+                        cx.wb.styles.derive(gridcraft_model::StyleId::DEFAULT, |x| x.num_fmt = gridcraft_model::NumFmt::new("@"))
+                    });
+                    Some(Cell { value: gridcraft_core::Value::text(t.as_str()), formula: None, style: st, py: None })
+                }
+                ColumnFormat::Date(order) => parse_date(&t, order, sys).map(|serial| {
+                    let st = *date_style.get_or_insert_with(|| {
+                        cx.wb.styles.derive(gridcraft_model::StyleId::DEFAULT, |x| x.num_fmt = gridcraft_model::NumFmt::new("yyyy/m/d"))
+                    });
+                    Cell { value: gridcraft_core::Value::Number(serial), formula: None, style: st, py: None }
+                }),
+                _ => None,
+            };
+            if let Some(cell) = typed {
+                cx.sheet_mut(sheet)?.set_cell(c, cell);
+                cx.changed.push((sheet, c));
+                continue;
+            }
             let cell = match crate::cmd::edit::input_to_cell(&t, sheet, c, &mut cx.wb) {
                 Ok(cell) => cell,
                 // `=PY(…)` doesn't make a Python cell (that takes python.set): the piece is kept
@@ -240,7 +282,67 @@ pub(super) fn text_to_columns(s: &mut Session, p: &Json) -> Result<Json> {
     ok()
 }
 
-pub(super) fn split_delimited(text: &str, delims: &[char], consecutive: bool, quote: char) -> Vec<String> {
+/// Text to Columns step 3: a column's data format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ColumnFormat {
+    /// General: numbers and dates as typed input, the rest text.
+    General,
+    /// Text: kept as it is (`0101` keeps its zero).
+    Text,
+    /// Date in this order of year, month and day (`b"ymd"`).
+    Date([u8; 3]),
+    /// Do not import column (skip).
+    Skip,
+}
+
+impl ColumnFormat {
+    fn parse(s: &str) -> Option<ColumnFormat> {
+        let s = s.to_ascii_lowercase();
+        Some(match s.as_str() {
+            "general" | "" => ColumnFormat::General,
+            "text" => ColumnFormat::Text,
+            "skip" => ColumnFormat::Skip,
+            "ymd" | "mdy" | "dmy" | "ydm" | "myd" | "dym" => {
+                let b = s.as_bytes();
+                ColumnFormat::Date([*b.first()?, *b.get(1)?, *b.get(2)?])
+            }
+            _ => return None,
+        })
+    }
+}
+
+/// A date written in `order` (`2025/4/1`, `01-04-2025`, `20250401` for YMD): its serial, or
+/// `None` when it isn't one (the text is then read as General, as in Excel).
+fn parse_date(text: &str, order: [u8; 3], sys: gridcraft_core::DateSystem) -> Option<f64> {
+    let t = text.trim();
+    let parts: Vec<&str> = t.split(|c: char| !c.is_ascii_digit()).filter(|x| !x.is_empty()).collect();
+    let nums: Vec<i64> = if parts.len() == 3 {
+        parts.iter().map(|x| x.parse::<i64>().ok()).collect::<Option<_>>()?
+    } else if parts.len() == 1 && t.len() == 8 && t.bytes().all(|b| b.is_ascii_digit()) {
+        let at = |a: usize, b: usize| t.get(a..b).and_then(|x| x.parse::<i64>().ok());
+        match order {
+            [b'y', ..] => vec![at(0, 4)?, at(4, 6)?, at(6, 8)?],
+            [_, _, b'y'] => vec![at(0, 2)?, at(2, 4)?, at(4, 8)?],
+            _ => vec![at(0, 2)?, at(2, 6)?, at(6, 8)?],
+        }
+    } else {
+        return None;
+    };
+    let (mut y, mut m, mut d) = (0, 0, 0);
+    for (k, n) in order.iter().zip(nums) {
+        match k {
+            b'y' => y = n,
+            b'm' => m = n,
+            _ => d = n,
+        }
+    }
+    if y < 100 {
+        y += if y < 30 { 2000 } else { 1900 };
+    }
+    gridcraft_core::date::serial_from_ymd(sys, y, m, d)
+}
+
+pub fn split_delimited(text: &str, delims: &[char], consecutive: bool, quote: char) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let mut in_q = false;

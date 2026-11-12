@@ -2,10 +2,11 @@ use super::controls::{act, control_keytip, keytip, menu_items, sep};
 use super::{Icon, SheetApp, Ui, big_button, json, keytip_table, small_button};
 
 pub(super) fn data(app: &mut SheetApp, ui: &mut Ui) {
+    // From Text/CSV loads the file into this workbook through the preview dialog, as Excel does.
     let gd = big_button(ui, Icon::Folder, "Get Data\n(Text/CSV)", "Import a text or CSV file", false);
     control_keytip(app, ui, &gd, "data.getData");
     if gd.clicked() {
-        app.open_dialog("open", json!({}));
+        app.import_text_file();
     }
     sep(ui);
     ui.vertical(|ui| {

@@ -18,6 +18,7 @@ mod chart;
 mod data;
 mod objects;
 mod scripts;
+mod text_import;
 mod window;
 
 pub(crate) use cells::is_checkbox_cell;
@@ -204,16 +205,25 @@ pub fn specs() -> Vec<CommandSpec> {
             "From Text/CSV",
             ["Data", "Get & Transform Data"],
             None,
-            "{path | text, delimiter?: \",\", sheet?: new sheet name} → imports into a new sheet as a table",
+            "{path | name+base64 | text, encoding?: auto|932|65001|1252 (File Origin: Shift-JIS, UTF-8, Windows-1252; default detects), delimiter?: auto|comma|tab|semicolon|space|one character, detect?: first200|all|none (Data Type Detection; none keeps every field as text), sheet?: name (default: the file name), table?: name (default: the file name), prompt?: true (the preview dialog)} → loads into a new sheet of this workbook as a table → {sheet, table, rows, cols, encoding, delimiter}",
             has_doc,
             from_csv
+        ),
+        cmd!(
+            query "data.textPreview",
+            "From Text/CSV Preview",
+            [],
+            None,
+            "{path | name+base64 | text, encoding?, delimiter?, detect?} → {encoding, delimiter, detect, rows: [[text]]}: the header and first 20 rows as From Text/CSV would load them",
+            has_doc,
+            text_import::text_preview
         ),
         cmd!(
             "data.getData",
             "Get Data",
             ["Data", "Get & Transform Data"],
             None,
-            "{path | text} (CSV/TSV/JSON array of objects) → new sheet table",
+            "{path | name+base64 | text, encoding?: auto|932|65001|1252} (CSV/TSV/JSON array of objects) → new sheet table",
             has_doc,
             from_csv
         ),

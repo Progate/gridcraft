@@ -244,6 +244,9 @@ pub struct SheetApp {
     /// yet. eframe retains that unconsumed input across hidden logic-only ticks; the flag makes
     /// the hook offer it once and asks for a hidden paint until a UI pass applies it.
     pub(crate) synthetic_pending: bool,
+    /// Data ▸ From Text/CSV started a browser file pick: the file that arrives is imported into
+    /// this workbook (the preview dialog), not opened as a workbook of its own.
+    pub(crate) text_import_pending: bool,
     /// `cumulative_pass_nr` when the front batch was last injected. A completed egui pass that
     /// did not apply it (the font gate's early return) consumed the events with `begin_pass`
     /// without reaching input handling, so the hook must offer the same step again.
