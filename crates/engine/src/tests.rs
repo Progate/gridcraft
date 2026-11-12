@@ -2363,6 +2363,100 @@ fn undo_and_redo_keep_the_watch_window_list() {
 }
 
 #[test]
+fn the_watch_window_is_kept_in_each_sheet_and_reads_the_old_hidden_name() {
+    let mut s = s();
+    s.execute("formulas.watchWindow", json!({"add": "Sheet1!B5"})).unwrap();
+    s.execute("formulas.watchWindow", json!({"add": "A1"})).unwrap();
+    let wb = s.doc().unwrap().wb.clone();
+    assert_eq!(wb.sheet(0).unwrap().cell_watches, [CellRef::parse("B5").unwrap(), CellRef::parse("A1").unwrap()]);
+    assert!(!wb.names.iter().any(|n| n.name == "_sc_watch"), "the old hidden name is no longer written");
+    s.execute("formulas.watchWindow", json!({"remove": "Sheet1!B5"})).unwrap();
+    assert_eq!(s.doc().unwrap().wb.sheet(0).unwrap().cell_watches, [CellRef::parse("A1").unwrap()]);
+    // A workbook saved by an older GridCraft keeps its list in `_sc_watch`: opening it moves the
+    // list to the sheets.
+    let mut old = gridcraft_model::Workbook::new();
+    old.names.push(gridcraft_model::DefinedName {
+        name: "_sc_watch".into(),
+        scope: None,
+        formula: "\"[\"\"Sheet1!C3\"\"]\"".into(),
+        comment: String::new(),
+        hidden: true,
+    });
+    let bytes = gridcraft_xlsx::write_xlsx(&old).unwrap();
+    let mut s = Session::new();
+    s.execute("file.open", json!({"base64": crate::io::base64_encode(&bytes), "name": "old.xlsx"})).unwrap();
+    let wb = s.doc().unwrap().wb.clone();
+    assert_eq!(wb.sheet(0).unwrap().cell_watches, [CellRef::parse("C3").unwrap()]);
+    assert!(!wb.names.iter().any(|n| n.name == "_sc_watch"));
+    let rows = s.execute("formulas.watchWindow", json!({})).unwrap();
+    assert_eq!(rows[0]["cell"], "Sheet1!C3");
+}
+
+#[test]
+fn a_manually_calculated_workbook_opens_with_its_saved_values() {
+    // B1's saved value (5) is stale: A1 is 1, so a recalculation would give 2.
+    let mut wb = gridcraft_model::Workbook::new();
+    {
+        let sh = std::sync::Arc::make_mut(&mut wb.sheets[0]);
+        sh.set_value(CellRef::parse("A1").unwrap(), Value::Number(1.0));
+        let mut cell = gridcraft_model::Cell::formula(gridcraft_model::Formula::new("=A1*2"));
+        cell.value = Value::Number(5.0);
+        sh.set_cell(CellRef::parse("B1").unwrap(), cell);
+    }
+    wb.calc.mode = gridcraft_model::CalcMode::Manual;
+    let bytes = gridcraft_xlsx::write_xlsx(&wb).unwrap();
+    let mut s = Session::new();
+    s.execute("file.open", json!({"base64": crate::io::base64_encode(&bytes), "name": "manual.xlsx"})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(5.0), "kept as saved, as Excel opens it");
+    s.execute("formulas.calculateNow", json!({})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(2.0), "F9 recalculates");
+    // Automatic calculation recalculates on open.
+    wb.calc.mode = gridcraft_model::CalcMode::Automatic;
+    let bytes = gridcraft_xlsx::write_xlsx(&wb).unwrap();
+    let mut s = Session::new();
+    s.execute("file.open", json!({"base64": crate::io::base64_encode(&bytes), "name": "auto.xlsx"})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(2.0));
+}
+
+/// The package with one part's text changed by `f`.
+fn rewrite_part(bytes: &[u8], part: &str, f: impl Fn(&str) -> String) -> Vec<u8> {
+    use std::io::{Read, Write};
+    let mut zin = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for i in 0..zin.len() {
+        let mut file = zin.by_index(i).unwrap();
+        let name = file.name().to_string();
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).unwrap();
+        if name == part {
+            data = f(&String::from_utf8(data).unwrap()).into_bytes();
+        }
+        out.start_file(name, options).unwrap();
+        out.write_all(&data).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
+#[test]
+fn a_manual_workbook_asking_for_a_full_calculation_on_load_gets_one() {
+    let mut wb = gridcraft_model::Workbook::new();
+    {
+        let sh = std::sync::Arc::make_mut(&mut wb.sheets[0]);
+        sh.set_value(CellRef::parse("A1").unwrap(), Value::Number(1.0));
+        let mut cell = gridcraft_model::Cell::formula(gridcraft_model::Formula::new("=A1*2"));
+        cell.value = Value::Number(5.0);
+        sh.set_cell(CellRef::parse("B1").unwrap(), cell);
+    }
+    wb.calc.mode = gridcraft_model::CalcMode::Manual;
+    let mut bytes = gridcraft_xlsx::write_xlsx(&wb).unwrap();
+    bytes = rewrite_part(&bytes, "xl/workbook.xml", |x| x.replace("calcMode=\"manual\"", "calcMode=\"manual\" fullCalcOnLoad=\"1\""));
+    let mut s = Session::new();
+    s.execute("file.open", json!({"base64": crate::io::base64_encode(&bytes), "name": "full.xlsx"})).unwrap();
+    assert_eq!(v(&s, "B1"), Value::Number(2.0));
+}
+
+#[test]
 fn merging_over_a_spill_blocks_it_and_unmerging_unblocks_it() {
     // Found by the command-sequence fuzzer: merges changed no cell the spill depended on, so the
     // spill went on as if the merged cells were free (a full recalc gave #SPILL!).

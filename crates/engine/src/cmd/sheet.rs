@@ -175,6 +175,11 @@ fn shift_sheet_features(sh: &mut Sheet, axis: Axis, at: u32, count: u32, insert:
         er.ranges = er.ranges.iter().filter_map(|r| map_range(*r)).collect();
     }
     sh.edit_ranges.retain(|er| !er.ranges.is_empty());
+    for ie in sh.ignored_errors.iter_mut() {
+        ie.ranges = ie.ranges.iter().filter_map(|r| map_range(*r)).collect();
+    }
+    sh.ignored_errors.retain(|ie| !ie.ranges.is_empty());
+    sh.cell_watches = sh.cell_watches.iter().filter_map(|c| map_cell(*c)).collect();
     sh.cond_formats.retain(|cf| !cf.ranges.is_empty());
     for dv in sh.validations.iter_mut() {
         dv.ranges = dv.ranges.iter().filter_map(|r| map_range(*r)).collect();
@@ -752,6 +757,11 @@ pub(super) fn shift_cell_features(sh: &mut Sheet, e: &Edit) {
         er.ranges = er.ranges.iter().filter_map(|r| map_range(*r, e)).collect();
     }
     sh.edit_ranges.retain(|er| !er.ranges.is_empty());
+    for ie in sh.ignored_errors.iter_mut() {
+        ie.ranges = ie.ranges.iter().filter_map(|r| map_range(*r, e)).collect();
+    }
+    sh.ignored_errors.retain(|ie| !ie.ranges.is_empty());
+    sh.cell_watches = sh.cell_watches.iter().filter_map(|c| map_cell(*c)).collect();
     sh.cond_formats.retain(|cf| !cf.ranges.is_empty());
     for dv in sh.validations.iter_mut() {
         dv.ranges = dv.ranges.iter().filter_map(|r| map_range(*r, e)).collect();

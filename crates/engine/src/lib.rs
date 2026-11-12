@@ -12,6 +12,7 @@ mod chart_svg;
 mod clip_html;
 pub mod cmd;
 pub mod display;
+pub mod error_check;
 pub mod fill;
 pub mod io;
 pub mod links;
@@ -326,6 +327,8 @@ impl DocState {
     fn with_calc(mut wb: Workbook, calc: Calc, path: Option<String>, title: String, trust: Trust) -> DocState {
         // Equations arrive without a layout (files never store one); painting reads only the cache.
         wb.refresh_equations();
+        // A Watch Window list saved by an older GridCraft in a hidden name moves to `<cellWatches>`.
+        cmd::extra::migrate_watch_name(&mut wb);
         let scripts_trusted = !cmd::extra::has_scripts(&wb);
         let wb = Arc::new(wb);
         let sel = Selection::at(wb.active().map(|s| s.view_active).unwrap_or_default());
@@ -460,6 +463,10 @@ pub struct Prefs {
     /// command writes into the workbook in Excel's own words (a new chart's "Chart Title", ja
     /// 「グラフ タイトル」) follows it. `GRIDCRAFT_LANGUAGE` sets it where there is no interface.
     pub language: String,
+    /// File › Options › Formulas › Enable background error checking (the green corners).
+    pub background_error_checking: bool,
+    /// File › Options › Formulas › Error checking rules turned on.
+    pub error_rules: gridcraft_model::ErrorRules,
 }
 
 impl Prefs {
@@ -511,6 +518,8 @@ impl Default for Prefs {
             recent_functions: recent::defaults(),
             region: gridcraft_core::region::default_region().tag.into(),
             language: std::env::var("GRIDCRAFT_LANGUAGE").ok().filter(|l| !l.trim().is_empty()).unwrap_or_else(|| "en".into()),
+            background_error_checking: true,
+            error_rules: gridcraft_model::ErrorRules::excel_default(),
         }
     }
 }

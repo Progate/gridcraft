@@ -44,8 +44,6 @@ const SAMPLES: [&str; 3] = ["sales", "budget", "grades"];
 const EPISODE_UNDO_DEPTH: usize = 90;
 /// Save and reload every this many steps (and at the end of every episode).
 const ROUNDTRIP_EVERY: usize = 10;
-/// The hidden defined name `formulas.watchWindow` keeps its list in.
-const WATCH_NAME: &str = "_sc_watch";
 
 /// Commands the fuzzer never runs, and why.
 const EXCLUDED: &[(&str, &str)] = &[
@@ -489,8 +487,8 @@ fn roundtrip_diff(wb: &Workbook) -> Result<(), String> {
 }
 
 /// The Watch Window list, which is workbook state but not an edit (undo keeps it).
-fn watch_list(wb: &Workbook) -> Option<&str> {
-    wb.names.iter().find(|n| n.name == WATCH_NAME).map(|n| n.formula.as_str())
+fn watch_list(wb: &Workbook) -> Vec<(u64, Vec<CellRef>)> {
+    wb.sheets.iter().filter(|s| !s.cell_watches.is_empty()).map(|s| (s.uid.get(), s.cell_watches.clone())).collect()
 }
 
 /// The workbook with view state (active sheet, scroll, active cell, Normal / Page Layout / Page
@@ -499,9 +497,9 @@ fn watch_list(wb: &Workbook) -> Option<&str> {
 fn canonical(wb: &Workbook) -> Workbook {
     let mut wb = wb.clone();
     wb.set_active_sheet(0);
-    wb.names.retain(|n| n.name != WATCH_NAME);
     for sh in wb.sheets.iter_mut() {
         let sh = Arc::make_mut(sh);
+        sh.cell_watches.clear();
         sh.view_active = CellRef::default();
         sh.view_top_left = CellRef::default();
         sh.view = SheetViewMode::Normal;

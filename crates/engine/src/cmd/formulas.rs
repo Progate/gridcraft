@@ -1,7 +1,7 @@
 //! Formulas tab: AutoSum, Insert Function, names, auditing, calculation.
 
 use gridcraft_core::{CellError, CellRef, RangeRef, Value};
-use gridcraft_model::{CalcMode, Cell, DefinedName, Formula, Workbook};
+use gridcraft_model::{CalcMode, Cell, DefinedName, ErrorRule, Formula, Workbook};
 use serde_json::{Value as Json, json};
 
 use super::{
@@ -91,7 +91,51 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             convert_to_number
         ),
-        cmd!(query "formulas.errorChecking", "Error Checking", ["Formulas", "Formula Auditing"], None, "{} → cells with errors", has_doc, error_checking),
+        cmd!(
+            query "formulas.errorChecking",
+            "Error Checking",
+            ["Formulas", "Formula Auditing"],
+            None,
+            "{rules?: [evalError|calculatedColumn|twoDigitTextYear|numberStoredAsText|formula|formulaRange|unlockedFormula|emptyCellReference|listDataValidation] (default: the rules turned on in Options), sheet?: name or index (default: every sheet)} → {errors: [{sheet, cell, rule, title, description, error?, formula?, fixes: [{id, label}]}], circular}: the cells that break an error checking rule (Ignore Error aside), sheet by sheet, row by row, as Formulas › Error Checking walks them",
+            has_doc,
+            error_checking
+        ),
+        cmd!(
+            "formulas.ignoreError",
+            "Ignore Error",
+            [],
+            None,
+            "{range?, rule?: evalError|… (default: the rule the active cell breaks)} → {rule}: stops reporting the rule for the cells (saved as Excel's <ignoredErrors>)",
+            has_doc,
+            ignore_error
+        ),
+        cmd!(
+            "formulas.errorFix",
+            "Fix Error",
+            [],
+            None,
+            "{cell?, fix: copyFromSource|includeCells|restoreColumnFormula|convertToNumber|lockCell|convert19|convert20} → applies the fix the error checking menu offers for the cell",
+            has_doc,
+            error_fix
+        ),
+        cmd!(
+            "formulas.resetIgnoredErrors",
+            "Reset Ignored Errors",
+            [],
+            None,
+            "{} → {cleared}: every error Ignore Error hid in the workbook is reported again (File › Options › Formulas)",
+            has_doc,
+            reset_ignored_errors
+        ),
+        cmd!(
+            noundo "options.errorChecking",
+            "Error Checking Options",
+            [],
+            None,
+            "{background?: bool (Enable background error checking), rules?: {evalError?: bool, …}} → {background, rules: {…}}: File › Options › Formulas › Error checking rules (application settings, not saved in the workbook)",
+            always,
+            error_checking_options
+        ),
         cmd!(query "formulas.evaluateFormula", "Evaluate Formula", ["Formulas", "Formula Auditing"], None, "{cell?, formula?} → steps", has_doc, evaluate_formula),
         cmd!(query "formulas.evaluate", "Evaluate", [], None, "{formula: \"=SUM(A1:A3)\", cell?} → value without changing the sheet; a formula that couldn't be entered in a cell is an error", has_doc, evaluate),
         cmd!(noundo "formulas.calculateNow", "Calculate Now", ["Formulas", "Calculation"], Some("F9"), "{}", has_doc, calc_now),
@@ -852,19 +896,54 @@ fn convert_to_number(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
-fn error_checking(s: &mut Session, _: &Json) -> Result<Json> {
+/// The rules a command names in `rules`, or the ones turned on in Options.
+fn rules_param(s: &Session, p: &Json) -> Result<gridcraft_model::ErrorRules> {
+    let Some(list) = p.get("rules").and_then(Json::as_array) else { return Ok(s.prefs.error_rules) };
+    let mut rules = gridcraft_model::ErrorRules::NONE;
+    for v in list {
+        let id = v.as_str().unwrap_or_default();
+        rules.insert(ErrorRule::from_attr(id).ok_or_else(|| bad("formulas.errorChecking", format!("unknown rule `{id}`")))?);
+    }
+    Ok(rules)
+}
+
+/// Most cells one Error Checking run lists.
+const MAX_ERROR_CELLS: usize = 10_000;
+
+fn error_checking(s: &mut Session, p: &Json) -> Result<Json> {
+    let rules = rules_param(s, p)?;
     let d = s.doc()?;
+    let only = match p.get("sheet") {
+        Some(Json::Null) | None => None,
+        Some(_) => Some(target_sheet(s, p)?),
+    };
     let mut out = Vec::new();
-    for sh in &d.wb.sheets {
-        for (c, cell) in sh.cells.iter() {
-            if let Some(e) = cell.value.as_error() {
-                out.push(
-                    json!({"sheet": sh.name, "cell": c.a1(), "error": e.as_str(), "formula": cell.formula.as_ref().map(|f| format!("={}", f.text))}),
-                );
-            }
-            if out.len() >= 10_000 {
+    for (si, sh) in d.wb.sheets.iter().enumerate() {
+        if only.is_some_and(|o| o != si) {
+            continue;
+        }
+        // Row by row, as Error Checking walks a sheet (the store iterates column-major).
+        let mut cells: Vec<CellRef> = sh.cells.iter().filter(|(_, c)| c.has_content()).map(|(c, _)| c).collect();
+        cells.sort_by_key(|c| (c.row, c.col));
+        for c in cells {
+            if out.len() >= MAX_ERROR_CELLS {
                 break;
             }
+            let Some(rule) = crate::error_check::check_cell(&d.wb, si, c, rules) else { continue };
+            let cell = sh.cell(c);
+            let value = sh.value(c);
+            let (title, description) = crate::error_check::describe(rule, &value);
+            let fixes: Vec<Json> = crate::error_check::fixes(sh, c, rule).into_iter().map(|(id, label)| json!({"id": id, "label": label})).collect();
+            out.push(json!({
+                "sheet": sh.name,
+                "cell": c.a1(),
+                "rule": rule.attr(),
+                "title": title,
+                "description": description,
+                "error": value.as_error().filter(|_| rule == ErrorRule::EvalError).map(|e| e.as_str()),
+                "formula": cell.and_then(|x| x.formula.as_ref()).map(|f| format!("={}", f.text)),
+                "fixes": fixes,
+            }));
         }
     }
     let circ: Vec<String> = d
@@ -874,6 +953,122 @@ fn error_checking(s: &mut Session, _: &Json) -> Result<Json> {
         .map(|(si, c)| format!("{}!{}", d.wb.sheet(*si).map(|s| gridcraft_formula::quote_sheet(&s.name)).unwrap_or_default(), c.a1()))
         .collect();
     Ok(json!({"errors": out, "circular": circ}))
+}
+
+/// Ignore Error: the rule stops being reported for the cells, saved in the sheet's
+/// `<ignoredErrors>` as Excel saves it.
+fn ignore_error(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "formulas.ignoreError";
+    let sheet = target_sheet(s, p)?;
+    let ranges = target_ranges(s, p)?;
+    let d = s.doc()?;
+    let rule = match str_param(p, "rule") {
+        Some(id) => ErrorRule::from_attr(id).ok_or_else(|| bad(CMD, format!("unknown rule `{id}`")))?,
+        None => {
+            let at = ranges.first().map(|r| r.start).unwrap_or(d.selection.active);
+            crate::error_check::check_cell(&d.wb, sheet, at, gridcraft_model::ErrorRules(u16::MAX))
+                .ok_or_else(|| EngineError::Other("The cell has no error to ignore.".into()))?
+        }
+    };
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        // Cells ignoring the same set of rules share one entry, as Excel writes them.
+        let mut rules = gridcraft_model::ErrorRules::NONE;
+        rules.insert(rule);
+        match sh.ignored_errors.iter_mut().find(|ie| ie.rules == rules) {
+            Some(ie) => {
+                for r in &ranges {
+                    if !ie.ranges.iter().any(|x| x.contains_range(r)) {
+                        ie.ranges.push(*r);
+                    }
+                }
+            }
+            None => sh.ignored_errors.push(gridcraft_model::IgnoredError { ranges: ranges.clone(), rules }),
+        }
+        Ok(json!({"rule": rule.attr()}))
+    })
+}
+
+fn reset_ignored_errors(s: &mut Session, _: &Json) -> Result<Json> {
+    edit(s, |cx| {
+        let mut cleared = 0;
+        for sh in cx.wb.sheets.iter_mut() {
+            if !sh.ignored_errors.is_empty() {
+                cleared += sh.ignored_errors.len();
+                std::sync::Arc::make_mut(sh).ignored_errors.clear();
+            }
+        }
+        Ok(json!({"cleared": cleared}))
+    })
+}
+
+/// The fixes of the error checking menu that change the cell.
+fn error_fix(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "formulas.errorFix";
+    let d = s.doc()?;
+    let at = cell_param(s, p, "cell")?.unwrap_or(d.selection.active);
+    let si = d.wb.active_sheet();
+    let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
+    let fix = str_param(p, "fix").ok_or_else(|| bad(CMD, "missing `fix`"))?;
+    let set = |s: &mut Session, input: String| s.execute("cell.set", json!({"cell": at.a1(), "input": input}));
+    match fix {
+        "copyFromSource" => {
+            let (from, _) = crate::error_check::inconsistent_source(sh, at).ok_or_else(|| EngineError::Other("The formula is consistent.".into()))?;
+            let f = sh.cell(from).and_then(|c| c.formula.as_ref()).and_then(|f| f.expr()).ok_or_else(|| bad(CMD, "no formula to copy"))?;
+            let moved =
+                gridcraft_formula::adjust::shift_relative(f, i64::from(at.row) - i64::from(from.row), i64::from(at.col) - i64::from(from.col));
+            set(s, format!("={}", gridcraft_formula::print(&moved)))
+        }
+        "includeCells" => {
+            let f = sh.cell(at).and_then(|c| c.formula.clone()).ok_or_else(|| bad(CMD, "the cell has no formula"))?;
+            let text = crate::error_check::omitted_cells(&d.wb, si, sh, at, &f)
+                .ok_or_else(|| EngineError::Other("The formula omits no adjacent cells.".into()))?;
+            set(s, text)
+        }
+        "restoreColumnFormula" => {
+            let (formula, first) = sh
+                .tables
+                .iter()
+                .find_map(|t| {
+                    let dr = t.data_range().filter(|dr| dr.contains(at))?;
+                    let col = t.columns.get(usize::try_from(at.col - dr.start.col).ok()?)?;
+                    Some((col.formula.clone()?, dr.start.row))
+                })
+                .ok_or_else(|| EngineError::Other("The cell is not in a calculated column.".into()))?;
+            let e = gridcraft_formula::parse(&formula).map_err(|e| EngineError::Other(e.to_string()))?;
+            let moved = gridcraft_formula::adjust::shift_relative(e, i64::from(at.row) - i64::from(first), 0);
+            set(s, format!("={}", gridcraft_formula::print(&moved)))
+        }
+        "convertToNumber" => s.execute("formulas.convertToNumber", json!({"range": at.a1()})),
+        "lockCell" => s.execute("home.lockCell", json!({"range": at.a1(), "on": true})),
+        "convert19" | "convert20" => {
+            let text = sh.value(at).display();
+            let (y, m, day) = crate::error_check::two_digit_year(&text).ok_or_else(|| EngineError::Other("The cell has no 2-digit year.".into()))?;
+            let year = if fix == "convert19" { 1900 + y } else { 2000 + y };
+            // Typed as a four-digit-year date, which the entry parser reads as a date serial.
+            set(s, format!("{year}/{m}/{day}"))
+        }
+        other => Err(bad(CMD, format!("unknown fix `{other}`"))),
+    }
+}
+
+/// File › Options › Formulas › Error checking: background checking and the rules, kept with the
+/// application's preferences.
+fn error_checking_options(s: &mut Session, p: &Json) -> Result<Json> {
+    if let Some(v) = bool_param(p, "background") {
+        s.prefs.background_error_checking = v;
+    }
+    if let Some(map) = p.get("rules").and_then(Json::as_object) {
+        for (k, v) in map {
+            let rule = ErrorRule::from_attr(k).ok_or_else(|| bad("options.errorChecking", format!("unknown rule `{k}`")))?;
+            if let Some(on) = v.as_bool() {
+                s.prefs.error_rules.set(rule, on);
+            }
+        }
+    }
+    let rules: serde_json::Map<String, Json> =
+        ErrorRule::ALL.iter().map(|r| (r.attr().to_string(), json!(s.prefs.error_rules.contains(*r)))).collect();
+    Ok(json!({"background": s.prefs.background_error_checking, "rules": rules}))
 }
 
 fn evaluate_formula(s: &mut Session, p: &Json) -> Result<Json> {

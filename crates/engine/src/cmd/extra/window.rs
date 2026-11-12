@@ -26,16 +26,41 @@ pub(super) fn ruler(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 /// The Watch Window list isn't an edit (Excel doesn't undo it): undo and redo keep the current
-/// list when they swap in another snapshot of the workbook.
+/// list when they swap in another snapshot of the workbook. Sheets are matched by their session
+/// id, so a rename being undone keeps the list too.
 pub(crate) fn keep_watch_list(from: &Workbook, to: &mut std::sync::Arc<Workbook>) {
-    let find = |wb: &Workbook| wb.names.iter().find(|n| n.name == WATCH_NAME).cloned();
-    let keep = find(from);
-    if keep == find(to) {
+    let kept = |uid: u64| from.sheets.iter().find(|f| f.uid.get() == uid).map(|f| f.cell_watches.as_slice()).unwrap_or_default();
+    if to.sheets.iter().all(|sh| sh.cell_watches == kept(sh.uid.get())) {
         return;
     }
     let wb = std::sync::Arc::make_mut(to);
+    for sh in wb.sheets.iter_mut() {
+        let keep = kept(sh.uid.get());
+        if sh.cell_watches != keep {
+            std::sync::Arc::make_mut(sh).cell_watches = keep.to_vec();
+        }
+    }
+}
+
+/// Moves a Watch Window list kept in the hidden name `_sc_watch` (how GridCraft saved it before
+/// it wrote Excel's `<cellWatches>`) into the sheets, and drops the name.
+pub(crate) fn migrate_watch_name(wb: &mut Workbook) {
+    if !wb.names.iter().any(|n| n.name == WATCH_NAME) {
+        return;
+    }
+    let old: Vec<String> =
+        stash_get(wb, WATCH_NAME).as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
     wb.names.retain(|n| n.name != WATCH_NAME);
-    wb.names.extend(keep);
+    for w in old.iter().take(10_000) {
+        let (sheet, body) = split_sheet(w);
+        let si = sheet.and_then(|n| wb.sheet_index(&n)).unwrap_or(wb.active_sheet());
+        let Some(c) = CellRef::parse(body) else { continue };
+        if let Some(sh) = wb.sheet_mut(si)
+            && !sh.cell_watches.contains(&c)
+        {
+            sh.cell_watches.push(c);
+        }
+    }
 }
 
 /// Normal, Page Layout and Page Break Preview belong to the window, not to the edits: Excel doesn't
@@ -185,37 +210,52 @@ pub(super) fn switch_windows(s: &mut Session, p: &Json) -> Result<Json> {
     Ok(s.window_list())
 }
 
+/// Formulas › Watch Window. Each sheet keeps its watched cells (`<cellWatches>`); the list is
+/// every sheet's, in sheet order.
 pub(super) fn watch_window(s: &mut Session, p: &Json) -> Result<Json> {
-    let mut list: Vec<String> =
-        stash_get(&s.doc()?.wb, WATCH_NAME).as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
-    let mut changed = false;
-    if let Some(a) = str_param(p, "add") {
-        if !list.iter().any(|x| x == a) {
-            list.push(a.to_string());
-        }
-        changed = true;
-    }
-    if let Some(r) = str_param(p, "remove") {
-        list.retain(|x| x != r);
-        changed = true;
-    }
-    if changed {
-        let v = json!(list.clone());
-        let d = s.doc_mut()?;
+    let parse = |wb: &Workbook, w: &str| -> Result<(usize, CellRef)> {
+        let (sheet, body) = split_sheet(w.trim());
+        let si = match sheet {
+            Some(n) => wb.sheet_index(&n).ok_or_else(|| bad("formulas.watchWindow", format!("no sheet named {n}")))?,
+            None => wb.active_sheet(),
+        };
+        let c = CellRef::parse(body.trim().trim_start_matches('$').replace('$', "").as_str())
+            .ok_or_else(|| bad("formulas.watchWindow", format!("not a cell: {w}")))?;
+        Ok((si, c))
+    };
+    let add = str_param(p, "add").map(|a| parse(&s.doc()?.wb, a)).transpose()?;
+    let remove = str_param(p, "remove").map(|r| parse(&s.doc()?.wb, r)).transpose()?;
+    let d = s.doc_mut()?;
+    let legacy = d.wb.names.iter().any(|n| n.name == WATCH_NAME);
+    if add.is_some() || remove.is_some() || legacy {
         // The watch list is view state: don't add an undo step.
         let wb = std::sync::Arc::make_mut(&mut d.wb);
-        stash_set(wb, WATCH_NAME, &v);
+        migrate_watch_name(wb);
+        if let Some((si, c)) = add
+            && let Some(sh) = wb.sheet_mut(si)
+            && !sh.cell_watches.contains(&c)
+        {
+            sh.cell_watches.push(c);
+        }
+        if let Some((si, c)) = remove
+            && let Some(sh) = wb.sheet_mut(si)
+        {
+            sh.cell_watches.retain(|x| *x != c);
+        }
     }
     let d = s.doc()?;
-    let rows: Vec<Json> = list
-        .iter()
-        .map(|w| {
-            let (sheet, body) = split_sheet(w);
-            let si = sheet.and_then(|n| d.wb.sheet_index(&n)).unwrap_or(d.wb.active_sheet());
-            let c = CellRef::parse(body).unwrap_or_default();
-            let sh = d.wb.sheet(si);
-            json!({"cell": w, "value": sh.map(|s| s.value(c).display()), "formula": sh.and_then(|s| s.cell(c)).and_then(|x| x.formula.as_ref()).map(|f| format!("={}", f.text))})
-        })
-        .collect();
+    let rows: Vec<Json> =
+        d.wb.sheets
+            .iter()
+            .flat_map(|sh| sh.cell_watches.iter().map(move |c| (sh, *c)))
+            .map(|(sh, c)| {
+                json!({
+                    "cell": format!("{}!{}", gridcraft_formula::quote_sheet(&sh.name), c.a1()),
+                    "sheet": sh.name,
+                    "value": sh.value(c).display(),
+                    "formula": sh.cell(c).and_then(|x| x.formula.as_ref()).map(|f| format!("={}", f.text)),
+                })
+            })
+            .collect();
     Ok(Json::Array(rows))
 }
