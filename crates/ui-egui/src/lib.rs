@@ -310,6 +310,9 @@ pub struct SheetApp {
     /// A quit question is waiting in the active window: [`doc_windows`] brings its native window
     /// to the front, also when the app is hidden or the window minimized (a Dock quit).
     pub bring_forward: bool,
+    /// The interface language the session's regional format was last set from
+    /// ([`SheetApp::follow_language_region`]).
+    region_language: Option<i18n::Language>,
     /// View › Switch Windows opens its list on the next frame the View tab draws (asked for by a
     /// key tip, the command search or a menu, possibly while another tab was showing).
     pub(crate) open_switch_windows: bool,

@@ -242,6 +242,7 @@ impl SheetApp {
                 match i18n::Language::parse(code) {
                     Some(l) => {
                         self.ui.language = l;
+                        self.follow_language_region();
                         Ok(json!({"language": l}))
                     }
                     None => Err(format!("unknown language {code:?} (use one of {})", i18n::Language::code_list(", "))),
@@ -249,10 +250,12 @@ impl SheetApp {
             }
             "app.language.english" => {
                 self.ui.language = i18n::Language::En;
+                self.follow_language_region();
                 Ok(json!({"language": i18n::Language::En}))
             }
             "app.language.japanese" => {
                 self.ui.language = i18n::Language::Ja;
+                self.follow_language_region();
                 Ok(json!({"language": i18n::Language::Ja}))
             }
             "ui.backstage" => {

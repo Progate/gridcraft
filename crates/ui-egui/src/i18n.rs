@@ -656,6 +656,29 @@ mod tests {
     }
 
     #[test]
+    fn the_japanese_interface_reads_entries_in_the_japanese_region() {
+        let mut app = crate::SheetApp::new(gridcraft_engine::Session::default(), Default::default());
+        app.session.new_workbook();
+        app.run("app.language.set", serde_json::json!({"language": "ja"})).unwrap();
+        assert_eq!(app.session.prefs.region, "ja-JP");
+        assert!(app.session.active().is_some_and(|d| d.wb.region.is_japanese()));
+        app.run("cell.set", serde_json::json!({"cell": "A1", "input": "11/10"})).unwrap();
+        let d = app.session.active().unwrap();
+        let sh = d.wb.active().unwrap();
+        let a1 = gridcraft_engine::core::CellRef::new(0, 0);
+        assert_eq!(gridcraft_engine::display::format(&sh.value(a1), d.wb.styles.get(sh.style_id(a1)).num_fmt.as_str(), &d.wb).text, "11月10日");
+        // An explicit region holds until the language changes again.
+        app.run("app.region.set", serde_json::json!({"region": "en-US"})).unwrap();
+        app.follow_language_region();
+        assert_eq!(app.session.prefs.region, "en-US");
+        app.run("app.language.english", serde_json::json!({})).unwrap();
+        app.run("app.language.japanese", serde_json::json!({})).unwrap();
+        assert_eq!(app.session.prefs.region, "ja-JP");
+        app.run("app.language.set", serde_json::json!({"language": "de"})).unwrap();
+        assert_eq!(app.session.prefs.region, "en-US", "only Japanese has its entry rules modelled");
+    }
+
+    #[test]
     fn language_commands_switch_and_persist() {
         let mut app = crate::SheetApp::new(gridcraft_engine::Session::default(), Default::default());
         for language in Language::ALL {

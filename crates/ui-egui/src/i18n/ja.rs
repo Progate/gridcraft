@@ -1614,6 +1614,7 @@ pub(super) const EXTRA: &[(&str, &str)] = &[
         "記録開始時に選択していたセルを基準に操作を記録し、マクロを別のデータにも使えるようにします",
     ),
     ("No functions match.", "一致する関数がありません。"),
+    ("Regional Format", "地域の書式"),
     ("Most Recently Used", "最近使用した関数"),
     ("TRUE - Approximate match", "TRUE - 近似一致"),
     ("FALSE - Exact match", "FALSE - 完全一致"),

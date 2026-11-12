@@ -26,6 +26,20 @@ mod quit;
 mod view;
 
 impl SheetApp {
+    /// Sets the session's regional format from the interface language when the language changed
+    /// since it was last set: Japanese reads entries and shows dates as Japanese Excel does
+    /// (`ja-JP`, as the browser build's `LANG=ja_JP.UTF-8` gives), every other language as
+    /// English (United States), whose conventions are the only others modelled for entry. An
+    /// `app.region.set` in between holds until the language changes again.
+    pub fn follow_language_region(&mut self) {
+        if self.region_language == Some(self.ui.language) {
+            return;
+        }
+        self.region_language = Some(self.ui.language);
+        let tag = if self.ui.language == i18n::Language::Ja { "ja-JP" } else { "en-US" };
+        self.session.set_region(gridcraft_engine::core::region::lookup(tag));
+    }
+
     /// Constructs a `SheetApp` with default UI, grid, printing, control and screenshot state and the caller's session and services.
     pub fn new(session: Session, services: Services) -> SheetApp {
         SheetApp {
@@ -79,6 +93,7 @@ impl SheetApp {
             started: now_ms(),
             allow_close: false,
             bring_forward: false,
+            region_language: None,
             open_switch_windows: false,
             ui_window: None,
             parked: HashMap::new(),
@@ -209,6 +224,7 @@ impl SheetApp {
         }
         // The language the widgets translate with this frame (see `i18n::current`).
         i18n::set_current(&ctx, self.ui.language);
+        self.follow_language_region();
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
         let t = theme::Tokens::get(&ctx);
