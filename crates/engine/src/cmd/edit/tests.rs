@@ -777,6 +777,8 @@ fn name_box_goes_to_references_and_names_and_defines_new_names() {
     let err = s.execute("edit.nameBox", json!({"text": "Rate"})).unwrap_err().to_string();
     assert!(err.contains("Reference isn't valid."), "{err}");
     assert!(s.execute("edit.nameBox", json!({"text": "Sheet9!A1"})).is_err());
+}
+
 #[test]
 fn format_painter_copies_merged_cells_and_unmerges_the_destination() {
     let mut s = Session::new();
