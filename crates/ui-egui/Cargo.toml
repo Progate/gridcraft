@@ -42,10 +42,11 @@ gridcraft-xlsx = { workspace = true, features = ["test-support"] }
 # wasm target: neither in a browser tab nor as a WASI command (BrowserOS).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 craft-update = { workspace = true }
+# The desktop's preferred language for the first-run interface language. On WASI the locale
+# variables say it (sys-locale's wasm32 path is wasm-bindgen's, which panics there).
+sys-locale = { workspace = true }
 
 [target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
-# The desktop's preferred language for the first-run interface language.
-sys-locale = { workspace = true }
 craft-window = { workspace = true }
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]

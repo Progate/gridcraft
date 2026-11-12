@@ -13,8 +13,9 @@ This branch builds GridCraft for [BrowserOS](https://github.com/Progate/packages
   through `[patch.crates-io]`). Upstream's wasm thread parker panics as soon as a lock is contended unless the
   nightly feature is on; the std of `wasm32-wasip1-threads` implements park / unpark with
   `memory.atomic.wait32` / `notify`, so `thread_parker/wasi.rs` waits on that. The rest is crates.io's 0.9.12.
-- **The interface language falls back to the locale variables** (`LC_ALL`, `LC_MESSAGES`, `LANG`) when `sys-locale`
-  has no answer, which is always the case on WASI.
+- **The interface language comes from the locale variables** (`LC_ALL`, `LC_MESSAGES`, `LANG`) when `sys-locale`
+  has no answer. On any wasm32 target `sys-locale` is not called at all: its wasm32 code is wasm-bindgen's, which panics
+  on WASI ("cannot call wasm-bindgen imported functions on non-wasm targets").
 - **Noto Sans JP (as Google Fonts ships it) is a Japanese font candidate** (`NotoSansJP-Regular.otf` in the Linux
   CJK folders), which `@progate/browser-sheet` installs under `/usr/share/fonts/opentype/noto`.
 - **No self-updater on any wasm target.** `craft-update` (ureq + rustls + ring, which needs a C compiler) is a

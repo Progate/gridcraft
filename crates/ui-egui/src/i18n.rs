@@ -179,7 +179,12 @@ impl Language {
         {
             // WASI (BrowserOS) has no locale API; the locale variables say it, as on Linux.
             let from_env = || ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()));
-            sys_locale::get_locale().or_else(from_env).and_then(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
+            // sys-locale takes its wasm-bindgen path on every wasm32 target, which panics on WASI.
+            #[cfg(not(target_arch = "wasm32"))]
+            let tag = sys_locale::get_locale().or_else(from_env);
+            #[cfg(target_arch = "wasm32")]
+            let tag = from_env();
+            tag.and_then(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
         }
         #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         {
