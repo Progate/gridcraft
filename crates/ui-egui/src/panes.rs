@@ -242,6 +242,28 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
         if ui.checkbox(&mut dl, lang.tr("Data Labels")).changed() {
             app.run_or_alert("chart.set", json!({"chart": id, "dataLabels": dl}));
         }
+        // Format Data Labels ▸ Label Contains.
+        if chart.data_labels {
+            let pie = matches!(chart.kind, gridcraft_chart::ChartKind::Pie | gridcraft_chart::ChartKind::Doughnut);
+            let parts = chart.label_parts;
+            ui.indent("gridcraft.label_contains", |ui| {
+                ui.label(lang.tr("Label Contains"));
+                let mut items = vec![
+                    ("Series Name", "seriesName", parts.series_name),
+                    ("Category Name", "categoryName", parts.category_name),
+                    ("Value", "value", parts.value),
+                ];
+                if pie {
+                    items.push(("Percentage", "percentage", parts.percentage));
+                    items.push(("Show Leader Lines", "leaderLines", parts.leader_lines));
+                }
+                for (label, key, mut on) in items {
+                    if ui.checkbox(&mut on, lang.tr(label)).changed() {
+                        app.run_or_alert("chart.formatDataLabels", json!({"chart": id, key: on}));
+                    }
+                }
+            });
+        }
         let mut gl = chart.gridlines;
         if ui.checkbox(&mut gl, lang.tr("Gridlines")).changed() {
             app.run_or_alert("chart.set", json!({"chart": id, "gridlines": gl}));

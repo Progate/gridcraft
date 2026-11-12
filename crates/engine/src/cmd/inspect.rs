@@ -40,6 +40,7 @@ fn inspect(s: &mut Session, _: &Json) -> Result<Json> {
         .map(|sh| {
             json!({
                 "name": sh.name,
+                "chartSheet": sh.chart_sheet,
                 "visibility": format!("{:?}", sh.visibility),
                 "usedRange": sh.used_range().map(|r| r.a1()),
                 "cells": sh.cells.len(),
@@ -49,6 +50,7 @@ fn inspect(s: &mut Session, _: &Json) -> Result<Json> {
                 "charts": sh.charts.iter().map(|c| json!({"id": c.id, "kind": format!("{:?}", c.kind), "title": c.title, "at": c.anchor.cell.a1(), "series": c.series.len(), "dataTable": c.data_table.as_ref().map(|t| json!({"showKeys": t.show_keys, "horizontalBorder": t.horizontal_border, "verticalBorder": t.vertical_border, "outline": t.outline})), "trendlines": c.series.iter().flat_map(|s| s.trendlines.iter().map(|t| format!("{:?}", t.kind))).collect::<Vec<_>>()})).collect::<Vec<_>>(),
                 "images": sh.images.len(),
                 "shapes": sh.shapes.len(),
+                "sparklines": sh.sparklines.len(),
                 "conditionalFormats": sh.cond_formats.len(),
                 "validations": sh.validations.len(),
                 "comments": sh.comments.len(),

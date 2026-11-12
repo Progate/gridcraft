@@ -42,6 +42,7 @@ fn chart(id: u32, kind: ChartKind, series: Vec<Series>) -> Chart {
         by_rows: false,
         pivot: None,
         alt_text: AltText::default(),
+        label_parts: Default::default(),
     }
 }
 

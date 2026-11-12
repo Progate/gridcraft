@@ -225,6 +225,10 @@ impl SheetApp {
         // The language the widgets translate with this frame (see `i18n::current`).
         i18n::set_current(&ctx, self.ui.language);
         self.follow_language_region();
+        // Commands write some text in the interface language (a new chart's title).
+        if self.session.prefs.language != self.ui.language.code() {
+            self.session.prefs.language = self.ui.language.code().to_string();
+        }
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
         let t = theme::Tokens::get(&ctx);

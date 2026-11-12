@@ -857,9 +857,18 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         if series.len() == 1 {
             series[0].name.as_ref().map(|n| gridcraft_calc::evaluate(&d.wb, sheet, at, n).display())
         } else {
-            Some("Chart Title".into())
+            Some(s.prefs.chart_title().into())
         }
     });
+    // As in Excel, a chart of one series has no legend (its title names the series); a pie still
+    // names its slices, and a waterfall its increases, decreases and totals.
+    let legend = if matches!(kind, ChartKind::Pie | ChartKind::Doughnut) {
+        LegendPos::Right
+    } else if series.len() == 1 && !matches!(kind, ChartKind::Waterfall | ChartKind::Treemap | ChartKind::Sunburst | ChartKind::Funnel) {
+        LegendPos::None
+    } else {
+        LegendPos::Bottom
+    };
     let mut chart = Chart {
         id,
         kind,
@@ -873,7 +882,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         },
         title,
         series,
-        legend: if matches!(kind, ChartKind::Pie | ChartKind::Doughnut) { LegendPos::Right } else { LegendPos::Bottom },
+        legend,
         data_labels: false,
         data_table: None,
         gridlines: !matches!(kind, ChartKind::Pie | ChartKind::Doughnut | ChartKind::Treemap | ChartKind::Sunburst | ChartKind::Funnel),
@@ -886,6 +895,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         by_rows,
         pivot: None,
         alt_text: Default::default(),
+        label_parts: Default::default(),
     };
     if let Some(rows) = p.get("combo") {
         apply_combo(&mut chart, rows)?;

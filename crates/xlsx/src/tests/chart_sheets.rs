@@ -43,6 +43,7 @@ fn chart(kind: ChartKind) -> Chart {
         by_rows: false,
         pivot: None,
         alt_text: Default::default(),
+        label_parts: Default::default(),
     }
 }
 
@@ -151,4 +152,24 @@ fn sparklines_of_one_group_are_saved_in_one_sparkline_group() {
     // Saved again, still two groups.
     let again = write_xlsx(&back).unwrap();
     assert_eq!(part(&again, "xl/worksheets/sheet1.xml").matches("<x14:sparklineGroup ").count(), 2);
+}
+
+#[test]
+fn pie_data_label_parts_are_written_and_read_back() {
+    let mut ch = chart(ChartKind::Pie);
+    ch.anchor = Anchor { cell: CellRef::new(0, 3), width: 480.0, height: 288.0, ..Anchor::default() };
+    ch.data_labels = true;
+    ch.label_parts = gridcraft_model::LabelParts { value: false, category_name: true, percentage: true, ..Default::default() };
+    let mut data = data_sheet();
+    data.charts.push(ch);
+    let bytes = write_xlsx(&Workbook { sheets: vec![Arc::new(data)], ..Default::default() }).unwrap();
+    let x = part(&bytes, "xl/charts/chart1.xml");
+    assert!(
+        x.contains(r#"<c:dLbls><c:showLegendKey val="0"/><c:showVal val="0"/><c:showCatName val="1"/><c:showSerName val="0"/><c:showPercent val="1"/><c:showBubbleSize val="0"/><c:showLeaderLines val="1"/></c:dLbls>"#),
+        "{x}"
+    );
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let ch = &back.sheet(0).unwrap().charts[0];
+    assert!(ch.data_labels);
+    assert_eq!(ch.label_parts, gridcraft_model::LabelParts { value: false, category_name: true, percentage: true, ..Default::default() });
 }

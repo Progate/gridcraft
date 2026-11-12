@@ -45,6 +45,42 @@ pub const LINUX_CJK_DIRS: [&str; 22] = [
     "/usr/share/fonts/chromeos/notocjk",
 ];
 
+/// Font folders named by `GRIDCRAFT_FONT_DIRS` (a path list, `:`-separated, `;` on Windows),
+/// then the per-user font folders (`$XDG_DATA_HOME/fonts`, `~/.local/share/fonts`, `~/.fonts`).
+/// A tool without a font catalog (the command line) finds a font installed for one user only
+/// here, so its PDFs embed the font the browser build embeds.
+fn user_font_dirs() -> Vec<String> {
+    user_font_dirs_from(std::env::var_os("GRIDCRAFT_FONT_DIRS"), std::env::var_os("XDG_DATA_HOME"), std::env::var_os("HOME"))
+}
+
+fn user_font_dirs_from(dirs: Option<std::ffi::OsString>, data_home: Option<std::ffi::OsString>, home: Option<std::ffi::OsString>) -> Vec<String> {
+    let mut v: Vec<String> = dirs.map(|d| std::env::split_paths(&d).filter_map(|p| p.to_str().map(str::to_string)).collect()).unwrap_or_default();
+    v.retain(|d| !d.is_empty());
+    v.extend(data_home.and_then(|d| d.into_string().ok()).filter(|d| !d.is_empty()).map(|d| format!("{d}/fonts")));
+    if let Some(h) = home.and_then(|h| h.into_string().ok()).filter(|h| !h.is_empty()) {
+        v.push(format!("{h}/.local/share/fonts"));
+        v.push(format!("{h}/.fonts"));
+    }
+    // Fonts unpacked from a Noto download sit one folder down.
+    let nested: Vec<String> = v.iter().flat_map(|d| [format!("{d}/noto"), format!("{d}/noto-cjk")]).collect();
+    v.extend(nested);
+    v.dedup();
+    v
+}
+
+/// The folders probed for CJK fonts: the user's (see [`user_font_dirs`]), then the system's.
+fn cjk_dirs() -> Vec<String> {
+    let mut v = user_font_dirs();
+    v.extend(LINUX_CJK_DIRS.iter().map(|d| d.to_string()));
+    v
+}
+
+/// The font file `GRIDCRAFT_CJK_FONT` names (a `.otf`, `.ttf` or `.ttc`, face 0), tried before
+/// any other for every CJK script.
+fn chosen_cjk_font() -> Option<(String, u32)> {
+    std::env::var("GRIDCRAFT_CJK_FONT").ok().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).map(|p| (p, 0))
+}
+
 /// The Windows fonts folder (`%WINDIR%\Fonts`, or the default install location).
 pub fn windows_fonts() -> String {
     std::env::var("WINDIR").map(|w| format!("{w}\\Fonts")).unwrap_or_else(|_| "C:\\Windows\\Fonts".into())
@@ -54,7 +90,7 @@ pub fn windows_fonts() -> String {
 /// region-merged TTC at `face`, in every Linux font directory.
 fn noto_cjk(locale: &str, face: u32) -> Vec<(String, u32)> {
     let mut v = Vec::new();
-    for d in LINUX_CJK_DIRS {
+    for d in cjk_dirs() {
         v.push((format!("{d}/NotoSansCJK{locale}-Regular.otf"), 0));
         v.push((format!("{d}/NotoSansCJK-Regular.ttc"), face));
     }
@@ -74,7 +110,7 @@ pub fn cjk_han_japanese() -> Vec<(String, u32)> {
     v.push((format!("{mac}/ヒラギノ角ゴシック W3.ttc"), 0)); // Hiragino Sans
     v.extend(noto_cjk("jp", 0));
     // Noto Sans JP as Google Fonts ships it (the region subset), which BrowserOS installs.
-    for d in LINUX_CJK_DIRS {
+    for d in cjk_dirs() {
         v.push((format!("{d}/NotoSansJP-Regular.otf"), 0));
     }
     v
@@ -93,7 +129,7 @@ pub fn cjk_han_simplified() -> Vec<(String, u32)> {
         (format!("{mac}/PingFang.ttc"), 0),         // older macOS only; now a downloadable asset
     ];
     v.extend(noto_cjk("sc", 2));
-    for d in LINUX_CJK_DIRS {
+    for d in cjk_dirs() {
         v.push((format!("{d}/wqy/wqy-microhei.ttc"), 0));
         v.push((format!("{d}/wenquanyi/wqy-microhei.ttc"), 0));
         v.push((format!("{d}/wqy-microhei.ttc"), 0));
@@ -114,11 +150,13 @@ pub fn cjk_hangul() -> Vec<(String, u32)> {
 
 /// The candidate files for a script, in the order they are tried.
 pub fn script_candidates(script: Script) -> Vec<(String, u32)> {
-    match script {
+    let mut v: Vec<(String, u32)> = chosen_cjk_font().into_iter().collect();
+    v.extend(match script {
         Script::Japanese => cjk_han_japanese(),
         Script::Chinese => cjk_han_simplified(),
         Script::Korean => cjk_hangul(),
-    }
+    });
+    v
 }
 
 /// Reads a font file of at most [`MAX_FONT_BYTES`], even when it grows after it was found.
@@ -156,6 +194,15 @@ mod tests {
     fn browseros_japanese_font_is_a_candidate() {
         assert!(cjk_han_japanese().iter().any(|(p, i)| p == "/usr/share/fonts/opentype/noto/NotoSansJP-Regular.otf" && *i == 0));
         assert!(script_candidates(Script::Korean).iter().any(|(p, i)| p.ends_with("/NotoSansCJK-Regular.ttc") && *i == 1));
+    }
+
+    #[test]
+    fn user_and_named_font_folders_are_probed() {
+        let dirs = user_font_dirs_from(Some(std::env::join_paths(["/opt/fonts", "/srv/f"]).unwrap()), None, Some("/home/u".into()));
+        assert_eq!(&dirs[..4], ["/opt/fonts", "/srv/f", "/home/u/.local/share/fonts", "/home/u/.fonts"]);
+        assert!(dirs.contains(&"/home/u/.local/share/fonts/noto".to_string()));
+        assert!(user_font_dirs_from(None, Some("/x/data".into()), None).starts_with(&["/x/data/fonts".to_string()]));
+        assert!(user_font_dirs_from(None, None, None).is_empty());
     }
 
     #[test]

@@ -627,6 +627,29 @@ pub struct Chart {
     /// Alt Text for screen readers (the drawing's `xdr:cNvPr` `title` and `descr`).
     #[serde(default)]
     pub alt_text: AltText,
+    /// What the data labels show while `data_labels` is on (Format Data Labels ▸ Label Contains).
+    #[serde(default)]
+    pub label_parts: LabelParts,
+}
+
+/// Format Data Labels ▸ Label Options ▸ Label Contains: the parts of a data label (`c:dLbls`
+/// `showSerName`, `showCatName`, `showVal`, `showPercent`, `showLeaderLines`). The default is
+/// the value alone, with leader lines.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LabelParts {
+    pub series_name: bool,
+    pub category_name: bool,
+    pub value: bool,
+    /// Pie and doughnut charts: each point's share of the total.
+    pub percentage: bool,
+    pub leader_lines: bool,
+}
+
+impl Default for LabelParts {
+    fn default() -> Self {
+        LabelParts { series_name: false, category_name: false, value: true, percentage: false, leader_lines: true }
+    }
 }
 
 /// Alternative text of a drawing object (Excel's Alt Text pane), stored on the object's

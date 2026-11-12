@@ -174,3 +174,38 @@ fn filling_and_pasting_a_sparkline_cell_carries_its_sparkline() {
     s.execute("edit.paste", json!({"at": "D4"})).unwrap();
     assert!(got(&s).iter().any(|x| x.0 == "D4" && x.1 == "A4:C4" && x.2 == filled[0].2));
 }
+
+#[test]
+fn a_single_series_chart_has_no_legend_and_the_default_title_follows_the_language() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["月", "売上", "客数"], ["1月", 1, 2], ["2月", 3, 4]]})).unwrap();
+    s.execute("insert.chart", json!({"range": "A1:B3", "type": "column"})).unwrap();
+    let last = |s: &Session| s.doc().unwrap().wb.active().unwrap().charts.last().unwrap().clone();
+    assert_eq!(last(&s).legend, gridcraft_model::LegendPos::None);
+    assert_eq!(last(&s).title.as_deref(), Some("売上"));
+    s.execute("insert.chart", json!({"range": "A1:B3", "type": "pie"})).unwrap();
+    assert_eq!(last(&s).legend, gridcraft_model::LegendPos::Right, "a pie names its slices");
+    s.prefs.language = "ja".into();
+    s.execute("insert.chart", json!({"range": "A1:C3", "type": "column"})).unwrap();
+    assert_eq!(last(&s).legend, gridcraft_model::LegendPos::Bottom);
+    assert_eq!(last(&s).title.as_deref(), Some("グラフ タイトル"));
+    s.prefs.language = "en".into();
+    s.execute("insert.chart", json!({"range": "A1:C3", "type": "column"})).unwrap();
+    assert_eq!(last(&s).title.as_deref(), Some("Chart Title"));
+}
+
+#[test]
+fn format_data_labels_picks_what_a_label_shows() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["地域", "売上"], ["東", 30], ["西", 70]]})).unwrap();
+    let id = s.execute("insert.chart", json!({"range": "A1:B3", "type": "pie"})).unwrap()["chart"].as_u64().unwrap();
+    s.execute("chart.formatDataLabels", json!({"chart": id, "categoryName": true, "percentage": true, "value": false})).unwrap();
+    let ch = s.doc().unwrap().wb.active().unwrap().charts[0].clone();
+    assert!(ch.data_labels);
+    assert!(ch.label_parts.category_name && ch.label_parts.percentage && !ch.label_parts.value && ch.label_parts.leader_lines);
+    assert!(
+        s.execute("chart.formatDataLabels", json!({"chart": id, "categoryName": false, "percentage": false})).is_err(),
+        "a label shows something"
+    );
+    assert!(s.execute("chart.formatDataLabels", json!({"chart": id, "value": "yes"})).is_err());
+}

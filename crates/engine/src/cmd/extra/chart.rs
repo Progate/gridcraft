@@ -25,11 +25,12 @@ fn with_chart(s: &mut Session, p: &Json, f: impl FnOnce(&mut Chart) -> Result<()
 
 pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
     let el = str_param(p, "element").unwrap_or("title").to_string();
+    let default_title = s.prefs.chart_title();
     let on = bool_param(p, "on").unwrap_or(true);
     let pos = str_param(p, "position").map(str::to_string);
     with_chart(s, p, |c| {
         match el.as_str() {
-            "title" => c.title = if on { c.title.clone().filter(|t| !t.is_empty()).or(Some("Chart Title".into())) } else { Some(String::new()) },
+            "title" => c.title = if on { c.title.clone().filter(|t| !t.is_empty()).or(Some(default_title.into())) } else { Some(String::new()) },
             "legend" => {
                 c.legend = if !on {
                     LegendPos::None
@@ -420,6 +421,39 @@ pub(super) fn set_as_total(s: &mut Session, p: &Json) -> Result<Json> {
             }
             _ => {}
         }
+        Ok(())
+    })
+}
+
+/// Format Data Labels ▸ Label Contains: the parts each data label shows. At least one of series
+/// name, category name, value and percentage stays on, as in Excel.
+pub(super) fn format_data_labels(s: &mut Session, p: &Json) -> Result<Json> {
+    for k in ["seriesName", "categoryName", "value", "percentage", "leaderLines"] {
+        if p.get(k).is_some_and(|v| !v.is_boolean()) {
+            return Err(bad("chart.formatDataLabels", format!("`{k}` must be a boolean")));
+        }
+    }
+    with_chart(s, p, |c| {
+        let mut parts = c.label_parts;
+        if !c.data_labels {
+            parts = Default::default();
+        }
+        for (k, field) in [
+            ("seriesName", &mut parts.series_name),
+            ("categoryName", &mut parts.category_name),
+            ("value", &mut parts.value),
+            ("percentage", &mut parts.percentage),
+            ("leaderLines", &mut parts.leader_lines),
+        ] {
+            if let Some(on) = bool_param(p, k) {
+                *field = on;
+            }
+        }
+        if !(parts.series_name || parts.category_name || parts.value || parts.percentage) {
+            return Err(bad("chart.formatDataLabels", "a data label shows at least one of series name, category name, value or percentage"));
+        }
+        c.label_parts = parts;
+        c.data_labels = true;
         Ok(())
     })
 }

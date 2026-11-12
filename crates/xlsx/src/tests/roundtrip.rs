@@ -441,6 +441,7 @@ fn sample() -> Workbook {
         by_rows: false,
         pivot: None,
         alt_text: Default::default(),
+        label_parts: Default::default(),
     };
     for kind in [
         ChartKind::ColumnClustered,

@@ -216,6 +216,26 @@ fn wedge(ctx: &mut Ctx, ring: &Ring, a0: f32, sweep: f32, fill: Rgba) {
     }
 }
 
+/// A pie or doughnut point's data label: the parts Format Data Labels asks for (series name,
+/// category name, value, percentage), joined as Excel joins them, with a comma.
+fn pie_label(chart: &Chart, data: &ChartData, s: &SeriesData, f: &Fmt, j: usize, share: f64) -> String {
+    let p = &chart.label_parts;
+    let mut parts: Vec<String> = Vec::new();
+    if p.series_name {
+        parts.push(s.name.clone());
+    }
+    if p.category_name {
+        parts.push(cat_label(data, j));
+    }
+    if p.value {
+        parts.push(f.format(s.values.get(j).copied().flatten().unwrap_or(0.0), None));
+    }
+    if p.percentage {
+        parts.push(format!("{:.0}%", share * 100.0));
+    }
+    parts.join(", ")
+}
+
 pub(super) fn pie(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, inner: f32, names: bool) {
     let Some(s) = data.series.first() else { return };
     let vals: Vec<f64> = s.values.iter().take(MAX_CATS).map(|v| v.map(f64::abs).unwrap_or(0.0)).collect();
@@ -239,7 +259,7 @@ pub(super) fn pie(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, inne
             let fill = point_color(data, j);
             wedge(ctx, &ring, a, sweep, fill);
             if (chart.data_labels || names) && vals.len() <= MAX_LABELS {
-                let t = if names { cat_label(data, j) } else { f.format(s.values.get(j).copied().flatten().unwrap_or(0.0), None) };
+                let t = if names { cat_label(data, j) } else { pie_label(chart, data, s, &f, j, *v / total) };
                 let mid = a + sweep / 2.0;
                 let rr = if ri > 0.0 { (r + ri) / 2.0 } else { r * 0.65 };
                 let room = sweep * rr;

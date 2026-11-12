@@ -244,8 +244,20 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         }
     }
     let kind = if groups.len() > 1 { ChartKind::Combo } else { first_kind };
-    let show_val = |e: &El| e.child("dLbls").is_some_and(|d| bool_val(d, "showVal"));
-    let data_labels = groups.iter().any(|(g, _)| show_val(g) || g.kids("ser").any(show_val));
+    // Data labels are on when a group or a series shows any part; the first such tells the parts.
+    let shown = |d: &El| ["showVal", "showCatName", "showSerName", "showPercent"].iter().any(|k| bool_val(d, k));
+    let labels =
+        groups.iter().flat_map(|(g, _)| g.child("dLbls").into_iter().chain(g.kids("ser").filter_map(|s| s.child("dLbls")))).find(|d| shown(d));
+    let data_labels = labels.is_some();
+    let label_parts = labels
+        .map(|d| gridcraft_model::LabelParts {
+            series_name: bool_val(d, "showSerName"),
+            category_name: bool_val(d, "showCatName"),
+            value: bool_val(d, "showVal"),
+            percentage: bool_val(d, "showPercent"),
+            leader_lines: d.child("showLeaderLines").is_none_or(|_| bool_val(d, "showLeaderLines")),
+        })
+        .unwrap_or_default();
     let val_axes: Vec<&El> = plot.kids("valAx").collect();
     let cat_ax = plot.child("catAx").or_else(|| plot.child("dateAx"));
     let scatter = matches!(first_kind, ChartKind::Scatter | ChartKind::ScatterLines | ChartKind::Bubble);
@@ -293,6 +305,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         by_rows: false,
         pivot: root.path(&["pivotSource", "name"]).map(|n| strip_book(n.text.trim()).to_string()).filter(|n| !n.is_empty()),
         alt_text: Default::default(),
+        label_parts,
     })
 }
 
@@ -667,16 +680,24 @@ fn trendline_xml(t: &Trendline, wb: &Workbook) -> String {
     x
 }
 
-fn dlbls(show: bool) -> String {
+/// A chart group's `c:dLbls`: what its data labels show (Format Data Labels ▸ Label Contains),
+/// with leader lines on pie and doughnut charts.
+fn dlbls(ch: &Chart, pie: bool) -> String {
+    let p = &ch.label_parts;
+    let on = |b: bool| u8::from(ch.data_labels && b);
+    let leader = if pie && ch.data_labels { format!("<c:showLeaderLines val=\"{}\"/>", u8::from(p.leader_lines)) } else { String::new() };
     format!(
-        "<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"0\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
-        show as u8
+        "<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"{}\"/><c:showSerName val=\"{}\"/><c:showPercent val=\"{}\"/><c:showBubbleSize val=\"0\"/>{leader}</c:dLbls>",
+        on(p.value),
+        on(p.category_name),
+        on(p.series_name),
+        on(p.percentage && pie),
     )
 }
 
 fn group_xml(g: G, series: &[(usize, &Series)], ch: &Chart, axes: (u32, u32), wb: &Workbook, si: usize) -> String {
     let sers: String = series.iter().map(|(i, s)| series_xml(s, *i, g, wb, si)).collect();
-    let dl = dlbls(ch.data_labels);
+    let dl = dlbls(ch, matches!(g, G::Pie | G::Doughnut));
     let ax = format!("<c:axId val=\"{}\"/><c:axId val=\"{}\"/>", axes.0, axes.1);
     match g {
         G::Bar { bar, grouping } => {

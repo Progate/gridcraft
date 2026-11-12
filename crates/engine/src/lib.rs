@@ -456,6 +456,24 @@ pub struct Prefs {
     /// The regional format (a BCP 47 tag, `ja-JP`) typed entry is read in and built-in dates are
     /// shown in, like the system's regional settings Excel follows. Set with `app.region.set`.
     pub region: String,
+    /// The interface language's code ("en", "ja"…), which the interface keeps current: text a
+    /// command writes into the workbook in Excel's own words (a new chart's "Chart Title", ja
+    /// 「グラフ タイトル」) follows it. `GRIDCRAFT_LANGUAGE` sets it where there is no interface.
+    pub language: String,
+}
+
+impl Prefs {
+    /// The title Excel gives a new chart with several series, in the interface language (or the
+    /// regional format's, where there is no interface).
+    pub fn chart_title(&self) -> &'static str {
+        let ja = |tag: &str| tag.eq_ignore_ascii_case("ja") || tag.to_ascii_lowercase().starts_with("ja-") || tag.to_ascii_lowercase().starts_with("ja_");
+        // The interface language, or a Japanese regional format (`run --locale ja-JP`).
+        if ja(&self.language) || ja(&self.region) {
+            "グラフ タイトル"
+        } else {
+            "Chart Title"
+        }
+    }
 }
 
 /// The selection statistics shown on the status bar, set with `view.statusBar`. Excel turns on
@@ -492,6 +510,7 @@ impl Default for Prefs {
             status_bar: StatusBarStats::default(),
             recent_functions: recent::defaults(),
             region: gridcraft_core::region::default_region().tag.into(),
+            language: std::env::var("GRIDCRAFT_LANGUAGE").ok().filter(|l| !l.trim().is_empty()).unwrap_or_else(|| "en".into()),
         }
     }
 }

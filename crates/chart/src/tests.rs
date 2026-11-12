@@ -57,6 +57,7 @@ fn chart(kind: ChartKind) -> Chart {
         by_rows: false,
         pivot: None,
         alt_text: Default::default(),
+        label_parts: Default::default(),
     }
 }
 
@@ -1725,4 +1726,20 @@ fn waterfall_totals_stand_on_zero_and_points_can_be_picked() {
     }
     assert_eq!(point_at(&c, &d, 400.0, 300.0, &ApproxMeasure, 1.0, 1.0), None);
     assert_eq!(point_at(&chart(ChartKind::ColumnClustered), &sample(ChartKind::ColumnClustered), 400.0, 300.0, &ApproxMeasure, 200.0, 150.0), None);
+}
+
+#[test]
+fn pie_labels_show_the_parts_asked_for() {
+    let mut c = chart(ChartKind::Pie);
+    c.title = None;
+    c.legend = LegendPos::None;
+    c.label_parts = gridcraft_model::LabelParts { value: false, category_name: true, percentage: true, ..Default::default() };
+    let mut d = sample(ChartKind::Pie);
+    d.series = vec![series("S", &[25.0, 75.0], [1, 2, 3, 255], ChartKind::Pie)];
+    d.categories.truncate(2);
+    let texts: Vec<String> = render(&c, &d, 400.0, 300.0, &ApproxMeasure)
+        .into_iter()
+        .filter_map(|p| if let Prim::Text { text, .. } = p { Some(text) } else { None })
+        .collect();
+    assert!(texts.contains(&"Q1, 25%".to_string()) && texts.contains(&"Q2, 75%".to_string()), "{texts:?}");
 }

@@ -23,7 +23,7 @@ mod window;
 
 pub(crate) use cells::is_checkbox_cell;
 use cells::{background, checkbox, draw_border, new_cell_style, recently_used, theme_colors, theme_fonts, toggle_checkbox, use_in_formula};
-use chart::{add_element, change_colors, format_series, move_chart, quick_layout, select_data, set_as_total};
+use chart::{add_element, change_colors, format_data_labels, format_series, move_chart, quick_layout, select_data, set_as_total};
 use data::{from_csv, from_table_range, queries, table_resize};
 use objects::{align, arrange, rotate, selection_pane, shape_fill, shape_outline};
 pub(crate) use scripts::has_scripts;
@@ -88,6 +88,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{chart?, series?: index, color?: hex (null: Automatic), secondary?: bool (Format Data Series ▸ Plot Series On Secondary Axis; makes a column, line or area chart a combo)}",
             has_doc,
             format_series
+        ),
+        cmd!(
+            "chart.formatDataLabels",
+            "Format Data Labels",
+            ["Format", "Current Selection"],
+            None,
+            "{chart?, seriesName?, categoryName?, value?, percentage?: bool (pie and doughnut), leaderLines?: bool} — Label Options ▸ Label Contains; turns the data labels on",
+            has_doc,
+            format_data_labels
         ),
         cmd!(
             "chart.setAsTotal",

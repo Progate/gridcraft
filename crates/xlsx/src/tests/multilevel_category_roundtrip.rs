@@ -53,6 +53,7 @@ fn workbook(categories: &str, values: &str) -> Workbook {
         by_rows: false,
         pivot: None,
         alt_text: Default::default(),
+        label_parts: Default::default(),
     });
     Workbook { sheets: vec![Arc::new(s)], ..Workbook::default() }
 }
