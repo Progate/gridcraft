@@ -293,7 +293,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 }
                 "macros" => crate::macro_ui::macros_dialog(app, ui, &mut d, &mut open),
                 "recordMacro" => crate::macro_ui::record_dialog(app, ui, &mut d, &mut open),
-                "statistics" | "accessibility" | "errorChecking" | "evaluateFormula" | "comments" => {
+                "errorChecking" => super::error_checking::error_checking(app, ui, &mut d, &mut open),
+                "statistics" | "accessibility" | "evaluateFormula" | "comments" => {
                     let r = if d.name == "comments" {
                         app.session.active().and_then(|doc| doc.wb.active().map(|s| json!(s.comments.iter().map(|(c, m)| json!({"cell": c.a1(), "author": m.author, "text": m.text})).collect::<Vec<_>>())))
                     } else {

@@ -34,6 +34,7 @@ mod dialog_move;
 mod drag_cursor;
 mod equation_editor;
 mod error_checking_menu;
+mod error_checking_rules;
 mod file_menu;
 mod fill_handle_double_click;
 mod fill_handle_right_drag;

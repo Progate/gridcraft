@@ -21,6 +21,7 @@ mod charts;
 mod command_search;
 mod cond_format_rules;
 mod data;
+mod error_checking;
 mod find;
 mod format_cells;
 mod insert_function;
@@ -1208,7 +1209,10 @@ impl Dialog {
             }
             "errorChecking" => {
                 let mut d = Dialog::custom("errorChecking", "Error Checking", json!({}));
-                d.result = app.session.run("formulas.errorChecking", json!({})).ok();
+                // Starts at the active cell, as Excel does; a sheet without errors says so.
+                if !error_checking::refresh(app, &mut d, None) {
+                    d.result = None;
+                }
                 d
             }
             "evaluateFormula" => {

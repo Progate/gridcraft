@@ -51,6 +51,44 @@ pub(super) fn options(app: &mut SheetApp, ui: &mut Ui) {
     calc_options(app, ui, lang, &calc);
     ui.add_space(6.0);
     dim(ui, lang.tr("Calculation settings are saved with the workbook."));
+    ui.add_space(12.0);
+    error_checking_options(app, ui, lang);
+}
+
+/// The error checking rules, in the order and wording of Excel's Options page.
+pub(crate) const ERROR_RULE_LABELS: [(gridcraft_engine::model::ErrorRule, &str); 9] = {
+    use gridcraft_engine::model::ErrorRule as R;
+    [
+        (R::EvalError, "Cells containing formulas that result in an error"),
+        (R::CalculatedColumn, "Inconsistent calculated column formula in tables"),
+        (R::TwoDigitTextYear, "Cells containing years represented as 2 digits"),
+        (R::NumberStoredAsText, "Numbers formatted as text or preceded by an apostrophe"),
+        (R::Formula, "Formulas inconsistent with other formulas in the region"),
+        (R::FormulaRange, "Formulas which omit cells in a region"),
+        (R::UnlockedFormula, "Unlocked cells containing formulas"),
+        (R::EmptyCellReference, "Formulas referring to empty cells"),
+        (R::ListDataValidation, "Data entered in a table is invalid"),
+    ]
+};
+
+/// Formulas › Error checking and Error checking rules: application settings, as in Excel.
+fn error_checking_options(app: &mut SheetApp, ui: &mut Ui, lang: Language) {
+    ui.label(lang.tr("Error checking"));
+    let mut background = app.session.prefs.background_error_checking;
+    if ui.checkbox(&mut background, lang.tr("Enable background error checking")).changed() {
+        app.run_or_alert("options.errorChecking", json!({"background": background}));
+    }
+    if ui.button(lang.tr("Reset Ignored Errors")).clicked() {
+        app.run_or_alert("formulas.resetIgnoredErrors", json!({}));
+    }
+    ui.add_space(6.0);
+    ui.label(lang.tr("Error checking rules"));
+    for (rule, label) in ERROR_RULE_LABELS {
+        let mut on = app.session.prefs.error_rules.contains(rule);
+        if ui.checkbox(&mut on, lang.tr(label)).changed() {
+            app.run_or_alert("options.errorChecking", json!({"rules": {rule.attr(): on}}));
+        }
+    }
 }
 
 /// The display theme and interface language controls of the General section.

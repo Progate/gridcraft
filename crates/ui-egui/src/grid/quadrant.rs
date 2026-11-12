@@ -105,6 +105,8 @@ pub(crate) struct QuadrantPaint<'a> {
     pub(crate) tokens: &'a Tokens,
     /// The row to tint, when "Highlight the active cell's row" is on.
     pub(crate) active_row: Option<u32>,
+    /// The error checking rules the green corners show, `None` with background checking off.
+    pub(crate) error_rules: Option<gridcraft_engine::model::ErrorRules>,
 }
 
 /// Paint a worksheet quadrant, including backgrounds, borders, and text.
@@ -604,8 +606,9 @@ fn paint_borders(q: &mut QuadrantPaint<'_>, looks: &[(CellRef, Rect, Look, Optio
                 Stroke::NONE,
             ));
         }
-        // Background error checking: a number stored as text gets Excel's green corner (#1994).
-        if !sh.show_formulas && sh.cell(*c).and_then(gridcraft_engine::cmd::formulas::number_stored_as_text).is_some() {
+        // Background error checking: a cell breaking a rule turned on in Options gets Excel's
+        // green corner (#1994).
+        if !sh.show_formulas && q.error_rules.is_some_and(|rules| gridcraft_engine::error_check::check_cell(wb, si, *c, rules).is_some()) {
             let s = 6.0 * z.max(0.7);
             p.add(egui::Shape::convex_polygon(
                 vec![rect.left_top(), pos2(rect.left() + s, rect.top()), pos2(rect.left(), rect.top() + s)],

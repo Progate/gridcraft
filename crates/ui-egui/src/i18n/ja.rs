@@ -1085,6 +1085,129 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Move or Copy…", "移動またはコピー…"),
     ("No Color", "色なし"),
     ("Number Stored as Text", "文字列として保存されている数値"),
+    ("Divide by Zero Error", "0 による除算エラー"),
+    ("The formula or function used is dividing by zero or empty cells.", "この数式または関数は、0 または空白セルによる除算を行っています。"),
+    ("Error in Value", "値のエラー"),
+    ("A value used in the formula is of the wrong data type.", "数式で使用されるデータの形式が正しくありません。"),
+    ("Invalid Name Error", "無効な名前のエラー"),
+    ("The formula contains unrecognized text.", "数式には認識できない文字列が含まれています。"),
+    ("Invalid Cell Reference Error", "無効なセル参照のエラー"),
+    ("The formula or function refers to cells that are not valid.", "数式または関数が有効でないセルを参照しています。"),
+    ("Value Not Available Error", "使用できない値のエラー"),
+    ("A value is not available to the formula or function.", "数式または関数で使用できない値です。"),
+    ("Invalid Number Error", "無効な数値のエラー"),
+    ("The formula or function contains invalid numeric values.", "数式または関数に無効な数値が含まれています。"),
+    ("Null Error", "NULL 値のエラー"),
+    ("The formula refers to an intersection of ranges that do not intersect.", "数式が、交差しない範囲の共通部分を参照しています。"),
+    ("Error in Formula", "数式のエラー"),
+    ("The formula in this cell results in an error.", "このセルの数式はエラーになります。"),
+    ("Inconsistent Calculated Column Formula", "矛盾した集計列の数式"),
+    ("This cell is inconsistent with the column formula.", "このセルは列の数式と矛盾しています。"),
+    ("Text Date with 2-Digit Year", "2 桁の年が含まれる文字列の日付"),
+    ("The cell contains a text date with a 2-digit year.", "このセルには、年が 2 桁で表された文字列の日付が含まれています。"),
+    (
+        "The number in this cell is formatted as text or preceded by an apostrophe.",
+        "このセルにある数値が、テキスト形式か、またはアポストロフィで始まっています。",
+    ),
+    ("Inconsistent Formula", "矛盾した数式"),
+    (
+        "The formula in this cell differs from the formulas in this area of the spreadsheet.",
+        "このセルにある数式が、このセルの周辺の数式と異なっています。",
+    ),
+    ("Formula Omits Adjacent Cells", "数式は隣接したセルを使用していません"),
+    (
+        "The formula in this cell refers to a range that has additional numbers adjacent to it.",
+        "このセルにある数式は、隣接した追加の数値を含まない範囲を参照しています。",
+    ),
+    ("Unprotected Formula", "ロックされていない数式セル"),
+    (
+        "The cell containing this formula is not locked to protect it from being changed inadvertently.",
+        "この数式を含むセルは、誤って変更されないようにロックされていません。",
+    ),
+    ("Formula Refers to Empty Cells", "空白セルを参照する数式"),
+    ("The formula in this cell refers to empty cells.", "このセルにある数式は空白セルを参照しています。"),
+    ("Data Validation Error", "データの入力規則のエラー"),
+    (
+        "The value in this cell is not valid according to the data validation rules for this cell.",
+        "このセルの値は、このセルに設定されているデータの入力規則に違反しています。",
+    ),
+    ("Show Calculation Steps…", "計算の過程を表示..."),
+    ("Convert XX to 19XX", "XX を 19XX に変換する"),
+    ("Convert XX to 20XX", "XX を 20XX に変換する"),
+    ("Copy Formula from Above", "数式を上からコピーする"),
+    ("Copy Formula from Left", "数式を左からコピーする"),
+    ("Copy Formula from Below", "数式を下からコピーする"),
+    ("Copy Formula from Right", "数式を右からコピーする"),
+    ("Update Formula to Include Cells", "数式を更新してセルを含める"),
+    ("Trace Empty Cell", "空白セルをトレースする"),
+    ("Restore to Calculated Column Formula", "集計列の数式に戻す"),
+    ("Help on This Error", "このエラーに関するヘルプ"),
+    ("Ignore Error", "エラーを無視する"),
+    ("Edit in Formula Bar", "数式バーで編集"),
+    ("Error Checking Options…", "エラー チェック オプション..."),
+    ("Error in cell {cell}", "セル {cell} のエラー"),
+    ("Options…", "オプション..."),
+    ("The error check is complete for the entire sheet.", "シート全体のエラー チェックを完了しました。"),
+    ("The cell has no error to ignore.", "このセルには無視するエラーがありません。"),
+    ("Error checking", "エラー チェック"),
+    ("Enable background error checking", "バックグラウンドでエラー チェックを行う"),
+    ("Reset Ignored Errors", "エラーを無視したセルのリセット"),
+    ("Error checking rules", "エラー チェック ルール"),
+    ("Cells containing formulas that result in an error", "エラー結果となる数式を含むセル"),
+    ("Inconsistent calculated column formula in tables", "テーブル内の矛盾した集計列の数式"),
+    ("Cells containing years represented as 2 digits", "2 桁の年が含まれるセル"),
+    ("Numbers formatted as text or preceded by an apostrophe", "文字列形式の数値、またはアポストロフィで始まる数値"),
+    ("Formulas inconsistent with other formulas in the region", "領域内の他の数式と矛盾する数式"),
+    ("Formulas which omit cells in a region", "領域内のセルを除いた数式"),
+    ("Unlocked cells containing formulas", "数式を含むロックされていないセル"),
+    ("Formulas referring to empty cells", "空白セルを参照する数式"),
+    ("Data entered in a table is invalid", "テーブルに入力されたデータが無効"),
+    (
+        "The cell or chart you're trying to change is on a protected sheet.",
+        "変更しようとしているセルやグラフは保護されているシート上にあります。変更するには、シートの保護を解除します。パスワードの入力が必要な場合もあります。",
+    ),
+    (
+        "The cell you're trying to change is on a protected sheet.",
+        "変更しようとしているセルやグラフは保護されているシート上にあります。変更するには、シートの保護を解除します。パスワードの入力が必要な場合もあります。",
+    ),
+    ("The workbook is protected and cannot be changed.", "ブックは保護されているため、変更できません。"),
+    (
+        "The sheet is protected with a password. Unprotect it first (Review › Unprotect Sheet).",
+        "シートはパスワードで保護されています。先に保護を解除してください ([校閲] › [シート保護の解除])。",
+    ),
+    (
+        "The password you supplied is not correct.",
+        "指定されたパスワードが間違っています。CAPS LOCK キーがオンになっていないことを確認し、大文字と小文字を正しく使用してください。",
+    ),
+    (
+        "This value doesn't match the data validation restrictions defined for this cell.",
+        "この値は、このセルに定義されているデータ入力規則の制限を満たしていません。",
+    ),
+    ("You can't change part of an array.", "配列の一部を変更することはできません。"),
+    ("To do this, all the merged cells need to be the same size.", "この操作を行うには、結合セルのサイズをすべて同じにする必要があります。"),
+    (
+        "This operation isn't allowed: it would shift cells in a table on your worksheet.",
+        "この操作は許可されていません。ワークシートのテーブル内のセルが移動されます。",
+    ),
+    ("A table can't overlap another table.", "テーブルを他のテーブルと重ねることはできません。"),
+    ("Multi-cell array formulas aren't allowed in tables.", "複数セル配列数式はテーブル内では使用できません。"),
+    ("The name that you entered is not valid.", "入力した名前は無効です。"),
+    ("The name entered already exists. Enter a unique name.", "入力された名前は既に存在します。一意の名前を入力してください。"),
+    ("Reference isn't valid.", "参照が正しくありません。"),
+    ("Nothing to paste.", "貼り付けるものがありません。"),
+    ("This action won't work on multiple selections.", "この操作は複数の選択範囲に対して実行できません。"),
+    ("A workbook must contain at least one visible worksheet.", "ブックには、少なくとも 1 つの表示されたワークシートが含まれている必要があります。"),
+    (
+        "To prevent possible loss of data, cells can't be pushed off the end of the worksheet.",
+        "データの損失を防ぐため、空白以外のセルをワークシートの外に移動することはできません。",
+    ),
+    (
+        "To prevent possible loss of data, GridCraft cannot shift nonblank cells off of the worksheet.",
+        "データの損失を防ぐため、空白以外のセルをワークシートの外に移動することはできません。",
+    ),
+    ("There's a problem with this formula.", "この数式には問題があります。"),
+    ("Select data for the chart first.", "先にグラフにするデータを選択してください。"),
+    ("There are no scenarios on this sheet.", "このシートにはシナリオがありません。"),
     ("Paste formulas that refer to the copied cells", "コピーしたセルを参照する数式を貼り付けます"),
     ("Rename", "名前の変更"),
     ("Select All Sheets", "すべてのシートを選択"),
@@ -1964,6 +2087,33 @@ pub(super) const CONDITIONAL_FORMATTING: &[(&str, &str)] = &[
     ("Below Average…", "平均より下…"),
 ];
 
+/// Engine messages with one varying part, `{}`: the part is translated by the catalog when it
+/// knows it, else kept.
+const MESSAGE_TEMPLATES: &[(&str, &str)] = &[
+    (
+        "{} isn't allowed on this protected sheet (Review › Unprotect Sheet).",
+        "保護されているシートでは{}はできません ([校閲] › [シート保護の解除])。",
+    ),
+    (
+        "The range \"{}\" needs its password before it can be changed (Review › Allow Edit Ranges).",
+        "範囲 \"{}\" を変更するにはパスワードが必要です ([校閲] › [範囲の編集を許可])。",
+    ),
+];
+
+/// What a protected sheet refuses, as `{} isn't allowed on this protected sheet` names it.
+const MESSAGE_PARTS: &[(&str, &str)] =
+    &[("Filtering", "フィルター"), ("Sorting", "並べ替え"), ("Formatting columns", "列の書式設定"), ("Formatting rows", "行の書式設定")];
+
+/// Translates an engine message built from one of [`MESSAGE_TEMPLATES`]; `None` for any other.
+pub(super) fn translate_message(text: &str) -> Option<String> {
+    MESSAGE_TEMPLATES.iter().find_map(|(english, japanese)| {
+        let (head, tail) = english.split_once("{}")?;
+        let part = text.strip_prefix(head)?.strip_suffix(tail)?;
+        let part = MESSAGE_PARTS.iter().find(|(e, _)| *e == part).map_or(part, |(_, j)| *j);
+        Some(japanese.replacen("{}", part, 1))
+    })
+}
+
 /// Translates an interface label; `None` for a label the catalog does not know, so `i18n.rs` can
 /// fall back to English. Dialog strings come first, the shared core second.
 pub(super) fn translate(text: &str) -> Option<&'static str> {
@@ -1979,6 +2129,19 @@ mod tests {
     /// Every key the catalog holds, `DIALOGS` first.
     fn catalog_keys() -> impl Iterator<Item = &'static str> {
         DIALOGS.iter().chain(CORE).map(|(english, _)| *english)
+    }
+
+    #[test]
+    fn engine_messages_with_a_varying_part_are_translated() {
+        assert_eq!(
+            translate_message("Sorting isn't allowed on this protected sheet (Review › Unprotect Sheet).").as_deref(),
+            Some("保護されているシートでは並べ替えはできません ([校閲] › [シート保護の解除])。")
+        );
+        assert_eq!(
+            translate_message("The range \"Budget\" needs its password before it can be changed (Review › Allow Edit Ranges).").as_deref(),
+            Some("範囲 \"Budget\" を変更するにはパスワードが必要です ([校閲] › [範囲の編集を許可])。")
+        );
+        assert_eq!(translate_message("Something else."), None);
     }
 
     #[test]

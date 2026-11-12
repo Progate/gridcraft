@@ -674,16 +674,24 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The warning button beside an active cell holding a number stored as text, as in Excel: its
-/// menu names the problem and offers Convert to Number for the selection (#1994).
+/// The warning button beside an active cell that breaks an error checking rule, as in Excel: its
+/// menu names the problem, offers the rule's fixes, Help on This Error, Ignore Error, Edit in
+/// Formula Bar and Error Checking Options (#1994).
 pub(super) fn error_check_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, sh: &Sheet) {
-    if app.editor.is_some() || app.dialog.is_some() || sh.show_formulas || app.grid.drag != Drag::None {
+    if app.editor.is_some() || app.dialog.is_some() || sh.show_formulas || app.grid.drag != Drag::None || !app.session.prefs.background_error_checking
+    {
         return;
     }
-    let Some(active) = app.session.active().map(|d| d.selection.active) else { return };
-    if sh.cell(active).and_then(gridcraft_engine::cmd::formulas::number_stored_as_text).is_none() {
+    let rules = app.session.prefs.error_rules;
+    let Some((active, rule, title, description, fixes)) = app.session.active().and_then(|d| {
+        let active = d.selection.active;
+        let si = d.wb.active_sheet();
+        let rule = gridcraft_engine::error_check::check_cell(&d.wb, si, active, rules)?;
+        let (title, description) = gridcraft_engine::error_check::describe(rule, &sh.value(active));
+        Some((active, rule, title, description, gridcraft_engine::error_check::fixes(sh, active, rule)))
+    }) else {
         return;
-    }
+    };
     let cell = geo.cell_rect(sh, active);
     let size = vec2(18.0, 18.0);
     // Left of the cell, or right of it when that would cover the row headings.
@@ -693,7 +701,7 @@ pub(super) fn error_check_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, 
         return;
     }
     let lang = crate::i18n::current(ui.ctx());
-    let resp = ui.interact(tag, egui::Id::unique("gridcraft.error_check_tag"), Sense::click()).on_hover_text(lang.tr("Number Stored as Text"));
+    let resp = ui.interact(tag, egui::Id::unique("gridcraft.error_check_tag"), Sense::click()).on_hover_text(lang.tr(description));
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, lang.tr("Error checking options")));
     let t = Tokens::get(ui.ctx());
     let p = ui.painter();
@@ -709,13 +717,53 @@ pub(super) fn error_check_tag(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, 
     ));
     p.text(c, egui::Align2::CENTER_CENTER, "!", egui::FontId::proportional(10.0), t.warning_ink);
     egui::Popup::menu(&resp).show(|ui| {
-        ui.label(egui::RichText::new(lang.tr("Number Stored as Text")).strong());
+        ui.label(egui::RichText::new(lang.tr(title)).strong());
         ui.separator();
-        if ui.button(lang.tr("Convert to Number")).clicked() {
-            app.run_or_alert("formulas.convertToNumber", json!({}));
+        for (id, label) in &fixes {
+            if ui.button(lang.tr(label)).clicked() {
+                run_error_fix(app, id);
+                ui.close();
+            }
+        }
+        if ui.button(lang.tr("Help on This Error")).clicked() {
+            app.message = Some((title.to_string(), description.to_string()));
+            ui.close();
+        }
+        if ui.button(lang.tr("Ignore Error")).clicked() {
+            app.run_or_alert("formulas.ignoreError", json!({"range": active.a1(), "rule": rule.attr()}));
+            ui.close();
+        }
+        if ui.button(lang.tr("Edit in Formula Bar")).clicked() {
+            app.begin_edit(None, true);
+            ui.close();
+        }
+        ui.separator();
+        if ui.button(lang.tr("Error Checking Options…")).clicked() {
+            app.open_backstage(crate::backstage::Page::Options);
             ui.close();
         }
     });
+}
+
+/// Runs a fix the error checking menus offer, by its id from `error_check::fixes`.
+pub(crate) fn run_error_fix(app: &mut SheetApp, id: &str) {
+    match id {
+        "evaluate" => app.open_dialog("evaluateFormula", json!({})),
+        "traceError" => {
+            if let Ok(r) = app.run("formulas.traceError", json!({}))
+                && r["arrows"].as_array().is_some_and(|a| !a.is_empty())
+            {
+                app.grid.trace = crate::grid::Trace::new(app, r);
+            }
+        }
+        "traceEmpty" => {
+            if let Ok(r) = app.run("formulas.tracePrecedents", json!({})) {
+                app.grid.trace = crate::grid::Trace::new(app, r);
+            }
+        }
+        "validation" => app.open_dialog("dataValidation", json!({})),
+        fix => app.run_or_alert("formulas.errorFix", json!({"fix": fix})),
+    }
 }
 
 /// Draws row/column header context menus with insert/delete, format, size, hide/unhide and group actions, plus Insert Copied Cells when available.

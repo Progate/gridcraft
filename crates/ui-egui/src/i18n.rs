@@ -267,7 +267,14 @@ impl Language {
         let translated = self.tr(&message);
         let fallback = message.rsplit_once('|').map_or(message.as_str(), |(_, label)| label);
 
-        if translated == fallback { message } else { translated.to_owned() }
+        if translated != fallback {
+            return translated.to_owned();
+        }
+        // Messages with a varying part (a sheet action, a range title) match a template instead.
+        match self {
+            Self::Ja => ja::translate_message(&message).unwrap_or(message),
+            _ => message,
+        }
     }
 
     /// A worksheet function's description in this language, looked up by the English text of the
