@@ -21,9 +21,10 @@ fn ok_and_cancel_sit_under_the_last_field() {
     );
     h.state_mut().open_dialog("cfQuick", json!({"type": "cellIs", "operator": "greaterThan", "title": "Greater Than…"}));
     h.run_steps(4);
-    let last = h.get_by_label("Red Border").rect();
+    // The last field is the format drop-down (labelled "with").
+    let last = h.query_all_by_label("with").map(|n| n.rect().bottom()).fold(f32::MIN, f32::max);
     let ok = h.get_by_label_contains("OK").rect();
-    let gap = ok.top() - last.bottom();
+    let gap = ok.top() - last;
     assert!((0.0..40.0).contains(&gap), "OK is {gap} points under the last option");
 }
 

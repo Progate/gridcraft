@@ -126,11 +126,21 @@ pub fn build_params(d: &Dialog) -> Json {
                 }
             }
         }
+        "newFormattingRule" => v = super::cf_rule::params(d),
         "cfQuick" => {
             let mut rule = Map::new();
             for (k, val) in &d.values {
                 rule.insert(k.clone(), val.clone());
             }
+            // The format is the one chosen in Format Cells only for Custom Format…; otherwise the
+            // preset's.
+            if rule.get("preset").and_then(Json::as_str) == Some("custom") {
+                rule.remove("preset");
+                rule.entry("style").or_insert_with(|| serde_json::to_value(gridcraft_engine::model::Style::default()).unwrap_or(Json::Null));
+            } else {
+                rule.remove("style");
+            }
+            rule.remove("title");
             v = json!({"rule": Json::Object(rule)});
             if let Some(pick) = d.pick.as_ref().filter(|pick| !pick.applies_to.is_empty() && !pick.sheet.is_empty()) {
                 v["sheet"] = json!(pick.sheet.as_str());
@@ -189,9 +199,10 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
     let mut win_open = true;
     let mut confirm = false;
     let width = match d.name.as_str() {
-        "formatCells" => 560.0,
+        "formatCells" | "newFormattingRule" => 560.0,
+        "manageRules" => 660.0,
         "about" => 820.0,
-        "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "equation" => 520.0,
+        "insertFunction" | "commandSearch" | "nameManager" | "journal" | "agents" | "equation" => 520.0,
         "macros" => 480.0,
         "recommendedCharts" => 600.0,
         "comboChart" => 480.0,
@@ -245,7 +256,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "sort" => sort(app, ui, &mut d, &mut confirm),
                 "nameManager" => name_manager(app, ui, &mut d, &mut open),
                 "pasteName" => paste_name(app, ui, &mut d, &mut confirm, &mut open),
-                "manageRules" => manage_rules(app, ui),
+                "manageRules" => manage_rules(app, ui, &mut d, &mut confirm, &mut open),
+                "newFormattingRule" => super::cf_rule::editor(app, ui, &mut d, &mut confirm, &mut open),
                 "recommendedCharts" => recommended_charts(app, ui, &mut d, &mut confirm, &mut open),
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
                 "comboChart" => combo_chart(app, ui, &mut d, &mut confirm, &mut open),
@@ -437,6 +449,10 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
             }
         });
     window_shown(ctx, &mut d, collapsed.is_some(), shown.map(|r| r.response.rect));
+    // Custom Format… in a quick rule dialog opens Format Cells for the rule's own format.
+    if d.name == "cfQuick" && d.values.remove("openFormat").is_some() {
+        app.open_dialog("formatCells", json!({"dxf": true, "style": d.values.get("style")}));
+    }
     // Hyperlinks inside dialogs (About ▸ Contributors) open through the host's `open_url`, since
     // the native shell has no browser integration of its own.
     if let Some(open_url) = &app.services.open_url {
@@ -629,7 +645,7 @@ pub(super) fn take_first_focus(d: &mut Dialog, r: &egui::Response) {
 
 /// Keeps a picking formula box's caret, and gives it the keyboard back after a grid click put a
 /// reference in it (the click took the focus), its caret after the reference.
-fn track_pick(pick: &mut RefPick, r: &egui::Response, typed: bool) {
+pub(super) fn track_pick(pick: &mut RefPick, r: &egui::Response, typed: bool) {
     if typed {
         pick.point = None;
     }
@@ -713,7 +729,8 @@ pub(super) fn form_fields(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
                         let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
                         // Long lists are drop-downs, as in Excel: Data Validation's, Value Field
                         // Settings', and Page Setup's paper sizes.
-                        if matches!(d.name.as_str(), "dataValidation" | "pivotValueSettings") || (d.name == "pageSetup" && key == "paper") {
+                        if matches!(d.name.as_str(), "dataValidation" | "pivotValueSettings" | "cfQuick") || (d.name == "pageSetup" && key == "paper")
+                        {
                             let selected = options.iter().find(|(val, _)| *val == cur).map(|(_, text)| lang.tr(text)).unwrap_or("");
                             craft_ui::ComboBox::from_id_salt((d.name.clone(), key))
                                 .selected_text(selected)

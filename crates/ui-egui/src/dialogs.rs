@@ -16,6 +16,7 @@ use crate::theme;
 mod about;
 mod analysis;
 mod autofilter;
+mod cf_rule;
 mod charts;
 mod command_search;
 mod cond_format_rules;
@@ -120,6 +121,11 @@ pub struct Dialog {
     original_link_text: Option<String>,
     /// The state of the dialog's reference boxes (RefEdit).
     refs: ref_edit::RefBoxes,
+    /// The formula box of `pick` doesn't take references now (New Formatting Rule on a rule type
+    /// without a reference box): a click on the grid selects as usual.
+    pick_off: bool,
+    /// The Conditional Formatting Rules Manager's working copy of the rules.
+    cf: Option<Box<cond_format_rules::CfManager>>,
 }
 
 /// A formula box in point mode, as in Excel: a click on the grid writes the cell's absolute
@@ -151,6 +157,10 @@ impl Dialog {
     /// stores, a typed percentage selects Custom, and Fit selection makes OK run
     /// `view.zoomToSelection` (its view size was captured when the dialog opened).
     pub(crate) fn set_value(&mut self, key: &str, value: Json) {
+        // Custom Format… opens Format Cells, as in Excel's quick rule dialogs.
+        if self.name == "cfQuick" && key == "preset" && value.as_str() == Some("custom") {
+            self.values.insert("openFormat".into(), json!(true));
+        }
         if self.name == "zoom" {
             match key {
                 "preset" => match value.as_str() {
@@ -220,7 +230,7 @@ impl Dialog {
 
     /// Whether a click on the grid goes to a formula box of this dialog rather than the selection.
     pub fn picks_references(&self) -> bool {
-        self.pick.is_some()
+        self.pick.is_some() && !self.pick_off
     }
 
     /// A click (`extend` false) or a drag reaching `cell`: writes the absolute reference at the
@@ -229,6 +239,9 @@ impl Dialog {
     /// reference, so nothing changes. `active_sheet` names the sheet shown when it is not the
     /// dialog's own.
     pub fn pick_reference(&mut self, cell: CellRef, active_sheet: &str, extend: bool) {
+        if self.pick_off {
+            return;
+        }
         let Some(pick) = self.pick.as_mut() else { return };
         let text = self.values.get(pick.key).and_then(Json::as_str).unwrap_or("").to_string();
         let mut ed = crate::editor::EditState::new(0, 0, cell, text, true, false);
@@ -280,6 +293,8 @@ impl Dialog {
             pick: None,
             original_link_text: None,
             refs: ref_edit::RefBoxes::default(),
+            pick_off: false,
+            cf: None,
         }
     }
 
@@ -305,6 +320,8 @@ impl Dialog {
             pick: None,
             original_link_text: None,
             refs: ref_edit::RefBoxes::default(),
+            pick_off: false,
+            cf: None,
         }
     }
 
@@ -891,35 +908,49 @@ impl Dialog {
                 let ty = p("type").as_str().unwrap_or("cellIs").to_string();
                 let title = p("title").as_str().unwrap_or("Conditional Formatting").to_string();
                 let mut fields = vec![];
+                let mut format_label = "Quick Rule|with";
                 match ty.as_str() {
                     "cellIs" => {
-                        fields.push(Text { key: "value", label: "Format cells that are (value):" });
+                        let label = match p("operator").as_str() {
+                            Some("lessThan" | "less") => "Format cells that are LESS THAN:",
+                            Some("between") => "Format cells that are BETWEEN:",
+                            Some("equal") => "Format cells that are EQUAL TO:",
+                            _ => "Format cells that are GREATER THAN:",
+                        };
+                        fields.push(Text { key: "value", label });
                         if p("operator").as_str() == Some("between") {
-                            fields.push(Text { key: "value2", label: "and:" });
+                            fields.push(Text { key: "value2", label: "Rule|and" });
                         }
                     }
                     "containsText" => fields.push(Text { key: "text", label: "Format cells that contain the text:" }),
                     "timePeriod" => fields.push(Choice {
                         key: "period",
                         label: "Format cells that contain a date occurring:",
-                        options: vec![
-                            ("yesterday", "Yesterday"),
-                            ("today", "Today"),
-                            ("tomorrow", "Tomorrow"),
-                            ("last7Days", "In the last 7 days"),
-                            ("lastWeek", "Last week"),
-                            ("thisWeek", "This week"),
-                            ("nextWeek", "Next week"),
-                            ("lastMonth", "Last month"),
-                            ("thisMonth", "This month"),
-                            ("nextMonth", "Next month"),
-                        ],
+                        options: cf_rule::PERIODS.to_vec(),
                     }),
+                    "duplicate" | "unique" => fields.push(Choice {
+                        key: "type",
+                        label: "Format cells that contain:",
+                        options: vec![("duplicate", "Values|Duplicate"), ("unique", "Values|Unique")],
+                    }),
+                    "top10" => {
+                        let bottom = p("bottom").as_bool() == Some(true);
+                        let label = if bottom { "Format cells that rank in the BOTTOM:" } else { "Format cells that rank in the TOP:" };
+                        fields.push(Number { key: "rank", label });
+                        if p("percent").as_bool() == Some(true) {
+                            fields.push(Note("%".into()));
+                        }
+                    }
+                    "aboveAverage" => {
+                        let below = p("below").as_bool() == Some(true);
+                        fields.push(Note(if below { "Format cells that are BELOW AVERAGE:" } else { "Format cells that are ABOVE AVERAGE:" }.into()));
+                        format_label = "for the selected range with";
+                    }
                     _ => fields.push(Text { key: "formula", label: "Format values where this formula is true:" }),
                 }
                 fields.push(Choice {
                     key: "preset",
-                    label: "with",
+                    label: format_label,
                     options: vec![
                         ("lightRedFillDarkRedText", "Light Red Fill with Dark Red Text"),
                         ("yellowFillDarkYellowText", "Yellow Fill with Dark Yellow Text"),
@@ -927,6 +958,7 @@ impl Dialog {
                         ("lightRedFill", "Light Red Fill"),
                         ("redText", "Red Text"),
                         ("redBorder", "Red Border"),
+                        ("custom", "Custom Format…"),
                     ],
                 });
                 let mut d = Dialog::form(
@@ -950,11 +982,27 @@ impl Dialog {
                     d.pick = Some(RefPick { key: "formula", sheet, caret: 0, point: None, anchor: CellRef::new(0, 0), refocus: false, applies_to });
                 }
                 d.values.insert("type".into(), json!(ty));
-                d.values.insert("operator".into(), p("operator"));
+                for key in ["operator", "rank", "bottom", "percent", "below"] {
+                    if !p(key).is_null() {
+                        d.values.insert(key.into(), p(key));
+                    }
+                }
                 d
             }
+            "newFormattingRule" => cf_rule::open(app, &params),
             "formatCells" => {
                 let mut d = Dialog::custom("formatCells", "Format Cells", json!({}));
+                if p("dxf").as_bool() == Some(true) {
+                    // A conditional format's own format (Format… in a rule dialog): only what a
+                    // rule may set, handed back to the dialog that opened it.
+                    d.values.insert("dxf".into(), json!(true));
+                    let style = p("style");
+                    let style =
+                        if style.is_object() { style } else { serde_json::to_value(gridcraft_engine::model::Style::default()).unwrap_or(Json::Null) };
+                    d.values.insert("style".into(), style);
+                    d.tab = p("tab").as_str().unwrap_or("Font").to_string();
+                    return Some(d);
+                }
                 d.tab = p("tab").as_str().unwrap_or("Number").to_string();
                 if let Ok(st) = app.session.run("cell.get", json!({})) {
                     d.values.insert("style".into(), st["style"].clone());
@@ -1099,7 +1147,11 @@ impl Dialog {
                 dialog.result = Some(json!(names));
                 dialog
             }
-            "manageRules" => Dialog::custom("manageRules", "Conditional Formatting Rules Manager", json!({})),
+            "manageRules" => {
+                let mut d = Dialog::custom("manageRules", "Conditional Formatting Rules Manager", json!({}));
+                d.cf = Some(cond_format_rules::new_manager());
+                d
+            }
             "commandSearch" => Dialog::custom("commandSearch", "Search Commands", json!({})),
             "agents" => Dialog::custom("agents", "Agent Control", json!({})),
             "about" => {

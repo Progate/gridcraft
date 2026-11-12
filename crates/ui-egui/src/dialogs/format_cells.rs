@@ -7,6 +7,9 @@ pub(super) fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog
     // labels are translated. The Fill tab is keyed by context: the Alignment tab's "Fill" is a
     // different word in some languages.
     let lang = app.ui.language;
+    // A conditional format's format (opened by Format… in a rule dialog) has only the tabs and
+    // properties a rule may set, as in Excel: no alignment or protection, no font face or size.
+    let dxf = d.values.get("dxf").and_then(serde_json::Value::as_bool) == Some(true);
     ui.horizontal(|ui| {
         for (tab, key) in [
             ("Number", "Number"),
@@ -16,6 +19,9 @@ pub(super) fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog
             ("Fill", "Format Cells|Fill"),
             ("Protection", "Protection"),
         ] {
+            if dxf && matches!(tab, "Alignment" | "Protection") {
+                continue;
+            }
             if ui.selectable_label(d.tab == tab, lang.tr(key)).clicked() {
                 d.tab = tab.to_string();
             }
@@ -117,6 +123,7 @@ pub(super) fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog
             ui.checkbox(&mut st.align.wrap, lang.tr("Wrap text"));
             ui.checkbox(&mut st.align.shrink, lang.tr("Shrink to fit"));
         }
+        "Font" if dxf => dxf_font(app, ui, &mut st),
         "Font" => {
             craft_ui::ComboBox::from_label(lang.tr("Font")).selected_text(st.font.name.clone()).show_ui(ui, |ui| {
                 for f in crate::fonts::families() {
@@ -223,16 +230,82 @@ pub(super) fn format_cells(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog
         }
         _ => {}
     }
+    if dxf {
+        // Clear empties what the shown tab sets, as Excel's Clear does.
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(lang.tr("Format Cells|Clear")).clicked() {
+                    let none = gridcraft_engine::model::Style::default();
+                    match d.tab.as_str() {
+                        "Number" => st.num_fmt = none.num_fmt,
+                        "Font" => {
+                            st.font = none.font;
+                            st.dxf_stated = Default::default();
+                        }
+                        "Border" => st.borders = none.borders,
+                        "Fill" => st.fill = none.fill,
+                        _ => {}
+                    }
+                }
+            });
+        });
+    }
     if let Ok(v) = serde_json::to_value(&st) {
         d.values.insert("style".into(), v);
     }
     let mut open = true;
     ok_cancel(ui, confirm, &mut open);
-    if *confirm && let Some(style) = d.values.get("style").cloned() {
+    if *confirm && dxf {
+        // The format goes back to the rule dialog; a quick rule dialog now uses it, not a preset.
+        if let Some(back) = d.back.as_deref_mut()
+            && let Some(style) = d.values.get("style").cloned()
+        {
+            back.values.insert("style".into(), style);
+            if back.name == "cfQuick" {
+                back.values.insert("preset".into(), json!("custom"));
+            }
+        }
+    } else if *confirm && let Some(style) = d.values.get("style").cloned() {
         app.run_or_alert("home.formatCells", json!({"style": style}));
     }
     if !open {
         app.dialog = None;
         *confirm = true; // closes
+    }
+}
+
+/// The Font tab for a conditional format: Font style, Underline, Color and Strikethrough, the
+/// font properties a rule may set (Excel greys out the face, size and the other effects).
+fn dxf_font(app: &SheetApp, ui: &mut egui::Ui, st: &mut gridcraft_engine::model::Style) {
+    use gridcraft_engine::model::Underline;
+    let lang = app.ui.language;
+    ui.label(egui::RichText::new(lang.tr("Font style:")).strong());
+    ui.horizontal(|ui| {
+        for (bold, italic, name) in
+            [(false, false, "Font Style|Regular"), (false, true, "Italic"), (true, false, "Bold"), (true, true, "Bold Italic")]
+        {
+            if ui.radio(st.font.bold == bold && st.font.italic == italic, lang.tr(name)).clicked() {
+                st.font.bold = bold;
+                st.font.italic = italic;
+                // Regular states both off, so it overrides a bold or italic cell; the other
+                // styles state only what they turn on.
+                let regular = !bold && !italic;
+                st.dxf_stated.bold = regular;
+                st.dxf_stated.italic = regular;
+            }
+        }
+    });
+    ui.label(egui::RichText::new(lang.tr("Underline:")).strong());
+    ui.horizontal(|ui| {
+        for (u, n) in [(Underline::None, "None"), (Underline::Single, "Single"), (Underline::Double, "Double")] {
+            ui.radio_value(&mut st.font.underline, u, lang.tr(n));
+        }
+    });
+    ui.checkbox(&mut st.font.strike, lang.tr("Strikethrough"));
+    ui.label(lang.tr("Color:"));
+    let colors = app.session.active().map(|doc| doc.wb.theme.colors).unwrap_or_default();
+    if let Some(c) = crate::widgets::color_palette(ui, &colors, lang.tr("Automatic")) {
+        st.font.color =
+            if c == "none" { gridcraft_engine::model::Color::Auto } else { gridcraft_engine::model::Color::from_hex(&c).unwrap_or_default() };
     }
 }

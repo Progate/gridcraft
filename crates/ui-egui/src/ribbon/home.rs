@@ -702,10 +702,23 @@ fn number_combo(app: &mut SheetApp, ui: &mut Ui, st: &Style) {
 
 fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
     let lang = app.ui.language;
+    // Each rule item opens Excel's dialog for it (value, count, format with Custom Format…), and
+    // More Rules… opens New Formatting Rule on the matching rule type.
+    let more_rules = |app: &mut SheetApp, ui: &mut Ui, params: serde_json::Value| {
+        ui.separator();
+        if ui.button(lang.tr("More Rules…")).clicked() {
+            app.open_dialog("newFormattingRule", params);
+        }
+    };
     ui.menu_button(lang.tr("Highlight Cells Rules"), |ui| {
-        for (label, op) in [("Greater Than…", "greater"), ("Less Than…", "less"), ("Between…", "between"), ("Equal To…", "equal")] {
+        for (label, op, title) in [
+            ("Greater Than…", "greaterThan", "Greater Than"),
+            ("Less Than…", "lessThan", "Less Than"),
+            ("Between…", "between", "Between"),
+            ("Equal To…", "equal", "Equal To"),
+        ] {
             if ui.button(lang.tr(label)).clicked() {
-                app.open_dialog("cfQuick", json!({"type": "cellIs", "operator": op, "title": label}));
+                app.open_dialog("cfQuick", json!({"type": "cellIs", "operator": op, "title": title}));
             }
         }
         if ui.button(lang.tr("Text that Contains…")).clicked() {
@@ -715,22 +728,26 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("cfQuick", json!({"type": "timePeriod", "title": "A Date Occurring"}));
         }
         if ui.button(lang.tr("Duplicate Values…")).clicked() {
-            act(app, "home.conditionalFormat", json!({"rule": {"type": "duplicate"}}));
+            app.open_dialog("cfQuick", json!({"type": "duplicate", "title": "Duplicate Values"}));
         }
+        more_rules(app, ui, json!({"ruleType": "contain"}));
     });
     ui.menu_button(lang.tr("Top/Bottom Rules"), |ui| {
-        menu_items(
-            app,
-            ui,
-            &[
-                ("Top 10 Items", "home.conditionalFormat", json!({"rule": {"type": "top10", "rank": 10}})),
-                ("Top 10%", "home.conditionalFormat", json!({"rule": {"type": "top10", "rank": 10, "percent": true}})),
-                ("Bottom 10 Items", "home.conditionalFormat", json!({"rule": {"type": "top10", "rank": 10, "bottom": true}})),
-                ("Bottom 10%", "home.conditionalFormat", json!({"rule": {"type": "top10", "rank": 10, "bottom": true, "percent": true}})),
-                ("Above Average", "home.conditionalFormat", json!({"rule": {"type": "aboveAverage"}})),
-                ("Below Average", "home.conditionalFormat", json!({"rule": {"type": "aboveAverage", "below": true}})),
-            ],
-        );
+        for (label, title, params) in [
+            ("Top 10 Items…", "Top 10 Items", json!({"type": "top10", "rank": 10})),
+            ("Top 10%…", "Top 10%", json!({"type": "top10", "rank": 10, "percent": true})),
+            ("Bottom 10 Items…", "Bottom 10 Items", json!({"type": "top10", "rank": 10, "bottom": true})),
+            ("Bottom 10%…", "Bottom 10%", json!({"type": "top10", "rank": 10, "bottom": true, "percent": true})),
+            ("Above Average…", "Above Average", json!({"type": "aboveAverage"})),
+            ("Below Average…", "Below Average", json!({"type": "aboveAverage", "below": true})),
+        ] {
+            if ui.button(lang.tr(label)).clicked() {
+                let mut params = params;
+                params["title"] = json!(title);
+                app.open_dialog("cfQuick", params);
+            }
+        }
+        more_rules(app, ui, json!({"ruleType": "rank"}));
     });
     ui.menu_button(lang.tr("Data Bars"), |ui| {
         for (label, c) in
@@ -740,6 +757,7 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
                 act(app, "home.conditionalFormat", json!({"rule": {"type": "dataBar", "color": c}}));
             }
         }
+        more_rules(app, ui, json!({"ruleType": "values", "formatStyle": "dataBar"}));
     });
     ui.menu_button(lang.tr("Color Scales"), |ui| {
         for (label, cols) in [
@@ -754,6 +772,7 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
                 act(app, "home.conditionalFormat", json!({"rule": {"type": "colorScale", "colors": cols}}));
             }
         }
+        more_rules(app, ui, json!({"ruleType": "values", "formatStyle": "3color"}));
     });
     ui.menu_button(lang.tr("Icon Sets"), |ui| {
         for (label, set) in [
@@ -768,10 +787,11 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
                 act(app, "home.conditionalFormat", json!({"rule": {"type": "iconSet", "set": set}}));
             }
         }
+        more_rules(app, ui, json!({"ruleType": "values", "formatStyle": "iconSet"}));
     });
     ui.separator();
     if ui.button(lang.tr("New Rule…")).clicked() {
-        app.open_dialog("cfQuick", json!({"type": "expression", "title": "New Formatting Rule"}));
+        app.open_dialog("newFormattingRule", json!({}));
     }
     ui.menu_button(lang.tr("Clear Rules"), |ui| {
         menu_items(

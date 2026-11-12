@@ -146,10 +146,11 @@ fn ref_edit_id(key: &str) -> egui::Id {
 }
 
 /// Whether the reference box `key` of dialog `dialog` takes several areas joined by commas.
-/// Solver's variable cells and a scenario's changing and result cells do; every other box takes
+/// Solver's variable cells, a scenario's changing and result cells and a conditional format's
+/// Applies To do; every other box takes
 /// one cell or range, which its command parses as a single reference.
 fn takes_several_areas(dialog: &str, key: &str) -> bool {
-    matches!((dialog, key), ("solver", "variables") | ("scenarioManager", "changing" | "resultCells"))
+    matches!((dialog, key), ("solver", "variables") | ("scenarioManager", "changing" | "resultCells") | ("manageRules", "appliesTo"))
 }
 
 /// The grid selection as a reference, with the sheet name when the selection is on another sheet

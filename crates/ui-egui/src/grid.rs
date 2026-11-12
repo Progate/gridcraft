@@ -37,6 +37,7 @@ mod show;
 mod tables;
 
 pub(crate) use cell_paint::paint_border;
+pub(crate) use cell_paint::paint_cf_icon;
 #[cfg(test)]
 pub(crate) use cell_paint::{cell_text_y, rotated_text_pos, wrapped_cell_text_y};
 #[cfg(test)]
