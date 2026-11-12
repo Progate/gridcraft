@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use gridcraft_core::{CellRef, RangeRef, Value, sort_compare};
+use gridcraft_core::{CellRef, RangeRef, Value};
 use gridcraft_model::{
     Anchor, AnchorMode, AutoFilter, Cell, CfOperator, Comment, ErrorStyle, FilterCriterion, Formula, Hyperlink, LineInfo, Sheet, Validation,
     ValidationKind, Workbook,
@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Sort…",
             ["Data", "Sort & Filter"],
             None,
-            "{range?, header?: bool, keys: [{column: \"B\", order: asc|desc, by?: values|cellColor|fontColor, customList?: [..]}], orientation?: rows|columns, matchCase?}",
+            "{range?, header?: bool, keys: [{column: \"B\", order: asc|desc, by?: values|cellColor|fontColor, customList?: [..]}], orientation?: rows|columns, matchCase?, phonetic?: bool (Japanese collation: sort cells with furigana by their reading, Excel's \"Use phonetic\", default true)}",
             has_doc,
             sort
         ),

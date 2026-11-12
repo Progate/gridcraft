@@ -130,6 +130,10 @@ pub trait Ctx {
     fn call_lambda(&mut self, _arg: Value) -> Option<Value> {
         None
     }
+    /// The text order SORT and SORTBY use: the workbook region's ([`gridcraft_core::Collation::for_region`]).
+    fn collation(&self) -> gridcraft_core::Collation {
+        gridcraft_core::Collation::Default
+    }
 }
 
 pub type FnImpl = fn(&[Arg], &mut dyn Ctx) -> Value;

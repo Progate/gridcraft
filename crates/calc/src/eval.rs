@@ -178,6 +178,9 @@ impl Ctx for FnCtx<'_, '_> {
     fn date_system(&self) -> gridcraft_core::DateSystem {
         self.ev.host.workbook().date_system
     }
+    fn collation(&self) -> gridcraft_core::Collation {
+        gridcraft_core::Collation::for_region(self.ev.host.workbook().region)
+    }
     fn now_serial(&self) -> f64 {
         self.ev.host.now_serial()
     }

@@ -817,6 +817,7 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("My list has headers", "先頭行をデータの見出しとして使用する"),
     ("Sort by", "最優先されるキー"),
     ("Then by", "次に優先されるキー"),
+    ("Use phonetic", "ふりがなを使う"),
     ("Cell Values", "セルの値"),
     ("Cell Color", "セルの色"),
     ("A to Z", "昇順"),

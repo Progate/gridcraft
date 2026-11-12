@@ -335,6 +335,17 @@ pub(super) fn sort(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
     let mut header = d.values.get("header").and_then(Json::as_bool).unwrap_or(true);
     ui.checkbox(&mut header, lang.tr("My list has headers"));
     d.values.insert("header".into(), json!(header));
+    // Japanese Excel's Sort Options ▸ "Use phonetic" (on by default): cells with furigana sort by
+    // their reading. Only a Japanese workbook has the option.
+    let japanese = app
+        .session
+        .active()
+        .is_some_and(|d| gridcraft_engine::core::Collation::for_region(d.wb.region) == gridcraft_engine::core::Collation::Japanese);
+    let mut phonetic = d.values.get("phonetic").and_then(Json::as_bool).unwrap_or(true);
+    if japanese {
+        ui.checkbox(&mut phonetic, lang.tr("Use phonetic"));
+        d.values.insert("phonetic".into(), json!(phonetic));
+    }
     let mut levels: Vec<Json> = d.values.get("levels").and_then(Json::as_array).cloned().unwrap_or_default();
     // Columns of the region around the active cell, labelled with their header (or first value).
     let columns: Vec<(String, String)> = app
@@ -426,7 +437,7 @@ pub(super) fn sort(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
     let mut open = true;
     ok_cancel(ui, confirm, &mut open);
     if *confirm {
-        app.run_or_alert("data.sort", json!({"header": header, "keys": levels}));
+        app.run_or_alert("data.sort", json!({"header": header, "keys": levels, "phonetic": phonetic}));
     }
     if !open {
         *confirm = true;

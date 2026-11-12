@@ -1531,6 +1531,54 @@ fn data_sort_orders_marks_and_digit_scripts_like_excel() {
     assert_eq!(col, want.map(Value::from));
 }
 
+/// A Japanese workbook sorts kana in gojūon order (hiragana, katakana and half-width together)
+/// and kanji in JIS order; with "Use phonetic" a cell with furigana sorts by its reading.
+#[test]
+fn data_sort_in_a_japanese_workbook_uses_the_japanese_order() {
+    let mut s = s();
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).region = gridcraft_core::region::lookup("ja-JP");
+    s.execute("range.setValues", json!({"range": "A1", "values": [["東京"], ["ｳﾒ"], ["大阪"], ["いちご"], ["アンズ"]]})).unwrap();
+    s.execute("data.sortAscending", json!({"range": "A1:A5", "column": "A"})).unwrap();
+    let col: Vec<Value> = (1..=5).map(|r| v(&s, &format!("A{r}"))).collect();
+    // Kana before kanji, ｳﾒ as うめ, 大 (0x91E5) before 東 (0x938C).
+    assert_eq!(col, ["アンズ", "いちご", "ｳﾒ", "大阪", "東京"].map(Value::from));
+
+    // By code 佐藤 (0x8DB2) sorts before 渡辺 (0x936E); with its reading わたなべ, a kana, 渡辺
+    // sorts before every kanji.
+    s.execute("range.setValues", json!({"range": "B1", "values": [["渡辺"], ["佐藤"], ["あべ"]]})).unwrap();
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).phonetics.push(gridcraft_model::PhoneticString {
+        text: "渡辺".into(),
+        runs: vec![gridcraft_model::PhoneticRun { start: 0, end: 2, text: "ワタナベ".into() }],
+        props: None,
+    });
+    s.execute("data.sort", json!({"range": "B1:B3", "header": false, "phonetic": false, "keys": [{"column": "B"}]})).unwrap();
+    let col: Vec<Value> = (1..=3).map(|r| v(&s, &format!("B{r}"))).collect();
+    assert_eq!(col, ["あべ", "佐藤", "渡辺"].map(Value::from));
+    s.execute("data.sort", json!({"range": "B1:B3", "header": false, "keys": [{"column": "B"}]})).unwrap();
+    let col: Vec<Value> = (1..=3).map(|r| v(&s, &format!("B{r}"))).collect();
+    assert_eq!(col, ["あべ", "渡辺", "佐藤"].map(Value::from));
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).phonetics[0].runs[0].text = "アオキ".into();
+    s.execute("data.sort", json!({"range": "B1:B3", "header": false, "keys": [{"column": "B"}]})).unwrap();
+    let col: Vec<Value> = (1..=3).map(|r| v(&s, &format!("B{r}"))).collect();
+    assert_eq!(col, ["渡辺", "あべ", "佐藤"].map(Value::from));
+
+    // SORT follows the same order.
+    s.execute("cell.set", json!({"cell": "D1", "input": "=SORT(A1:A5)"})).unwrap();
+    assert_eq!(v(&s, "D1"), Value::from("アンズ"));
+    assert_eq!(v(&s, "D4"), Value::from("大阪"));
+}
+
+#[test]
+fn data_sort_in_an_english_workbook_keeps_code_point_order_for_kanji() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["亜"], ["一"]]})).unwrap();
+    s.execute("data.sortAscending", json!({"range": "A1:A2", "column": "A"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::from("一"));
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).region = gridcraft_core::region::lookup("ja-JP");
+    s.execute("data.sortAscending", json!({"range": "A1:A2", "column": "A"})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::from("亜"));
+}
+
 #[test]
 fn sort_with_a_sheet_prefix_sorts_the_named_sheet() {
     let col = |s: &Session, sheet: &str| -> Vec<Value> {

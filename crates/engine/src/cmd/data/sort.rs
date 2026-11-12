@@ -1,6 +1,6 @@
 use super::{
     Anchor, AnchorMode, Arc, Cell, CellRef, Comment, EngineError, Formula, Hyperlink, Json, LineInfo, Ordering, RangeRef, Result, Session, Sheet,
-    Value, bad, bool_param, col_param, data_range, edit, guess_header, json, ok, sort_compare, split_sheet, str_param, target_sheet,
+    Value, bad, bool_param, col_param, data_range, edit, guess_header, json, ok, split_sheet, str_param, target_sheet,
 };
 
 #[derive(Clone)]
@@ -34,7 +34,7 @@ pub(super) fn quick_sort(s: &mut Session, p: &Json, asc: bool) -> Result<Json> {
     let d = s.doc()?;
     let sh = d.wb.sheet(sheet).ok_or(EngineError::NoDocument)?;
     let header = guess_header(&d.wb, sh, r);
-    do_sort(s, sheet, r, header, vec![SortKey { col, desc: !asc, by: "values".into(), list: None }], false, false)
+    do_sort(s, sheet, r, header, vec![SortKey { col, desc: !asc, by: "values".into(), list: None }], false, false, true)
 }
 
 pub(super) fn sort(s: &mut Session, p: &Json) -> Result<Json> {
@@ -44,6 +44,7 @@ pub(super) fn sort(s: &mut Session, p: &Json) -> Result<Json> {
     let header = bool_param(p, "header").unwrap_or_else(|| guess_header(&d.wb, sh, r));
     let by_cols = str_param(p, "orientation") == Some("columns");
     let case = bool_param(p, "matchCase").unwrap_or(false);
+    let phonetic = bool_param(p, "phonetic").unwrap_or(true);
     let mut keys: Vec<SortKey> = Vec::new();
     for k in p.get("keys").and_then(Json::as_array).map(Vec::as_slice).unwrap_or_default() {
         let col = if by_cols {
@@ -74,10 +75,21 @@ pub(super) fn sort(s: &mut Session, p: &Json) -> Result<Json> {
     if keys.len() > 64 {
         return Err(bad("data.sort", "too many sort levels (64 max)"));
     }
-    do_sort(s, sheet, r, header, keys, by_cols, case)
+    do_sort(s, sheet, r, header, keys, by_cols, case, phonetic)
 }
 
-fn do_sort(s: &mut Session, sheet: usize, r: RangeRef, header: bool, keys: Vec<SortKey>, by_cols: bool, case: bool) -> Result<Json> {
+/// Text sort keys under the Japanese collation with "Use phonetic" on: a text with furigana
+/// (`<rPh>` runs read from the file) sorts by its reading, as Excel's default Sort Options do.
+fn phonetic_keys(wb: &gridcraft_model::Workbook) -> std::collections::HashMap<String, String> {
+    wb.phonetics
+        .iter()
+        .filter(|p| !p.runs.is_empty())
+        .map(|p| (p.text.clone(), gridcraft_core::collate::phonetic_reading(&p.text, p.runs.iter().map(|r| (r.start, r.end, r.text.as_str())))))
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn do_sort(s: &mut Session, sheet: usize, r: RangeRef, header: bool, keys: Vec<SortKey>, by_cols: bool, case: bool, phonetic: bool) -> Result<Json> {
     // Protect Sheet ▸ Sort. Both Sort… and the A-to-Z buttons come through here.
     crate::cmd::refuse_unless_allowed(s, sheet, "Sorting", |p| p.sort)?;
     let body = if by_cols {
@@ -99,9 +111,16 @@ fn do_sort(s: &mut Session, sheet: usize, r: RangeRef, header: bool, keys: Vec<S
         let line = |i: u32, k: u32| if by_cols { CellRef::new(k, body.start.col + i) } else { CellRef::new(body.start.row + i, k) };
         let theme = cx.wb.theme.clone();
         let styles = &cx.wb.styles;
+        // Text order follows the workbook's region: Japanese sorts kana in gojūon order and kanji
+        // in JIS order (gridcraft_core::collate).
+        let coll = gridcraft_core::Collation::for_region(cx.wb.region);
+        let readings = if phonetic && coll == gridcraft_core::Collation::Japanese { phonetic_keys(&cx.wb) } else { Default::default() };
         let key_val = |i: u32, k: &SortKey| -> (Value, u32) {
             let c = line(i, k.col);
-            let v = sh.value(c);
+            let v = match sh.value(c) {
+                Value::Text(t) => readings.get(t.as_ref()).map_or(Value::Text(t), |r| Value::Text(r.as_str().into())),
+                v => v,
+            };
             let color = match k.by.as_str() {
                 "cellColor" => {
                     styles.get(sh.style_id(c)).fill.fg.resolve(&theme).map(|[r, g, b]| u32::from_be_bytes([0, r, g, b])).unwrap_or(u32::MAX)
@@ -125,9 +144,9 @@ fn do_sort(s: &mut Session, sheet: usize, r: RangeRef, header: bool, keys: Vec<S
                     let pos = |v: &Value| v.as_text().and_then(|t| list.iter().position(|x| x.eq_ignore_ascii_case(t))).unwrap_or(usize::MAX);
                     pos(va).cmp(&pos(vb))
                 } else if case && va.is_text() && vb.is_text() {
-                    sort_compare(va, vb).then_with(|| case_order(va.as_text().unwrap_or(""), vb.as_text().unwrap_or("")))
+                    coll.sort_compare(va, vb).then_with(|| case_order(va.as_text().unwrap_or(""), vb.as_text().unwrap_or("")))
                 } else {
-                    sort_compare(va, vb)
+                    coll.sort_compare(va, vb)
                 };
                 // Blanks always sort last, whatever the order.
                 let o = if k.desc && !(va.is_empty() || vb.is_empty()) { o.reverse() } else { o };

@@ -9,7 +9,7 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use gridcraft_core::{Array, CellError, Value, sort_compare};
+use gridcraft_core::{Array, CellError, Collation, Value};
 
 use crate::util::{A, MAX_CELLS, R, arg, array_val, as_array, has, num, opt_bool, scalar};
 use crate::{Arg, Ctx, FnSpec, VAR};
@@ -133,9 +133,15 @@ fn filter(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
 
 /// Compares two key vectors with per-key orders (1 ascending, -1 descending).
 fn cmp_keys(a: &[Value], b: &[Value], orders: &[i64]) -> Ordering {
+    cmp_keys_in(a, b, orders, Collation::Default)
+}
+
+/// [`cmp_keys`] with text in the workbook's collation (SORT and SORTBY: Japanese Excel sorts
+/// kana in gojūon order and kanji in JIS order).
+fn cmp_keys_in(a: &[Value], b: &[Value], orders: &[i64], coll: Collation) -> Ordering {
     for (i, ord) in orders.iter().enumerate() {
         let (Some(x), Some(y)) = (a.get(i), b.get(i)) else { continue };
-        let o = sort_compare(x, y);
+        let o = coll.sort_compare(x, y);
         let o = if *ord < 0 {
             // Blanks stay last even when descending.
             match (x, y) {
@@ -165,7 +171,7 @@ fn int_list(v: &Value) -> R<Vec<i64>> {
         .collect()
 }
 
-fn sort(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+fn sort(args: &[Arg], c: &mut dyn Ctx) -> R<Value> {
     let a = arr_arg(args, 0)?;
     let by_col = opt_bool(args, 3, false)?;
     let a = if by_col { a.transpose() } else { a };
@@ -184,12 +190,13 @@ fn sort(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
     let (idx, orders): (Vec<i64>, Vec<i64>) = idx.into_iter().zip(orders).filter(|(i, _)| seen.insert(*i)).unzip();
     let mut lines: Vec<(Vec<Value>, Vec<Value>)> =
         rows_of(&a).into_iter().map(|r| (idx.iter().map(|&i| r.get(i as usize - 1).cloned().unwrap_or(Value::Empty)).collect(), r)).collect();
-    lines.sort_by(|x, y| cmp_keys(&x.0, &y.0, &orders));
+    let coll = c.collation();
+    lines.sort_by(|x, y| cmp_keys_in(&x.0, &y.0, &orders, coll));
     let out = Array::new(a.rows, a.cols, lines.into_iter().flat_map(|(_, r)| r).collect()).ok_or(CellError::Calc)?;
     Ok(Value::from(if by_col { out.transpose() } else { out }))
 }
 
-fn sortby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
+fn sortby(args: &[Arg], c: &mut dyn Ctx) -> R<Value> {
     let a = arr_arg(args, 0)?;
     let mut keys: Vec<Array> = Vec::new();
     let mut orders: Vec<i64> = Vec::new();
@@ -221,7 +228,8 @@ fn sortby(args: &[Arg], _c: &mut dyn Ctx) -> R<Value> {
         .enumerate()
         .map(|(r, row)| (keys.iter().map(|k| k.data.get(r).cloned().unwrap_or(Value::Empty)).collect(), row))
         .collect();
-    lines.sort_by(|x, y| cmp_keys(&x.0, &y.0, &orders));
+    let coll = c.collation();
+    lines.sort_by(|x, y| cmp_keys_in(&x.0, &y.0, &orders, coll));
     let out = Array::new(base.rows, base.cols, lines.into_iter().flat_map(|(_, r)| r).collect()).ok_or(CellError::Calc)?;
     Ok(Value::from(if by_rows { out } else { out.transpose() }))
 }
