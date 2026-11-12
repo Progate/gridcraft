@@ -390,7 +390,8 @@ fn summary_step(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: 
         return;
     }
     // Excel closes the Scenario Manager once the summary sheet is made.
-    match app.run("data.scenarioSummary", json!({"resultCells": value(d, "resultCells")})) {
+    // The report is written in the interface language, as Excel writes it in its own.
+    match app.run("data.scenarioSummary", json!({"resultCells": value(d, "resultCells"), "language": lang.code()})) {
         Ok(_) => *open = false,
         Err(e) => app.message = Some((lang.tr("Scenario Summary").to_string(), crate::clean_error(&e))),
     }

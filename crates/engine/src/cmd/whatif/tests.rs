@@ -134,6 +134,24 @@ fn scenarios() {
     assert!(s.execute("data.scenarioSummary", json!({})).is_err());
 }
 
+#[test]
+fn a_japanese_scenario_summary_uses_excels_japanese_sheet_name_and_labels() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "B2", "values": [[10], [20]]})).unwrap();
+    s.execute("cell.set", json!({"cell": "B10", "input": "=B2*B3"})).unwrap();
+    s.execute("data.scenarioAdd", json!({"name": "Best", "changing": "B2:B3", "values": [100, 3]})).unwrap();
+    let r = s.execute("data.scenarioSummary", json!({"resultCells": "B10", "language": "ja"})).unwrap();
+    assert_eq!(r["sheet"], "シナリオ情報");
+    assert_eq!(v(&s, "シナリオ情報!B2"), Value::from("シナリオの情報"));
+    assert_eq!(v(&s, "シナリオ情報!C3"), Value::from("現在の値:"));
+    assert_eq!(v(&s, "シナリオ情報!B4"), Value::from("変更セル:"));
+    assert_eq!(v(&s, "シナリオ情報!B7"), Value::from("結果セル:"));
+    assert!(v(&s, "シナリオ情報!B10").display().starts_with("注: "));
+    s.execute("sheet.activate", json!({"sheet": 0})).unwrap();
+    let r = s.execute("data.scenarioSummary", json!({"resultCells": "B10", "language": "ja-JP"})).unwrap();
+    assert_eq!(r["sheet"], "シナリオ情報 2");
+}
+
 fn sheet1_xml(s: &mut Session) -> String {
     let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
     let bytes = crate::io::base64_decode(&b64).unwrap();

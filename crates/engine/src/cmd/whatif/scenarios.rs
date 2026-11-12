@@ -311,6 +311,40 @@ pub(super) fn scenario_delete(s: &mut Session, p: &Json) -> Result<Json> {
     Ok(json!({"deleted": removed.name}))
 }
 
+/// The words a Scenario Summary sheet is written with: Excel writes the report in its interface
+/// language, so the caller passes that language (`language: "ja"`).
+struct SummaryLabels {
+    sheet: &'static str,
+    title: &'static str,
+    current: &'static str,
+    changing: &'static str,
+    results: &'static str,
+    note: &'static str,
+}
+
+impl SummaryLabels {
+    fn for_language(language: Option<&str>) -> SummaryLabels {
+        match language.map(|l| l.split(['-', '_']).next().unwrap_or(l).to_ascii_lowercase()).as_deref() {
+            Some("ja") => SummaryLabels {
+                sheet: "シナリオ情報",
+                title: "シナリオの情報",
+                current: "現在の値:",
+                changing: "変更セル:",
+                results: "結果セル:",
+                note: "注: 現在の値 列は、シナリオ情報レポートが作成された時点での変更セルの値を表します。",
+            },
+            _ => SummaryLabels {
+                sheet: "Scenario Summary",
+                title: "Scenario Summary",
+                current: "Current Values:",
+                changing: "Changing Cells:",
+                results: "Result Cells:",
+                note: "Notes: Current Values column represents values of changing cells at time Scenario Summary Report was created.",
+            },
+        }
+    }
+}
+
 /// Most changing-cell-by-scenario cells one Scenario Summary writes.
 const MAX_SUMMARY_CELLS: usize = 1_000_000;
 
@@ -368,10 +402,11 @@ pub(super) fn scenario_summary(s: &mut Session, p: &Json) -> Result<Json> {
     let fmt_of = |c: CellRef| d.wb.styles.get(sh.style_id(c)).num_fmt.clone();
     let changing_fmts: Vec<_> = changing.iter().map(|c| fmt_of(*c)).collect();
     let result_fmts: Vec<_> = results.iter().map(|c| fmt_of(*c)).collect();
+    let labels = SummaryLabels::for_language(str_param(p, "language"));
     let name = (1..)
-        .map(|n| if n == 1 { "Scenario Summary".to_string() } else { format!("Scenario Summary {n}") })
+        .map(|n| if n == 1 { labels.sheet.to_string() } else { format!("{} {n}", labels.sheet) })
         .find(|n| d.wb.sheet_index(n).is_none())
-        .unwrap_or_else(|| "Scenario Summary".into());
+        .unwrap_or_else(|| labels.sheet.into());
     let names: Vec<String> = scenarios.iter().map(|x| x.name.clone()).collect();
     let new_index = edit(s, |cx| {
         let bold = cx.wb.styles.derive(StyleId::DEFAULT, |st| st.font.bold = true);
@@ -379,12 +414,12 @@ pub(super) fn scenario_summary(s: &mut Session, p: &Json) -> Result<Json> {
         let put = |sheet: &mut Sheet, row: u32, col: u32, v: Value, style: StyleId| {
             sheet.set_cell(CellRef::new(row, col), Cell { value: v, formula: None, style, py: None });
         };
-        put(&mut sheet, 1, 1, Value::text("Scenario Summary"), bold);
-        put(&mut sheet, 2, 2, Value::text("Current Values:"), bold);
+        put(&mut sheet, 1, 1, Value::text(labels.title), bold);
+        put(&mut sheet, 2, 2, Value::text(labels.current), bold);
         for (k, n) in names.iter().enumerate() {
             put(&mut sheet, 2, 3 + k as u32, Value::text(n.as_str()), bold);
         }
-        put(&mut sheet, 3, 1, Value::text("Changing Cells:"), bold);
+        put(&mut sheet, 3, 1, Value::text(labels.changing), bold);
         let mut row = 4u32;
         for (i, c) in changing.iter().enumerate() {
             let fmt = changing_fmts.get(i).cloned().unwrap_or_default();
@@ -398,7 +433,7 @@ pub(super) fn scenario_summary(s: &mut Session, p: &Json) -> Result<Json> {
             row += 1;
         }
         if !results.is_empty() {
-            put(&mut sheet, row, 1, Value::text("Result Cells:"), bold);
+            put(&mut sheet, row, 1, Value::text(labels.results), bold);
             row += 1;
             for (i, c) in results.iter().enumerate() {
                 let fmt = result_fmts.get(i).cloned().unwrap_or_default();
@@ -411,13 +446,7 @@ pub(super) fn scenario_summary(s: &mut Session, p: &Json) -> Result<Json> {
                 row += 1;
             }
         }
-        put(
-            &mut sheet,
-            row + 1,
-            1,
-            Value::text("Notes: Current Values column represents values of changing cells at time Scenario Summary Report was created."),
-            StyleId::DEFAULT,
-        );
+        put(&mut sheet, row + 1, 1, Value::text(labels.note), StyleId::DEFAULT);
         sheet.cols.insert(1, gridcraft_model::LineInfo { size: Some(110.0), ..Default::default() });
         sheet.cols.insert(2, gridcraft_model::LineInfo { size: Some(100.0), ..Default::default() });
         cx.wb.sheets.push(std::sync::Arc::new(sheet));

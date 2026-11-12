@@ -64,7 +64,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Scenario Summary",
             [],
             None,
-            "{resultCells?: \"B10\" or \"B10:B12,D4\"} inserts a \"Scenario Summary\" sheet: changing cells and result cells for the current values and each scenario",
+            "{resultCells?: \"B10\" or \"B10:B12,D4\", language?: \"ja\" (the interface language: the sheet is then named シナリオ情報 and labelled as Excel's Japanese report)} inserts a \"Scenario Summary\" sheet: changing cells and result cells for the current values and each scenario",
             has_doc,
             scenario_summary
         ),
