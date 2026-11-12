@@ -185,3 +185,71 @@ pub(super) fn select_data(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
         }
     }
 }
+
+/// The chart types a combo chart's series can take in Change Chart Type ▸ Combo: `(type, subtype, label)`.
+const COMBO_TYPES: [(&str, &str, &str); 8] = [
+    ("column", "", "Clustered Column"),
+    ("column", "stacked", "Stacked Column"),
+    ("column", "stacked100", "100% Stacked Column"),
+    ("line", "", "Line"),
+    ("line", "markers", "Line with Markers"),
+    ("line", "stacked", "Stacked Line"),
+    ("area", "", "Area"),
+    ("area", "stacked", "Stacked Area"),
+];
+
+/// The Combo row `(type, subtype)` for a series drawn as `kind`: its own when a combo can take
+/// it, else Excel's default combination (the first series a column, the others lines).
+pub(super) fn combo_row_type(kind: gridcraft_chart::ChartKind, i: usize) -> (&'static str, &'static str) {
+    COMBO_TYPES
+        .iter()
+        .find(|(t, s, _)| gridcraft_engine::cmd::insert::combo_series_kind(t, s) == Some(kind))
+        .map_or(if i == 0 { ("column", "") } else { ("line", "") }, |(t, s, _)| (*t, *s))
+}
+
+/// Change Chart Type ▸ Combo: each series' chart type and Secondary Axis box; OK runs
+/// `chart.changeType` with the rows as `combo`.
+pub(super) fn combo_chart(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let lang = crate::i18n::current(ui.ctx());
+    let mut rows: Vec<Json> = d.values.get("rows").and_then(Json::as_array).cloned().unwrap_or_default();
+    ui.label(lang.tr("Choose the chart type and axis for your data series:"));
+    ui.add_space(4.0);
+    egui::Grid::new("gridcraft.combo_rows").num_columns(3).spacing(vec2(12.0, 6.0)).show(ui, |ui| {
+        ui.strong(lang.tr("Series Name"));
+        ui.strong(lang.tr("Chart Type"));
+        ui.strong(lang.tr("Secondary Axis"));
+        ui.end_row();
+        for (i, row) in rows.iter_mut().enumerate() {
+            let name = row["name"].as_str().unwrap_or("").to_string();
+            ui.label(&name);
+            let (t, sub) = (row["type"].as_str().unwrap_or("").to_string(), row["subtype"].as_str().unwrap_or("").to_string());
+            let current = COMBO_TYPES.iter().find(|(k, s, _)| *k == t && *s == sub).map_or("", |c| c.2);
+            craft_ui::ComboBox::from_id_salt(("gridcraft.combo_type", i)).width(170.0).selected_text(lang.tr(current)).show_ui(ui, |ui| {
+                for (k, s, label) in COMBO_TYPES {
+                    if ui.selectable_label(current == label, lang.tr(label)).clicked() {
+                        row["type"] = json!(k);
+                        row["subtype"] = json!(s);
+                    }
+                }
+            });
+            let mut secondary = row["secondary"].as_bool().unwrap_or(false);
+            let r = ui.checkbox(&mut secondary, "");
+            r.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, true, secondary, format!("{} {name}", lang.tr("Secondary Axis"))));
+            if r.changed() {
+                row["secondary"] = json!(secondary);
+            }
+            ui.end_row();
+        }
+    });
+    d.values.insert("rows".into(), json!(rows));
+    ok_cancel(ui, confirm, open);
+    if *confirm {
+        *confirm = false;
+        let combo: Vec<Json> = rows.iter().map(|r| json!({"type": r["type"], "subtype": r["subtype"], "secondary": r["secondary"]})).collect();
+        let chart = d.values.get("chart").cloned().unwrap_or(Json::Null);
+        match app.run("chart.changeType", json!({"chart": chart, "type": "combo", "combo": combo})) {
+            Ok(_) => *open = false,
+            Err(e) => app.message = Some((d.title.clone(), crate::clean_error(&e))),
+        }
+    }
+}

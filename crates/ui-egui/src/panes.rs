@@ -281,6 +281,19 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
             }
         }
     });
+    let axis_choice = matches!(
+        chart.kind,
+        gridcraft_chart::ChartKind::Combo
+            | gridcraft_chart::ChartKind::ColumnClustered
+            | gridcraft_chart::ChartKind::ColumnStacked
+            | gridcraft_chart::ChartKind::ColumnStacked100
+            | gridcraft_chart::ChartKind::Line
+            | gridcraft_chart::ChartKind::LineMarkers
+            | gridcraft_chart::ChartKind::LineStacked
+            | gridcraft_chart::ChartKind::Area
+            | gridcraft_chart::ChartKind::AreaStacked
+            | gridcraft_chart::ChartKind::AreaStacked100
+    );
     ui.collapsing("Series", |ui| {
         let data = app.session.active().map(|d| gridcraft_chart::resolve(&d.wb, d.wb.active_sheet(), &chart));
         for (i, s) in chart.series.iter().enumerate() {
@@ -302,6 +315,37 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
                     }
                 });
             });
+            // Format Data Series ▸ Series Options ▸ Plot Series On, for charts that can take a second value axis.
+            if axis_choice {
+                ui.horizontal(|ui| {
+                    ui.label(lang.tr("Plot Series On"));
+                    let secondary = chart.kind == gridcraft_chart::ChartKind::Combo && s.secondary;
+                    for (label, on) in [("Primary Axis", false), ("Secondary Axis", true)] {
+                        if ui.radio(secondary == on, lang.tr(label)).clicked() && secondary != on {
+                            app.run_or_alert("chart.formatSelection", json!({"chart": id, "series": i, "secondary": on}));
+                        }
+                    }
+                });
+            }
+        }
+        if axis_choice && ui.button(lang.tr("Change Series Chart Type…")).clicked() {
+            app.open_dialog("comboChart", json!({"chart": id}));
+        }
+    });
+    ui.collapsing(lang.tr("Alt Text"), |ui| {
+        let field = egui::Id::unique(("gridcraft.chart_alt_title", id));
+        ui.label(lang.tr("Title:"));
+        if let Some(title) = crate::widgets::committed_text(ui, field, &chart.alt_text.title, None) {
+            app.run_or_alert("object.altText", json!({"kind": "chart", "id": id, "title": title}));
+        }
+        ui.label(lang.tr("Description:"));
+        let field = egui::Id::unique(("gridcraft.chart_alt_description", id));
+        if let Some(description) = crate::widgets::committed_text(ui, field, &chart.alt_text.description, None) {
+            app.run_or_alert("object.altText", json!({"kind": "chart", "id": id, "description": description}));
+        }
+        let mut decorative = chart.alt_text.decorative;
+        if ui.checkbox(&mut decorative, lang.tr("Mark as decorative")).changed() {
+            app.run_or_alert("object.altText", json!({"kind": "chart", "id": id, "decorative": decorative}));
         }
     });
     ui.collapsing("Colors & Layout", |ui| {

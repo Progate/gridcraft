@@ -1061,6 +1061,25 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Unprotect Sheet…", "シート保護の解除…"),
     ("Collapse dialog", "ダイアログを折りたたむ"),
     ("Expand dialog", "ダイアログを展開する"),
+    ("Combo…", "組み合わせ…"),
+    ("Alt\nText", "代替テキスト"),
+    ("Alt Text", "代替テキスト"),
+    ("View Alt Text…", "代替テキストを表示…"),
+    ("Change Chart Type…", "グラフの種類の変更…"),
+    ("Choose the chart type and axis for your data series:", "データ系列に使用するグラフの種類と軸を選択してください:"),
+    ("Series Name", "系列名"),
+    ("Chart Type", "グラフの種類"),
+    ("Secondary Axis", "第 2 軸"),
+    ("Primary Axis", "主軸"),
+    ("Plot Series On", "使用する軸"),
+    ("Change Series Chart Type…", "系列グラフの種類の変更…"),
+    ("Description:", "説明:"),
+    ("Mark as decorative", "装飾用にする"),
+    ("Select a chart or picture first.", "先にグラフまたは画像を選択してください。"),
+    (
+        "How would you describe this object and its context to someone who is blind or has low vision?",
+        "このオブジェクトとそのコンテキストを、視覚に障碍のある方にどのように説明しますか?",
+    ),
 ];
 
 /// Labels of the ribbon menus, pop-ups and palettes that the reference catalog does not cover (the

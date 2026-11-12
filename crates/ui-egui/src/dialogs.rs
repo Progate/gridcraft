@@ -1083,6 +1083,56 @@ impl Dialog {
                     json!({"chart": id, "range": eq(&range), "range0": eq(&range), "categories": eq(&cats), "categories0": eq(&cats), "names": names, "remove": []}),
                 )
             }
+            "comboChart" => {
+                // Change Chart Type ▸ Combo: a chart type and a Secondary Axis box per series.
+                let id = p("chart").as_u64();
+                let rows = app.session.active().and_then(|doc| {
+                    let si = doc.wb.active_sheet();
+                    let ch = doc.wb.sheet(si)?.charts.iter().find(|c| Some(u64::from(c.id)) == id)?;
+                    let data = gridcraft_chart::resolve(&doc.wb, si, ch);
+                    let rows: Vec<Json> = ch
+                        .series
+                        .iter()
+                        .enumerate()
+                        .map(|(i, x)| {
+                            let name = data.series.get(i).map(|s| s.name.clone()).unwrap_or_else(|| format!("Series{}", i + 1));
+                            let secondary = ch.kind == gridcraft_chart::ChartKind::Combo && x.secondary;
+                            let (t, sub) = charts::combo_row_type(gridcraft_chart::series_plot_kind(ch, i), i);
+                            json!({"name": name, "type": t, "subtype": sub, "secondary": secondary})
+                        })
+                        .collect();
+                    Some(rows)
+                });
+                let Some(rows) = rows.filter(|r| !r.is_empty()) else {
+                    app.message = Some(("Change Chart Type".into(), "Select a chart first.".into()));
+                    return None;
+                };
+                Dialog::custom("comboChart", "Change Chart Type", json!({"chart": id, "rows": rows}))
+            }
+            "altText" => {
+                // Alt Text of a chart or picture: Title, Description and Mark as decorative.
+                let (kind, id) = (p("kind"), p("id"));
+                let current = app.session.run("object.altText", json!({"kind": kind, "id": id}));
+                let current = match current {
+                    Ok(v) => v,
+                    Err(e) => {
+                        app.message = Some(("Alt Text".into(), crate::clean_error(&e)));
+                        return None;
+                    }
+                };
+                Dialog::form(
+                    "altText",
+                    "Alt Text",
+                    "object.altText",
+                    vec![
+                        Note("How would you describe this object and its context to someone who is blind or has low vision?".into()),
+                        Text { key: "title", label: "Title:" },
+                        Text { key: "description", label: "Description:" },
+                        Check { key: "decorative", label: "Mark as decorative" },
+                    ],
+                    json!({"kind": kind, "id": id, "title": current["title"], "description": current["description"], "decorative": current["decorative"]}),
+                )
+            }
             "journal" => Dialog::custom("journal", "Action Journal", json!({})),
             "macros" => crate::macro_ui::open_dialog(app, &params),
             "recordMacro" => return crate::macro_ui::open_record(app, &params),

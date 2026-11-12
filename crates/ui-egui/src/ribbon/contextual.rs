@@ -168,9 +168,18 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
                 act(app, "chart.set", json!({"chart": id, "type": k, "subtype": s}));
             }
         }
+        ui.separator();
+        if ui.button("Combo…").clicked() {
+            app.open_dialog("comboChart", json!({"chart": id}));
+        }
     });
     if big_button(ui, Icon::Settings, "Format\nPane", "Format Chart pane", false).clicked() {
         app.grid.pane = Some("formatChart".into());
+    }
+    let __k = big_button(ui, Icon::TextBox, "Alt\nText", "Alt Text", false);
+    control_keytip(app, ui, &__k, "object.altText");
+    if __k.clicked() {
+        app.open_dialog("altText", json!({"kind": "chart", "id": id}));
     }
     let __k = big_button(ui, Icon::TextBox, "Chart\nTitle", "Edit chart title", false);
     control_keytip(app, ui, &__k, "chartTitle");

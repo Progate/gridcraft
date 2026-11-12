@@ -1,6 +1,6 @@
 use super::about::about;
 use super::analysis::{analysis_toolpak, cancel_solver_options, goal_seek, in_solver_options, solver, solver_results};
-use super::charts::{recommended_charts, select_data};
+use super::charts::{combo_chart, recommended_charts, select_data};
 use super::command_search::command_search;
 use super::cond_format_rules::manage_rules;
 use super::data::{advanced_filter_form, data_validation_form, sort};
@@ -160,6 +160,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "insertFunction" | "commandSearch" | "nameManager" | "manageRules" | "journal" | "agents" | "equation" => 520.0,
         "macros" => 480.0,
         "recommendedCharts" => 600.0,
+        "comboChart" => 480.0,
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
         "scenarioManager" => 420.0,
@@ -206,6 +207,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "manageRules" => manage_rules(app, ui),
                 "recommendedCharts" => recommended_charts(app, ui, &mut d, &mut confirm, &mut open),
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
+                "comboChart" => combo_chart(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm, &mut open),
                 "scenarioManager" => super::scenarios::scenario_manager(app, ui, &mut d, &mut confirm, &mut open),
@@ -613,7 +615,7 @@ pub(super) fn form_fields(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
                             .get(key)
                             .map(|v| v.as_str().map(str::to_string).unwrap_or_else(|| if v.is_null() { String::new() } else { v.to_string() }))
                             .unwrap_or_default();
-                        let multiline = key == "text";
+                        let multiline = matches!(key, "text" | "description");
                         let r = if multiline {
                             ui.add(egui::TextEdit::multiline(&mut s).desired_rows(4).desired_width(320.0)).labelled_by(label.id)
                         } else {

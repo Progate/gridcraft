@@ -17,6 +17,15 @@ pub(super) fn review(app: &mut SheetApp, ui: &mut Ui) {
     if __k.clicked() {
         app.open_dialog("accessibility", json!({}));
     }
+    let __k = big_button(ui, Icon::TextBox, "Alt\nText", "Alt Text", false);
+    control_keytip(app, ui, &__k, "object.altText");
+    if __k.clicked() {
+        use gridcraft_engine::model::ObjKind;
+        match app.selected_object.filter(|o| matches!(o.kind, ObjKind::Chart | ObjKind::Image)) {
+            Some(o) => app.open_dialog("altText", json!({"kind": o.kind.name(), "id": o.id})),
+            None => app.message = Some(("Alt Text".into(), "Select a chart or picture first.".into())),
+        }
+    }
     sep(ui);
     let __k = big_button(ui, Icon::Comment, "New\nComment", "New Comment", false);
     control_keytip(app, ui, &__k, "dialog:comment");

@@ -402,7 +402,15 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
             }
             items.push(("Delete", "object.delete"));
             if kind == "chart" {
-                items.extend([("-", ""), ("Select Data…", "ui:selectData"), ("Format Chart Area…", "ui:formatChart")]);
+                items.extend([
+                    ("-", ""),
+                    ("Select Data…", "ui:selectData"),
+                    ("Change Chart Type…", "ui:comboChart"),
+                    ("Format Chart Area…", "ui:formatChart"),
+                ]);
+            }
+            if kind == "chart" || kind == "image" {
+                items.push(("View Alt Text…", "ui:altText"));
             }
             let lang = crate::i18n::current(ui.ctx());
             for (label, action) in items {
@@ -415,6 +423,8 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                     match action {
                         "ui:selectData" => app.open_dialog("selectData", json!({"chart": id})),
                         "ui:formatChart" => app.grid.pane = Some("formatChart".into()),
+                        "ui:comboChart" => app.open_dialog("comboChart", json!({"chart": id})),
+                        "ui:altText" => app.open_dialog("altText", json!({"kind": kind, "id": id})),
                         "ui:editText" => app.open_dialog("formatControl", json!({"id": id, "textOnly": true})),
                         "ui:assignAction" => app.open_dialog("assignAction", json!({"id": id})),
                         "ui:formatControl" => app.open_dialog("formatControl", json!({"id": id})),
