@@ -765,6 +765,18 @@ fn render_fraction(sec: &Section, x: f64, parts: &mut Parts) {
     }
 }
 
+const JA_WEEKDAYS: [&str; 7] = ["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"];
+const JA_WEEKDAYS_ABBR: [&str; 7] = ["日", "月", "火", "水", "木", "金", "土"];
+
+/// The Japanese era of a Gregorian date: its name, its initial and the year of the era.
+fn ja_era(dt: &gridcraft_core::date::DateTime) -> Option<(&'static str, char, i64)> {
+    let ymd = (dt.year, dt.month, dt.day);
+    gridcraft_core::parse::JA_ERAS
+        .iter()
+        .find(|(_, _, y, m, d)| ymd >= (*y, *m, *d))
+        .map(|(name, initial, y, ..)| (*name, *initial, i64::from(dt.year) - i64::from(*y) + 1))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -778,16 +790,4 @@ mod tests {
         assert_eq!(approximate(0.0, 9), (0, 1));
         assert_eq!(approximate(0.999, 9), (1, 1));
     }
-}
-
-const JA_WEEKDAYS: [&str; 7] = ["日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日"];
-const JA_WEEKDAYS_ABBR: [&str; 7] = ["日", "月", "火", "水", "木", "金", "土"];
-
-/// The Japanese era of a Gregorian date: its name, its initial and the year of the era.
-fn ja_era(dt: &gridcraft_core::date::DateTime) -> Option<(&'static str, char, i64)> {
-    let ymd = (dt.year, dt.month, dt.day);
-    gridcraft_core::parse::JA_ERAS
-        .iter()
-        .find(|(_, _, y, m, d)| ymd >= (*y, *m, *d))
-        .map(|(name, initial, y, ..)| (*name, *initial, i64::from(dt.year) - i64::from(*y) + 1))
 }

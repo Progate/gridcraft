@@ -872,6 +872,10 @@ fn hostile_codes_parse_in_linear_time() -> Result<(), std::sync::mpsc::RecvTimeo
     finishes_in_time(format!("0{}0", ",".repeat(n)))?;
     // Unclosed brackets mixed with semicolons: each is a literal and a section separator stays one.
     finishes_in_time("[;".repeat(n / 2))?;
+    // Runs of the Japanese date letters that are too long to be codes.
+    finishes_in_time("g".repeat(n))?;
+    finishes_in_time(format!("ge{}", "e".repeat(n)))?;
+    finishes_in_time("a".repeat(n))?;
     Ok(())
 }
 

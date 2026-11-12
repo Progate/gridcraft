@@ -266,10 +266,8 @@ fn parse_ja_time(t: &str) -> Option<(f64, &'static str)> {
         (true, r)
     } else if let Some(r) = t.strip_suffix("午前") {
         (false, r)
-    } else if let Some(r) = t.strip_suffix("午後") {
-        (true, r)
     } else {
-        return None;
+        (true, t.strip_suffix("午後")?)
     };
     let (tf, secs, ampm) = parse_time(&format!("{} {}", body.trim(), if pm { "PM" } else { "AM" }))?;
     ampm.then_some((tf, if secs { "h:mm:ss AM/PM" } else { "h:mm AM/PM" }))
