@@ -384,7 +384,7 @@ fn recent_list(app: &mut SheetApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Ou
     // What the file system has said so far; the rest arrives in later frames (see `RecentFiles`).
     let known = bs.recent.known(ui.ctx(), &app.ui.recent);
     // The web build has no files to ask about, and a narrow window leaves the names their room.
-    let modified_w = if cfg!(target_arch = "wasm32") || width < 420.0 { 0.0 } else { MODIFIED_W };
+    let modified_w = if cfg!(all(target_arch = "wasm32", target_os = "unknown")) || width < 420.0 { 0.0 } else { MODIFIED_W };
     if modified_w > 0.0 {
         let (head, _) = ui.allocate_exact_size(vec2(width, 20.0), Sense::hover());
         ui.painter().text(
@@ -467,7 +467,7 @@ impl RecentFiles {
 }
 
 /// Starts the thread that asks. Returns whether it started.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn ask(ctx: egui::Context, paths: Vec<String>, found: Arc<Mutex<HashMap<String, Modified>>>) -> bool {
     /// Lets the next list ask, however the thread ends.
     struct Done;
@@ -489,7 +489,7 @@ fn ask(ctx: egui::Context, paths: Vec<String>, found: Arc<Mutex<HashMap<String, 
 }
 
 /// The web build has no file system to ask.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 fn ask(_ctx: egui::Context, _paths: Vec<String>, _found: Arc<Mutex<HashMap<String, Modified>>>) -> bool {
     false
 }

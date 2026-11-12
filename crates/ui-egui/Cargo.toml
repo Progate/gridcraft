@@ -38,13 +38,17 @@ egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 epaint_default_fonts = { workspace = true }
 gridcraft-xlsx = { workspace = true, features = ["test-support"] }
 
+# The self-updater (ureq + rustls + ring, which needs a C compiler) has nothing to update on any
+# wasm target: neither in a browser tab nor as a WASI command (BrowserOS).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 craft-update = { workspace = true }
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies]
 # The desktop's preferred language for the first-run interface language.
 sys-locale = { workspace = true }
 craft-window = { workspace = true }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 # Read the browser's preferred language for the first-run web interface language.
 web-sys = { version = "0.3", features = ["Window", "Navigator", "Performance"] }
 

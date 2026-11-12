@@ -1006,10 +1006,10 @@ fn script_sandbox_check(path: &str) -> Result<()> {
 
 /// The largest native file the reader still touches: its own cap plus one, used to stop
 /// reads whose bytes arrive faster than metadata can claim (device files, growing files).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 const MAX_READ_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn read_file(path: &str) -> Result<Vec<u8>> {
     use std::io::Read;
     script_sandbox_check(path)?;
@@ -1034,13 +1034,13 @@ pub fn read_file(path: &str) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub fn read_file(path: &str) -> Result<Vec<u8>> {
     script_sandbox_check(path)?;
     Err(EngineError::Other(format!("{path}: no file system in the browser")))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     script_sandbox_check(path)?;
@@ -1104,7 +1104,7 @@ fn restored_mode(old: u32, group_kept: bool) -> u32 {
     if group_kept { old & 0o7777 } else { old & 0o707 }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub fn write_file(path: &str, _bytes: &[u8]) -> Result<()> {
     script_sandbox_check(path)?;
     Err(EngineError::Other(format!("{path}: no file system in the browser")))

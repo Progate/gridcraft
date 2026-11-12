@@ -16,11 +16,11 @@ use std::sync::OnceLock;
 
 /// A font file is skipped by the scan past this size: a catalog only needs each face's name, and a
 /// damaged or enormous file must not turn startup into a long read.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 const MAX_FONT_FILE: u64 = 64 << 20;
 
 /// Reads a font file of at most [`MAX_FONT_FILE`] bytes, even when it grows after it was found.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub(crate) fn read_font(path: &std::path::Path) -> Option<Vec<u8>> {
     use std::io::Read as _;
     let file = std::fs::File::open(path).ok()?;
@@ -32,13 +32,13 @@ pub(crate) fn read_font(path: &std::path::Path) -> Option<Vec<u8>> {
     (bytes.len() as u64 <= MAX_FONT_FILE).then_some(bytes)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub(crate) fn read_font(_path: &std::path::Path) -> Option<Vec<u8>> {
     None
 }
 
 /// A face keeps at most this many family names, so a hostile `name` table can't grow the catalog.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 const MAX_FAMILY_NAMES: usize = 16;
 
 /// One face of one installed font file.
@@ -63,11 +63,11 @@ pub struct Face {
 
 /// The font folders of the platform (the system's and the user's). Empty on wasm.
 pub fn system_font_dirs() -> Vec<PathBuf> {
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         Vec::new()
     }
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         let mut dirs: Vec<PathBuf> = Vec::new();
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from);
@@ -94,7 +94,7 @@ pub fn system_font_dirs() -> Vec<PathBuf> {
 }
 
 /// Weight implied by a style name (`"Bold"` → 700, `"Light"` → 300).
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn style_weight(style: &str) -> f32 {
     let s: String = style.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
     const TABLE: &[(&str, f32)] = &[
@@ -123,7 +123,7 @@ impl Face {
 }
 
 /// Whether a style name reads as italic or oblique.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn style_italic(style: &str) -> bool {
     let s: String = style.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
     s.contains("italic") || s.contains("oblique")
@@ -131,7 +131,7 @@ fn style_italic(style: &str) -> bool {
 
 /// Every face in `data` as `(index, family, names, style)`, where `names` holds every family name
 /// (see [`Face::names`]). Damaged data yields nothing, never a panic.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn file_faces(data: &[u8]) -> Vec<(u32, String, Vec<String>, String)> {
     use skrifa::raw::FileRef;
     use skrifa::{MetadataProvider, string::StringId};
@@ -166,7 +166,7 @@ fn file_faces(data: &[u8]) -> Vec<(u32, String, Vec<String>, String)> {
 
 /// Catalog every face under `dirs`, recursing into subfolders. A folder reached twice (through a
 /// symlink) is read once, so a link back to a parent ends the walk.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Face> {
     let mut out: Vec<Face> = Vec::new();
     let mut stack: Vec<PathBuf> = dirs.to_vec();
@@ -199,7 +199,7 @@ pub fn scan_dirs(dirs: &[PathBuf]) -> Vec<Face> {
     out
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub fn scan_dirs(_dirs: &[PathBuf]) -> Vec<Face> {
     Vec::new()
 }
@@ -221,7 +221,7 @@ fn catalog_now() -> Option<&'static [Face]> {
 pub fn start_scan() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         if CATALOG.get().is_none() {
             // A failed spawn leaves the scan to the first blocking lookup.
             let _ = std::thread::Builder::new().name("font-scan".into()).spawn(|| {
@@ -436,7 +436,7 @@ mod tests {
         assert!(file_faces(&[]).is_empty());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn the_scan_catalogs_fonts_and_reads_each_folder_once() {
         let dir = std::env::temp_dir().join(format!("gridcraft-fonts-scan-{}", std::process::id()));
@@ -466,7 +466,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn binding_a_family_binds_all_four_roles_and_never_stores_missing_data() {
         let dir = std::env::temp_dir().join(format!("gridcraft-fonts-bind-{}", std::process::id()));
@@ -492,7 +492,7 @@ mod tests {
 
     /// A font that is just a table directory and a `name` table holding `records` as
     /// `(Windows language id, name id, text)`: all [`file_faces`] reads.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     fn font_with_names(records: &[(u16, u16, &str)]) -> Vec<u8> {
         fn be(v: &mut Vec<u8>, x: u16) {
             v.extend_from_slice(&x.to_be_bytes());
@@ -530,7 +530,7 @@ mod tests {
         Face { family: family.into(), names: names.iter().map(|s| s.to_string()).collect(), path: path.into(), index: 0, weight, italic: false }
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn a_face_keeps_its_family_names_in_every_language() {
         // Korean Excel saves `맑은 고딕`, so the Korean name has to be kept next to the English one (#1898).
@@ -549,7 +549,7 @@ mod tests {
         assert_eq!(names, &["Noto Sans KR", "Noto Sans KR Medium"]);
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn a_name_table_full_of_names_is_capped() {
         let texts: Vec<String> = (0..100).map(|i| format!("Family {i}")).collect();
@@ -606,7 +606,7 @@ mod tests {
         assert!(installed_in(&[], &used).is_empty());
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     #[test]
     fn a_family_bound_under_two_names_shares_its_font_data() {
         let dir = std::env::temp_dir().join(format!("gridcraft-fonts-alias-{}", std::process::id()));

@@ -189,7 +189,7 @@ pub(super) fn platform() -> String {
         "freebsd" => "FreeBSD",
         "openbsd" => "OpenBSD",
         "netbsd" => "NetBSD",
-        _ if cfg!(target_arch = "wasm32") => return "Web".into(),
+        _ if cfg!(all(target_arch = "wasm32", target_os = "unknown")) => return "Web".into(),
         other => other,
     };
     format!("{os} ({})", std::env::consts::ARCH)

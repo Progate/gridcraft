@@ -49,11 +49,11 @@ pub fn days_from_civil(y: i32, m: u32, d: u32) -> i64 {
 /// Milliseconds since the Unix epoch (UTC) from the system clock; `None` when the clock is unavailable.
 /// Chrono uses the browser clock on wasm32, where the standard library clock methods trap.
 pub fn unix_now_ms() -> Option<f64> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
     {
         Some(chrono::Utc::now().timestamp_millis() as f64)
     }
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
     {
         Some(js_sys::Date::now())
     }

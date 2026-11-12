@@ -59,7 +59,7 @@ impl SheetApp {
     pub fn check_for_updates(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::start(self, true);
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         {
             self.message = Some(("GridCraft".into(), "The web version is always the latest release.".into()));
         }

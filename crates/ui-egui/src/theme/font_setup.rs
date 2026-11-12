@@ -1,4 +1,4 @@
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use super::Blob;
 use super::font_fallback::{load_fallback, load_preferred_arabic};
 use super::{Arc, Color32, FontData, FontDefinitions, FontFamily, FontId};
@@ -142,7 +142,7 @@ pub(crate) fn font_parses(bytes: &[u8], index: u32) -> bool {
 
 /// Loads the first candidate that exists and parses. A file that exists but can't be parsed is
 /// skipped with a warning and the next candidate is tried.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub(super) fn try_load(paths: &[(&str, u32)]) -> Option<FontData> {
     for (p, index) in paths {
         if let Some(blob) = font_file(p, *index) {
@@ -157,7 +157,7 @@ pub(super) fn try_load(paths: &[(&str, u32)]) -> Option<FontData> {
 /// engine, because every one of these files is loaded by every font rebuild for as long as the
 /// app runs. Only a file that parses is kept: a missing or broken one is looked for again next
 /// time.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn font_file(path: &str, index: u32) -> Option<Blob> {
     static FILES: std::sync::Mutex<std::collections::BTreeMap<String, Blob>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
     let mut files = FILES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -198,7 +198,7 @@ const HACK: &str = "Hack";
 /// without a `CRAFT_FONTS_DIR` checkout at build time. The filter is repeated here so a stale
 /// generated table can never smuggle in a barred face or a web-build face outside the allowlist.
 pub(super) fn craft_font_faces() -> Vec<(String, &'static CraftFont)> {
-    let wasm = cfg!(target_arch = "wasm32");
+    let wasm = cfg!(all(target_arch = "wasm32", target_os = "unknown"));
     craft_fonts::CRAFT_FONTS
         .iter()
         .enumerate()
@@ -274,7 +274,7 @@ pub fn craft_fonts_cover(text: &str) -> bool {
     })
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub(super) fn try_load(_paths: &[(&str, u32)]) -> Option<FontData> {
     None
 }

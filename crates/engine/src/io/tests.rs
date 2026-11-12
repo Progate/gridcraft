@@ -18,7 +18,7 @@ fn copied(wb: &Workbook, range: &str) -> String {
     range_html(wb, 0, r, &crate::display::range_text(wb, 0, r)).unwrap()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[cfg(unix)]
 #[test]
 fn save_fails_upfront_when_the_temp_name_is_taken() {
@@ -37,7 +37,7 @@ fn save_fails_upfront_when_the_temp_name_is_taken() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[cfg(unix)]
 #[test]
 fn save_keeps_the_destination_access_restrictions() {
@@ -68,7 +68,7 @@ fn save_keeps_the_destination_access_restrictions() {
 }
 
 /// Without the old group, a saved file keeps the old owner and other bits and nothing for a group.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[cfg(unix)]
 #[test]
 fn restored_mode_drops_the_group_and_special_bits_when_the_group_is_lost() {
@@ -78,7 +78,7 @@ fn restored_mode_drops_the_group_and_special_bits_when_the_group_is_lost() {
     assert_eq!(super::restored_mode(0o104_755, false), 0o705, "setuid is dropped");
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[test]
 fn open_refuses_directories_and_unknowable_lengths() {
     let dir = std::env::temp_dir().join(format!("gridcraft-fs-safety-open-{}", std::process::id()));
@@ -326,7 +326,7 @@ fn csv_and_text_open_read_day_first_dates_and_report_a_guessed_order() {
 
 /// A save that can't be put in place (here a folder already has the workbook's name, as
 /// with a file another app holds locked) fails without leaving `<name>.sctmp` behind.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[test]
 fn failed_save_leaves_no_temporary_file() {
     let dir = std::env::temp_dir().join(format!("gridcraft-write-{}", std::process::id()));
@@ -346,7 +346,7 @@ fn failed_save_leaves_no_temporary_file() {
 
 /// While a script runs (#2178), file reads and writes are refused whatever command or
 /// parameter asked for them; nesting and dropping the sandbox restore access.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[test]
 fn script_sandbox_refuses_file_access_until_dropped() {
     let dir = std::env::temp_dir().join(format!("gridcraft-sandbox-{}", std::process::id()));

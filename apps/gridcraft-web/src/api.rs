@@ -15,7 +15,7 @@ use gridcraft_ui_egui::ControlRequest;
 use serde_json::{Value, json};
 
 /// How often a waiting call looks for the app's reply, in milliseconds (about a frame).
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 const POLL_MS: i32 = 16;
 
 /// A queued control request whose reply has not arrived. Dropping it before the reply (the page's
@@ -51,10 +51,10 @@ impl Drop for Pending {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 pub use web::install;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 mod web {
     use std::rc::Rc;
     use std::sync::mpsc::channel;

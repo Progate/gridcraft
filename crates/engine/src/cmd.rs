@@ -397,7 +397,7 @@ fn wall_clock() -> std::time::Duration {
 pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>) -> Result<R> {
     // `GRIDCRAFT_PROFILE` timing, never on wasm where the clock traps. `elapsed` on the epoch
     // reads the wall clock without the (disallowed) `now`.
-    let t0 = if cfg!(target_arch = "wasm32") { None } else { std::env::var_os("GRIDCRAFT_PROFILE").map(|_| wall_clock()) };
+    let t0 = if cfg!(all(target_arch = "wasm32", target_os = "unknown")) { None } else { std::env::var_os("GRIDCRAFT_PROFILE").map(|_| wall_clock()) };
     let since = |t0: std::time::Duration| wall_clock().saturating_sub(t0);
     let mut sel = d.selection.clone();
     let mut ctx = Ctx {

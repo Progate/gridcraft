@@ -42,7 +42,7 @@ fn craft_fonts_are_the_last_fallback_in_every_family() {
 #[test]
 /// Skips on wasm or when required mode is off; a required native build must embed LXGW with `Hani`/`Hans`.
 fn a_required_native_build_embeds_the_chinese_face() {
-    if cfg!(target_arch = "wasm32") || !craft_fonts_required() {
+    if cfg!(all(target_arch = "wasm32", target_os = "unknown")) || !craft_fonts_required() {
         return;
     }
     assert!(
@@ -402,7 +402,7 @@ fn unparseable_font_files_are_rejected_not_fatal() {
     out.textures_delta.clear(); // nothing consumes the atlas in a headless test
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[test]
 /// A broken existing font candidate is skipped in favor of a later readable candidate.
 fn try_load_skips_a_broken_candidate() {
@@ -421,7 +421,7 @@ fn try_load_skips_a_broken_candidate() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 #[test]
 /// Repeated loads reuse one shared font blob, while a face the kept file does not contain is still refused.
 fn interface_fonts_are_read_once_and_shared_with_egui() {

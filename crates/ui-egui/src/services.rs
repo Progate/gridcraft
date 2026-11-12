@@ -61,10 +61,13 @@ pub struct Chrome {
     /// The ribbon's File tab and the Backstage view it opens (also reached by keyboard and
     /// commands such as `ui.backstage`).
     pub file_tab: bool,
+    /// The ArtCraft community (Discord) link in the About dialog. A host that embeds GridCraft
+    /// in its own product turns it off.
+    pub community_links: bool,
 }
 
 impl Default for Chrome {
     fn default() -> Self {
-        Chrome { title_bar: true, file_tab: true }
+        Chrome { title_bar: true, file_tab: true, community_links: true }
     }
 }

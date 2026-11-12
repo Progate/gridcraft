@@ -26,7 +26,7 @@ mod craft_fonts_policy;
 pub mod credits;
 pub mod dialogs;
 pub mod dnd;
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 pub mod doc_windows;
 pub mod editor;
 pub mod equation;

@@ -2,7 +2,7 @@ use super::Dialog;
 
 /// Help ▸ About GridCraft: the app, its contributors and the AI models that helped. The credits
 /// are compiled in (`crate::credits`, docs/contributors.md).
-pub(super) fn about(ui: &mut egui::Ui, d: &mut Dialog) {
+pub(super) fn about(ui: &mut egui::Ui, d: &mut Dialog, community_links: bool) {
     ui.horizontal(|ui| {
         for tab in ["About", "Contributors", "Models"] {
             if ui.selectable_label(d.tab == tab, tab).clicked() {
@@ -20,7 +20,9 @@ pub(super) fn about(ui: &mut egui::Ui, d: &mut Dialog) {
             ui.add_space(4.0);
             ui.label("A clean-room, open-source, Rust-native spreadsheet. Part of ArtCraft.");
             ui.hyperlink_to("getartcraft.com/apps/gridcraft", "https://getartcraft.com/apps/gridcraft");
-            ui.hyperlink_to("Join the ArtCraft Discord", "https://discord.gg/artcraft");
+            if community_links {
+                ui.hyperlink_to("Join the ArtCraft Discord", "https://discord.gg/artcraft");
+            }
         }
     }
 }

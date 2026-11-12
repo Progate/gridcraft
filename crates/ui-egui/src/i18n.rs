@@ -175,11 +175,13 @@ impl Language {
     /// The system's preferred interface language, best effort; English when it is unknown or
     /// unsupported. Used as the first-run default while nothing is saved.
     pub fn system() -> Self {
-        #[cfg(not(target_arch = "wasm32"))]
+        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
         {
-            sys_locale::get_locale().and_then(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
+            // WASI (BrowserOS) has no locale API; the locale variables say it, as on Linux.
+            let from_env = || ["LC_ALL", "LC_MESSAGES", "LANG"].iter().find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()));
+            sys_locale::get_locale().or_else(from_env).and_then(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
         }
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
         {
             web_sys::window().and_then(|window| window.navigator().language()).and_then(|tag| Self::from_tag(&tag)).unwrap_or(Self::En)
         }

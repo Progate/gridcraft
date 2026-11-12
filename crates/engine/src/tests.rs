@@ -2582,7 +2582,7 @@ fn ods_import_keeps_cached_values_and_reports_limits() {
 }
 
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn ods_import_never_reuses_source_as_save_target() {
     let nonce = unique_nonce();
     let dir = std::env::temp_dir().join(format!("gridcraft-ods-{}-{nonce}", std::process::id()));
@@ -2612,7 +2612,7 @@ fn ods_import_never_reuses_source_as_save_target() {
 
 /// Open a `;` CSV by path (a double-click), edit, Save: the file keeps its `;` separator.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn saving_an_opened_semicolon_csv_keeps_semicolons() {
     let nonce = unique_nonce();
     let dir = std::env::temp_dir().join(format!("gridcraft-csv-{}-{nonce}", std::process::id()));
@@ -2639,7 +2639,7 @@ fn saving_an_opened_semicolon_csv_keeps_semicolons() {
 /// `file.exportCsv` writes displayed text by default (Excel's Save As CSV); `values: true` writes the
 /// raw values for automation: full precision, ISO dates and times.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn export_csv_values_writes_raw_values_and_the_default_stays_displayed_text() {
     let mut s = s();
     for (cell, input, code) in [
@@ -2733,7 +2733,7 @@ fn link_target(path: &std::path::Path) -> String {
 /// Save As into another folder keeps the link on the same file, as Excel does: the relative path
 /// is rewritten from the new folder (#801).
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn save_as_into_another_folder_keeps_linked_workbooks_on_the_same_file() {
     let nonce = unique_nonce();
     let a = std::env::temp_dir().join(format!("gridcraft-links-{}-{nonce}", std::process::id()));
@@ -2761,7 +2761,7 @@ fn save_as_into_another_folder_keeps_linked_workbooks_on_the_same_file() {
 /// A typo like `report.cvs` must not quietly write an XLSX under that name and adopt it as the
 /// document's file.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn saving_to_an_unknown_extension_is_refused() {
     let nonce = unique_nonce();
     let dir = std::env::temp_dir().join(format!("gridcraft-unknown-ext-{}-{nonce}", std::process::id()));
@@ -2785,7 +2785,7 @@ fn saving_to_an_unknown_extension_is_refused() {
 /// An XLSX opened by its content under an unknown extension (`budget.dat`) saves back to its own
 /// file as XLSX; a Save As to another unknown extension is still refused.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn an_xlsx_opened_under_an_unknown_extension_saves_back_as_xlsx() {
     let nonce = unique_nonce();
     let dir = std::env::temp_dir().join(format!("gridcraft-dat-{}-{nonce}", std::process::id()));
@@ -3563,7 +3563,7 @@ fn xlsb_import_keeps_cached_values_and_reports_limits() {
 }
 
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn xlsb_import_never_reuses_source_as_save_target() {
     let nonce = unique_nonce();
     let dir = std::env::temp_dir().join(format!("gridcraft-xlsb-{}-{nonce}", std::process::id()));
@@ -4843,7 +4843,7 @@ fn encrypted_workbooks_open_with_their_password() {
 }
 
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn a_decrypted_workbook_never_overwrites_its_encrypted_original() {
     const PW: &str = "synthetic-pw-5522";
     let nonce = unique_nonce();
@@ -5673,7 +5673,7 @@ fn whole_column_copy_of_a_filtered_range_leaves_the_hidden_rows_out() {
 /// Open a workbook by path, and `CELL("filename")` names the file it came from, as Excel does;
 /// Save As makes the new file the one it names. The sheet-name formula of #1489 depends on it.
 #[test]
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn cell_filename_follows_the_file_the_workbook_lives_in() {
     let nonce = unique_nonce();
     let dir = std::env::temp_dir().join(format!("gridcraft-cellname-{}-{nonce}", std::process::id()));
@@ -6292,7 +6292,7 @@ fn a_saved_workbook_keeps_its_values_until_an_edit_reaches_them() {
 }
 
 /// A per-test unique suffix for temp dir names.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 fn unique_nonce() -> u64 {
     static N: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

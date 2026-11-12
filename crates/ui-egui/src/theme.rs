@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 use egui::epaint::text::Blob;
 use egui::{Color32, FontData, FontDefinitions, FontFamily, FontId, Stroke, Visuals};
 
@@ -512,5 +512,5 @@ mod contrast_tests {
     }
 }
 
-#[cfg(all(test, not(target_arch = "wasm32")))]
+#[cfg(all(test, not(all(target_arch = "wasm32", target_os = "unknown"))))]
 mod tests;
