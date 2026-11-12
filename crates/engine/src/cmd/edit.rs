@@ -31,9 +31,9 @@ pub(crate) use find::wildcard;
 use find::{find, replace};
 pub(super) use go_to::go_to;
 pub use go_to::go_to_names;
-use go_to::go_to_special;
 #[cfg(test)]
 use go_to::{GO_TO_MAX_AREAS, GO_TO_RECENT, reference_parts};
+use go_to::{go_to_special, name_box};
 use paste_special::paste_special;
 pub(crate) use paste_special::{rewrite_all_formulas, rewrite_cell_links, rewrite_python_refs};
 use selection::{select_all, select_col, select_region, select_row, selection_move, selection_next, selection_next_corner, selection_set};
@@ -76,6 +76,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "selection.row", "Select Entire Row", [], Some("Shift+Space"), "{}", has_doc, select_row),
         cmd!(noundo "selection.column", "Select Entire Column", [], Some("Ctrl+Space"), "{}", has_doc, select_col),
         cmd!(noundo "edit.goTo", "Go To…", ["Home", "Editing", "Find & Select"], Some("Ctrl+G"), "{reference: \"B5\" | \"Sheet2!A1:C3\" | name | \"Sheet2!Name\" | \"B14:C22,F19:G30\" | \"Price, Type\", record?: bool} (record: keep a reference without names among the recent ones) or {list: true} → {names, recent}", has_doc, go_to),
+        cmd!(
+            "edit.nameBox",
+            "Name Box",
+            ["Formulas", "Defined Names"],
+            None,
+            "{text: \"B5\" | \"Sheet2!A1\" | \"A1:C3\" | existing name | new name} → {action: goTo|defineName, …} (Enter in the Name Box: a reference or existing name is gone to; other text becomes a workbook-scope name for the selection)",
+            has_doc,
+            name_box
+        ),
         cmd!(noundo "edit.goToSpecial", "Go To Special…", ["Home", "Editing", "Find & Select"], None, "{kind: blanks|constants|formulas|comments|lastCell|currentRegion|visible|conditionalFormats|dataValidation|errors|numbers|text}", has_doc, go_to_special),
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{steps?: 1}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{steps?: 1}", can_redo, redo),

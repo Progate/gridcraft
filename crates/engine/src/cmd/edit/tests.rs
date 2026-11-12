@@ -743,3 +743,38 @@ fn find_and_replace_within_the_selection() {
     let all = s.execute("edit.find", json!({"what": "pear", "all": true})).unwrap();
     assert_eq!(all["count"], 3, "A1, A3 and A4 on the whole sheet");
 }
+
+/// Enter in the Name Box: references and existing names are gone to, new text names the
+/// selection for the whole workbook, and a name Excel would refuse is refused.
+#[test]
+fn name_box_goes_to_references_and_names_and_defines_new_names() {
+    let mut s = go_to_workbook();
+    let sel = |s: &Session| s.doc().map(|d| (d.wb.active_sheet(), d.selection.current().a1())).unwrap();
+    assert_eq!(s.execute("edit.nameBox", json!({"text": "B5"})).unwrap()["action"], "goTo");
+    assert_eq!(sel(&s), (0, "B5".to_string()));
+    s.execute("edit.nameBox", json!({"text": "Sheet2!A1"})).unwrap();
+    assert_eq!(sel(&s), (1, "A1".to_string()));
+    s.execute("edit.nameBox", json!({"text": "A1:C3"})).unwrap();
+    assert_eq!(sel(&s), (1, "A1:C3".to_string()));
+    s.execute("edit.nameBox", json!({"text": "price"})).unwrap();
+    assert_eq!(sel(&s), (0, "B2:B5".to_string()));
+    // A new name refers to the selection, absolute, with workbook scope; then it is gone to.
+    s.execute("edit.nameBox", json!({"text": "Sheet2!B2:C4"})).unwrap();
+    let out = s.execute("edit.nameBox", json!({"text": "Sales"})).unwrap();
+    assert_eq!(out["action"], "defineName", "{out}");
+    let d = s.doc().unwrap();
+    let name = d.wb.names.iter().find(|n| n.name == "Sales").unwrap();
+    assert_eq!((name.scope, name.formula.as_str()), (None, "Sheet2!$B$2:$C$4"));
+    s.execute("edit.nameBox", json!({"text": "A1"})).unwrap();
+    assert_eq!(s.execute("edit.nameBox", json!({"text": "Sales"})).unwrap()["action"], "goTo");
+    assert_eq!(sel(&s), (1, "B2:C4".to_string()));
+    // Defining is one undo step.
+    s.execute("edit.undo", json!({})).unwrap();
+    assert!(s.doc().unwrap().wb.names.iter().all(|n| n.name != "Sales"));
+    let err = s.execute("edit.nameBox", json!({"text": "1st"})).unwrap_err().to_string();
+    assert!(err.contains("The name that you entered is not valid."), "{err}");
+    // A name that isn't a range keeps Go To's error instead of being redefined.
+    let err = s.execute("edit.nameBox", json!({"text": "Rate"})).unwrap_err().to_string();
+    assert!(err.contains("Reference isn't valid."), "{err}");
+    assert!(s.execute("edit.nameBox", json!({"text": "Sheet9!A1"})).is_err());
+}

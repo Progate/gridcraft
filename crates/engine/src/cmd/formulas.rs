@@ -343,7 +343,7 @@ pub(crate) fn is_r1c1(n: &str) -> bool {
     rest.is_empty() && !n.is_empty()
 }
 
-fn define_name(s: &mut Session, p: &Json) -> Result<Json> {
+pub(crate) fn define_name(s: &mut Session, p: &Json) -> Result<Json> {
     let Some(name) = str_param(p, "name").map(str::to_string) else {
         s.ui_requests.push(crate::UiRequest::Dialog("defineName".into(), json!({})));
         return ok();

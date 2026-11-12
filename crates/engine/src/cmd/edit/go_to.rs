@@ -10,6 +10,30 @@ pub(super) const GO_TO_MAX_AREAS: usize = 2000;
 /// How deep a name that refers to other names is followed.
 const GO_TO_NAME_DEPTH: usize = 8;
 
+/// What the Name Box does with text typed into it and confirmed with Enter, as Excel does: a
+/// reference (`B5`, `Sheet2!A1`, `A1:C3`) or a name or table that exists is gone to; any other
+/// text names the selection, a workbook-scope name referring to it (`formulas.defineName`). A
+/// name Excel would refuse is refused with its message ("The name that you entered is not valid.").
+pub(in super::super) fn name_box(s: &mut Session, p: &Json) -> Result<Json> {
+    let Some(text) = str_param(p, "text").or_else(|| str_param(p, "reference")).map(str::trim).filter(|t| !t.is_empty()) else {
+        return Err(bad("edit.nameBox", "missing `text`"));
+    };
+    let text = text.to_string();
+    let d = s.doc()?;
+    let exists = d.wb.name(&text, d.wb.active_sheet()).is_some() || d.wb.table(&text).is_some();
+    // Only text that can be a name falls through to defining one: a reference, a sheet-qualified
+    // or multi-area text, or a name that exists but isn't a range keeps Go To's error.
+    let reference_like = text.contains(['!', ':', ',', ' ']) || RangeRef::parse(&text).is_some();
+    match go_to(s, &json!({"reference": text})) {
+        Ok(out) => Ok(json!({"action": "goTo", "selection": out})),
+        Err(e) if exists || reference_like => Err(e),
+        Err(_) => {
+            crate::cmd::formulas::define_name(s, &json!({"name": text}))?;
+            Ok(json!({"action": "defineName", "name": text}))
+        }
+    }
+}
+
 pub(in super::super) fn go_to(s: &mut Session, p: &Json) -> Result<Json> {
     if bool_param(p, "list") == Some(true) {
         let d = s.doc()?;

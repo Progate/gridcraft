@@ -404,15 +404,8 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) -> Rect {
             ui.input_mut(|i| i.events.retain(|e| !matches!(e, egui::Event::Key { key: Key::Enter, .. })));
             let target = text.trim().to_string();
             if !target.is_empty() && target != shown {
-                // A new name for the selection, or a place to go.
-                let is_ref = gridcraft_engine::core::RangeRef::parse(target.split('!').next_back().unwrap_or("")).is_some();
-                let known = app.session.active().is_some_and(|d| d.wb.name(&target, d.wb.active_sheet()).is_some() || d.wb.table(&target).is_some());
-                let r = if is_ref || known {
-                    app.run("edit.goTo", json!({"reference": target}))
-                } else {
-                    app.run("formulas.defineName", json!({"name": target}))
-                };
-                if let Err(e) = r {
+                // A place to go, or a new workbook-scope name for the selection (`edit.nameBox`).
+                if let Err(e) = app.run("edit.nameBox", json!({"text": target})) {
                     app.message = Some(("GridCraft".into(), crate::clean_error(&e)));
                 }
                 app.grid.ensure_visible = true;
@@ -429,7 +422,7 @@ fn name_box(app: &mut SheetApp, ui: &mut egui::Ui, t: &Tokens) -> Rect {
     let r = ui.interact(mb, id.with("drop"), Sense::click());
     egui::Popup::menu(&r).show(|ui| {
         if names.is_empty() {
-            ui.label(egui::RichText::new("No names defined").italics());
+            ui.label(egui::RichText::new(app.ui.language.tr("No names defined")).italics());
         }
         for n in names {
             if ui.button(&n).clicked() {

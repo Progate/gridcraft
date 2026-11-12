@@ -1582,6 +1582,9 @@ pub(super) const EXTRA: &[(&str, &str)] = &[
     ("-1 - Search last-to-first", "-1 - 末尾から先頭へ検索"),
     ("2 - Binary search (sorted ascending order)", "2 - バイナリ検索 (昇順で並べ替え済み)"),
     ("-2 - Binary search (sorted descending order)", "-2 - バイナリ検索 (降順で並べ替え済み)"),
+    ("The name that you entered is not valid.", "入力した名前は正しくありません。"),
+    ("Reference isn't valid.", "参照が正しくありません。"),
+    ("There's a problem with this formula.", "この数式には問題があります。"),
 ];
 
 /// The AutoFilter dropdown's Text, Number and Date Filters submenus and the Custom AutoFilter and
