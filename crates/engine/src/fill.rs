@@ -616,10 +616,17 @@ pub fn series(cx: &mut Ctx, sheet: usize, options: SeriesOptions<'_>) -> Result<
     Ok(())
 }
 
-/// Flash Fill: learns a transformation from the examples typed in the column of `at` (rows
-/// above it with values) from the column(s) to the left, and fills the remaining rows.
-/// Supported transformations: a token (word) of the source by index, concatenations of tokens
-/// with literal separators, upper/lower/proper case, and fixed-position substrings.
+/// The most source columns Flash Fill reads to the left of the target column.
+const FLASH_MAX_SOURCE_COLS: u32 = 16;
+
+/// Flash Fill: learns a transformation from the examples typed in the column of `at` (rows of the
+/// data region with values) from the columns to its left, and fills the remaining rows.
+/// Supported transformations: tokens (words, or runs of digits) of any source column by index,
+/// concatenations of tokens with literal separators, upper/lower/proper case and initials.
+///
+/// A header row is not an example: the first row of the region is skipped when it is a table's
+/// header row, when the examples below it agree on a transformation it doesn't fit (`氏名` over
+/// `姓`), or when its target is empty and its source is formatted unlike the row below.
 pub fn flash_fill(cx: &mut Ctx, sheet: usize, at: CellRef) -> Result<usize> {
     let Some(sh) = cx.wb.sheet(sheet) else { return Ok(0) };
     if at.col == 0 {
@@ -635,34 +642,68 @@ pub fn flash_fill(cx: &mut Ctx, sheet: usize, at: CellRef) -> Result<usize> {
     while bottom + 1 < gridcraft_core::MAX_ROWS && !sh.value(CellRef::new(bottom + 1, src_col)).is_empty() && bottom - top < 1_000_000 {
         bottom += 1;
     }
-    // Header row: skip a first row whose target is text and source looks like a header? Keep simple.
+    // The source columns: the adjacent column and every column left of it holding data in the
+    // region (first and last names in A and B for an email address in C).
+    let mut first_col = src_col;
+    while first_col > 0
+        && src_col - first_col + 1 < FLASH_MAX_SOURCE_COLS
+        && (top..=bottom).any(|r| !sh.value(CellRef::new(r, first_col - 1)).is_empty())
+    {
+        first_col -= 1;
+    }
+    // Flash Fill works on the text cells show (a date as formatted, not its serial number).
+    let sources = |r: u32| -> Vec<String> { (first_col..=src_col).map(|c| crate::display::cell_text(&cx.wb, sh, CellRef::new(r, c))).collect() };
     let mut examples = Vec::new();
     let mut todo = Vec::new();
-    // Flash Fill works on the text cells show (a date as formatted, not its serial number).
     for r in top..=bottom {
-        let src = crate::display::cell_text(&cx.wb, sh, CellRef::new(r, src_col));
-        if sh.value(CellRef::new(r, at.col)).is_empty() {
-            todo.push((r, src));
+        let target = CellRef::new(r, at.col);
+        if sh.value(target).is_empty() {
+            todo.push((r, sources(r)));
         } else {
-            examples.push((src, crate::display::cell_text(&cx.wb, sh, CellRef::new(r, at.col))));
+            examples.push((r, sources(r), crate::display::cell_text(&cx.wb, sh, target)));
         }
     }
-    if examples.is_empty() {
-        return Ok(0);
+    let table_header = sh.tables.iter().any(|t| t.header_row && t.range.start.row == top && t.range.contains(CellRef::new(top, at.col)));
+    let first_is_top = examples.first().is_some_and(|e| e.0 == top);
+    let mut program = None;
+    if table_header || (first_is_top && examples.len() > 1) {
+        // Learn from the rows below the header first: a header that fits the pattern is
+        // indistinguishable from an example and is learnt as one below.
+        let rest: Vec<_> = examples.iter().filter(|e| e.0 != top).map(|e| (e.1.clone(), e.2.clone())).collect();
+        program = learn(&rest);
     }
-    let Some(program) = learn(&examples) else { return Ok(0) };
-    let mut n = 0;
-    let style = sh.style_id(CellRef::new(top, at.col));
+    if program.is_none() && !table_header {
+        program = learn(&examples.iter().map(|e| (e.1.clone(), e.2.clone())).collect::<Vec<_>>());
+    }
+    let Some(program) = program else { return Ok(0) };
+    // An empty target under a header (`氏名` with no `姓` typed yet) stays empty.
+    let header_like = table_header || (first_is_top && program.apply(&sources(top)).as_deref() != examples.first().map(|e| e.2.as_str())) || {
+        let style = |r: u32| cx.wb.styles.get(sh.style_id(CellRef::new(r, src_col)));
+        let (h, below) = (style(top), style(top + 1));
+        top < bottom && (h.font.bold != below.font.bold || h.fill != below.fill || h.borders != below.borders)
+    };
+    // Examples typed as numbers (digits pulled out of a code) fill numbers.
+    let numeric = examples.iter().filter(|e| e.0 != top || !header_like).all(|e| sh.value(CellRef::new(e.0, at.col)).is_number());
+    let example_style = examples.iter().find(|e| e.0 != top || !header_like).map(|e| sh.style_id(CellRef::new(e.0, at.col)));
     let mut writes = Vec::new();
     for (r, src) in todo {
+        if r == top && header_like {
+            continue;
+        }
         if let Some(out) = program.apply(&src) {
-            writes.push((CellRef::new(r, at.col), out));
-            n += 1;
+            let c = CellRef::new(r, at.col);
+            let style = sh.cell(c).map(|c| c.style).or(example_style).unwrap_or_default();
+            let value = match out.parse::<f64>() {
+                Ok(n) if numeric && n.is_finite() && (!out.starts_with('0') || out == "0") => Value::number(n),
+                _ => Value::text(out.as_str()),
+            };
+            writes.push((c, Cell { value, formula: None, style, py: None }));
         }
     }
+    let n = writes.len();
     let sh = cx.sheet_mut(sheet)?;
-    for (c, out) in &writes {
-        sh.set_cell(*c, Cell { value: Value::text(out.as_str()), formula: None, style, py: None });
+    for (c, cell) in &writes {
+        sh.set_cell(*c, cell.clone());
     }
     for (c, _) in writes {
         cx.touch(sheet, c);
@@ -673,10 +714,10 @@ pub fn flash_fill(cx: &mut Ctx, sheet: usize, at: CellRef) -> Result<usize> {
 #[derive(Clone, Debug, PartialEq)]
 enum Piece {
     Lit(String),
-    /// Token index (negative from the end) with a case transform.
-    Tok(i32, Case),
+    /// Token of a source column, by index (negative from the end), with a case transform.
+    Tok(usize, i32, Case),
     /// First character of a token.
-    Initial(i32, Case),
+    Initial(usize, i32, Case),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -687,11 +728,40 @@ enum Case {
     Proper,
 }
 
-#[derive(Clone, Debug)]
-struct Program(Vec<Piece>);
+/// How a source is cut into tokens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Split {
+    /// Words: runs of letters and digits.
+    Words,
+    /// Words, also cut where digits meet other characters (`ABC123` → `ABC`, `123`).
+    Digits,
+}
 
-fn tokens(s: &str) -> Vec<String> {
-    s.split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|t| !t.is_empty()).map(str::to_string).collect()
+#[derive(Clone, Debug)]
+struct Program(Split, Vec<Piece>);
+
+fn tokens(s: &str, split: Split) -> Vec<String> {
+    let mut out = Vec::new();
+    for w in s.split(|c: char| !c.is_alphanumeric() && c != '\'').filter(|t| !t.is_empty()) {
+        if split == Split::Words {
+            out.push(w.to_string());
+            continue;
+        }
+        let mut cur = String::new();
+        let mut digit = None;
+        for ch in w.chars() {
+            let d = ch.is_ascii_digit();
+            if digit.is_some_and(|p| p != d) {
+                out.push(std::mem::take(&mut cur));
+            }
+            digit = Some(d);
+            cur.push(ch);
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
+    }
+    out
 }
 
 fn apply_case(s: &str, c: Case) -> String {
@@ -714,62 +784,72 @@ fn apply_case(s: &str, c: Case) -> String {
 }
 
 impl Program {
-    fn apply(&self, src: &str) -> Option<String> {
-        let toks = tokens(src);
-        let get = |i: i32| -> Option<&String> {
+    fn apply(&self, src: &[String]) -> Option<String> {
+        let toks: Vec<Vec<String>> = src.iter().map(|s| tokens(s, self.0)).collect();
+        let get = |col: usize, i: i32| -> Option<&String> {
+            let toks = toks.get(col)?;
             if i >= 0 { toks.get(i as usize) } else { toks.len().checked_sub(i.unsigned_abs() as usize).and_then(|j| toks.get(j)) }
         };
         let mut out = String::new();
-        for p in &self.0 {
+        for p in &self.1 {
             match p {
                 Piece::Lit(l) => out.push_str(l),
-                Piece::Tok(i, c) => out.push_str(&apply_case(get(*i)?, *c)),
-                Piece::Initial(i, c) => out.push_str(&apply_case(&get(*i)?.chars().next()?.to_string(), *c)),
+                Piece::Tok(col, i, c) => out.push_str(&apply_case(get(*col, *i)?, *c)),
+                Piece::Initial(col, i, c) => out.push_str(&apply_case(&get(*col, *i)?.chars().next()?.to_string(), *c)),
             }
         }
         Some(out)
     }
 }
 
-/// Finds a program consistent with every example.
-fn learn(examples: &[(String, String)]) -> Option<Program> {
+/// Finds a program consistent with every example (the source columns of a row and its output).
+fn learn(examples: &[(Vec<String>, String)]) -> Option<Program> {
     let (src, dst) = examples.first()?;
-    let candidates = synthesize(src, dst);
-    candidates.into_iter().find(|p| examples.iter().all(|(s, d)| p.apply(s).as_deref() == Some(d.as_str())))
+    [Split::Words, Split::Digits]
+        .into_iter()
+        .flat_map(|split| synthesize(src, dst, split))
+        // A program of literals alone copies one text everywhere: no pattern was found.
+        .filter(|p| p.1.iter().any(|piece| !matches!(piece, Piece::Lit(_))))
+        .find(|p| examples.iter().all(|(s, d)| p.apply(s).as_deref() == Some(d.as_str())))
 }
 
 /// Candidate programs for one example, by greedy segmentation of the output into token matches
 /// and literals (tries several index conventions).
-fn synthesize(src: &str, dst: &str) -> Vec<Program> {
-    let toks = tokens(src);
-    let n = toks.len() as i32;
+fn synthesize(src: &[String], dst: &str, split: Split) -> Vec<Program> {
+    let toks: Vec<Vec<String>> = src.iter().map(|s| tokens(s, split)).collect();
     let mut out = Vec::new();
     for prefer_neg in [false, true] {
+        let index = |col: usize, i: usize| -> i32 {
+            let n = toks.get(col).map_or(0, Vec::len) as i32;
+            if prefer_neg { i as i32 - n } else { i as i32 }
+        };
         let mut pieces = Vec::new();
         let mut rest = dst;
         let mut guard = 0;
         while !rest.is_empty() && guard < 64 {
             guard += 1;
-            // Longest token (with any case) that prefixes `rest`.
+            // Longest token (with any case) that prefixes `rest`, nearest column first.
             let mut best: Option<(usize, Piece)> = None;
-            for (i, t) in toks.iter().enumerate() {
-                let idx = if prefer_neg { i as i32 - n } else { i as i32 };
-                for c in [Case::Same, Case::Upper, Case::Lower, Case::Proper] {
-                    let cand = apply_case(t, c);
-                    if !cand.is_empty() && rest.starts_with(&cand) && best.as_ref().is_none_or(|(l, _)| cand.len() > *l) {
-                        best = Some((cand.len(), Piece::Tok(idx, c)));
+            for (col, ts) in toks.iter().enumerate().rev() {
+                for (i, t) in ts.iter().enumerate() {
+                    for c in [Case::Same, Case::Upper, Case::Lower, Case::Proper] {
+                        let cand = apply_case(t, c);
+                        if !cand.is_empty() && rest.starts_with(&cand) && best.as_ref().is_none_or(|(l, _)| cand.len() > *l) {
+                            best = Some((cand.len(), Piece::Tok(col, index(col, i), c)));
+                        }
                     }
                 }
             }
             if best.as_ref().is_none_or(|(l, _)| *l <= 1) {
                 // Initial letters (e.g. "J. Smith").
-                for (i, t) in toks.iter().enumerate() {
-                    let idx = if prefer_neg { i as i32 - n } else { i as i32 };
-                    if let Some(ch) = t.chars().next() {
-                        for c in [Case::Same, Case::Upper, Case::Lower] {
-                            let cand = apply_case(&ch.to_string(), c);
-                            if rest.starts_with(&cand) && best.is_none() {
-                                best = Some((cand.len(), Piece::Initial(idx, c)));
+                for (col, ts) in toks.iter().enumerate().rev() {
+                    for (i, t) in ts.iter().enumerate() {
+                        if let Some(ch) = t.chars().next() {
+                            for c in [Case::Same, Case::Upper, Case::Lower] {
+                                let cand = apply_case(&ch.to_string(), c);
+                                if rest.starts_with(&cand) && best.is_none() {
+                                    best = Some((cand.len(), Piece::Initial(col, index(col, i), c)));
+                                }
                             }
                         }
                     }
@@ -790,7 +870,7 @@ fn synthesize(src: &str, dst: &str) -> Vec<Program> {
                 }
             }
         }
-        out.push(Program(pieces));
+        out.push(Program(split, pieces));
     }
     out
 }
@@ -811,6 +891,68 @@ mod tests {
         assert_eq!(sh.value(CellRef::new(1, 1)), Value::from("03/12/2023"));
     }
 
+    fn texts(s: &crate::Session, range: &str) -> Vec<String> {
+        let d = s.doc().unwrap();
+        let sh = d.wb.active().unwrap();
+        RangeRef::parse(range).unwrap().iter().map(|c| crate::display::cell_text(&d.wb, sh, c)).collect()
+    }
+
+    #[test]
+    fn flash_fill_skips_a_header_row() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        let values =
+            serde_json::json!([["氏名", "姓", "名"], ["山田 太郎", "山田", null], ["佐藤 花子", null, null], ["鈴木\u{3000}一郎", null, null]]);
+        s.execute("range.setValues", serde_json::json!({"range": "A1", "values": values})).unwrap();
+        s.execute("edit.flashFill", serde_json::json!({"range": "B3"})).unwrap();
+        assert_eq!(texts(&s, "B1:B4"), ["姓", "山田", "佐藤", "鈴木"]);
+        // No example typed under the header: the header alone is not a pattern.
+        assert!(s.execute("edit.flashFill", serde_json::json!({"range": "C2"})).is_err());
+        s.execute("cell.set", serde_json::json!({"cell": "C2", "input": "太郎"})).unwrap();
+        s.execute("edit.flashFill", serde_json::json!({"range": "C2"})).unwrap();
+        assert_eq!(texts(&s, "C1:C4"), ["名", "太郎", "花子", "一郎"]);
+    }
+
+    #[test]
+    fn flash_fill_reads_every_source_column_and_pulls_out_numbers() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        let values = serde_json::json!([
+            ["First", "Last", "Email"],
+            ["Taro", "Yamada", "taro.yamada@example.com"],
+            ["Hanako", "Sato", null],
+            ["Ichiro", "Suzuki", null]
+        ]);
+        s.execute("range.setValues", serde_json::json!({"range": "A1", "values": values})).unwrap();
+        s.execute("edit.flashFill", serde_json::json!({"range": "C3"})).unwrap();
+        assert_eq!(texts(&s, "C3:C4"), ["hanako.sato@example.com", "ichiro.suzuki@example.com"]);
+
+        let values = serde_json::json!([["商品コード", "番号"], ["ABC123", 123], ["XY45", null], ["Q-0789", null]]);
+        s.execute("range.setValues", serde_json::json!({"range": "E1", "values": values})).unwrap();
+        s.execute("edit.flashFill", serde_json::json!({"range": "F3"})).unwrap();
+        assert_eq!(texts(&s, "F3:F4"), ["45", "0789"]);
+        let sh = s.doc().unwrap().wb.active().unwrap();
+        assert_eq!(sh.value(CellRef::parse("F3").unwrap()), Value::number(45.0));
+        assert_eq!(sh.value(CellRef::parse("F4").unwrap()), Value::text("0789"));
+    }
+
+    #[test]
+    fn flash_fill_skips_a_bold_header_with_an_empty_target_and_table_headers() {
+        let mut s = crate::Session::new();
+        s.new_workbook();
+        let values = serde_json::json!([["Full Name", null], ["Ada Lovelace", "Ada"], ["Alan Turing", null]]);
+        s.execute("range.setValues", serde_json::json!({"range": "A1", "values": values})).unwrap();
+        s.execute("home.bold", serde_json::json!({"range": "A1"})).unwrap();
+        s.execute("edit.flashFill", serde_json::json!({"range": "B2"})).unwrap();
+        assert_eq!(texts(&s, "B1:B3"), ["", "Ada", "Alan"]);
+
+        let values = serde_json::json!([["Name", "Code"], ["Ada Lovelace", "AL"], ["Alan Turing", null]]);
+        s.execute("range.setValues", serde_json::json!({"range": "D1", "values": values})).unwrap();
+        s.execute("insert.table", serde_json::json!({"range": "D1:E3"})).unwrap();
+        s.execute("edit.flashFill", serde_json::json!({"range": "E3"})).unwrap();
+        assert_eq!(texts(&s, "E1:E3"), ["Code", "AL", "AT"]);
+    }
+
     #[test]
     fn series_keeps_value_equal_to_stop_after_float_drift() {
         let mut s = crate::Session::new();
@@ -828,12 +970,13 @@ mod tests {
 
     #[test]
     fn flash_programs() {
-        let p = learn(&[("John Smith".into(), "Smith, John".into())]).unwrap();
-        assert_eq!(p.apply("Ada Lovelace").as_deref(), Some("Lovelace, Ada"));
-        let p = learn(&[("jane doe".into(), "JD".into())]).unwrap();
-        assert_eq!(p.apply("alan turing").as_deref(), Some("AT"));
-        let p = learn(&[("alice@example.com".into(), "alice".into())]).unwrap();
-        assert_eq!(p.apply("bob@example.com").as_deref(), Some("bob"));
+        let one = |s: &str| vec![s.to_string()];
+        let p = learn(&[(one("John Smith"), "Smith, John".into())]).unwrap();
+        assert_eq!(p.apply(&one("Ada Lovelace")).as_deref(), Some("Lovelace, Ada"));
+        let p = learn(&[(one("jane doe"), "JD".into())]).unwrap();
+        assert_eq!(p.apply(&one("alan turing")).as_deref(), Some("AT"));
+        let p = learn(&[(one("alice@example.com"), "alice".into())]).unwrap();
+        assert_eq!(p.apply(&one("bob@example.com")).as_deref(), Some("bob"));
     }
 
     #[test]
