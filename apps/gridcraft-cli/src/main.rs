@@ -6,7 +6,7 @@
 //! gridcraft-cli eval <formula> [--in FILE] [--sheet S] [--cell A1] [--json]
 //! gridcraft-cli cat <file> [--range A1:D20] [--sheet S] [--formulas] [--csv]
 //! gridcraft-cli check <file-or-dir>... [--json] [--tolerance 1e-9] [--max-report N]
-//! gridcraft-cli run [--in FILE | --sample NAME] [--cmd 'id={json}']... [--script FILE.jsonl] [--out FILE] [--print RANGE] [--quiet]
+//! gridcraft-cli run [--in FILE | --sample NAME] [--locale TAG] [--cmd 'id={json}']... [--script FILE.jsonl] [--out FILE] [--print RANGE] [--quiet]
 //! gridcraft-cli commands [--json] [--search X]
 //! gridcraft-cli functions [--json] [--search X] [--category C]
 //! gridcraft-cli mcp [--connect PORT] [--in FILE | --sample NAME]
@@ -43,8 +43,10 @@ const USAGE: &str = "usage:
   gridcraft-cli cat <file> [--range A1:D20] [--sheet S] [--formulas] [--csv]
   gridcraft-cli check <file-or-dir>... [--json] [--tolerance 1e-9] [--max-report N]
                      cached-value calc oracle + XLSX round-trip fidelity (exit 1 on any difference)
-  gridcraft-cli run [--in FILE | --sample NAME] [--cmd 'id={json}']... [--script FILE.jsonl]
+  gridcraft-cli run [--in FILE | --sample NAME] [--locale TAG] [--cmd 'id={json}']... [--script FILE.jsonl]
                      [--out FILE] [--print RANGE] [--quiet]
+                     --locale ja-JP reads typed entry and shows dates as Japanese Excel does
+                     (the regional format; default en-US, or app.region.set in the script)
                      a script line is id={json} or {\"command\": \"id\", \"params\": {…}};
                      blank lines and lines starting with # or // are skipped
   gridcraft-cli commands [--json] [--search X]
@@ -422,7 +424,7 @@ fn parse_command(text: &str) -> Result<Option<(String, Value)>, String> {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
-    let a = Args::parse(args, &["in", "sample", "cmd", "script", "out", "print", "sheet"], &["quiet", "csv", "formulas"])?;
+    let a = Args::parse(args, &["in", "sample", "cmd", "script", "out", "print", "sheet", "locale"], &["quiet", "csv", "formulas"])?;
     a.no_extra(0)?;
     let mut s = match (a.opt("in"), a.opt("sample")) {
         (Some(_), Some(_)) => return Err("give --in or --sample, not both".into()),
@@ -434,6 +436,10 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         (None, None) => blank(),
     };
+    // The regional format applies to the workbook opened above as to any opened later.
+    if let Some(tag) = a.opt("locale") {
+        exec(&mut s, "app.region.set", json!({"region": tag}))?;
+    }
     let quiet = a.has("quiet");
     let mut step = 0usize;
     for (name, value) in &a.opts {

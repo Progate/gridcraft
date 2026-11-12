@@ -410,6 +410,18 @@ impl DocState {
             self.saved = self.wb.clone();
         }
     }
+    /// Sets the region this workbook is typed and shown in. Not an edit: a clean workbook stays
+    /// clean, as the region is an application setting that is not saved in the file.
+    pub fn set_region(&mut self, region: &'static gridcraft_core::Region) {
+        if self.wb.region.tag == region.tag {
+            return;
+        }
+        let dirty = self.is_dirty();
+        Arc::make_mut(&mut self.wb).region = region;
+        if !dirty {
+            self.saved = self.wb.clone();
+        }
+    }
     pub fn display_title(&self) -> String {
         self.path
             .as_deref()
@@ -441,6 +453,9 @@ pub struct Prefs {
     /// (at most [`recent::MAX`]; see [`recent`]). An application list, as in Excel.
     #[serde(deserialize_with = "recent::lenient")]
     pub recent_functions: Vec<String>,
+    /// The regional format (a BCP 47 tag, `ja-JP`) typed entry is read in and built-in dates are
+    /// shown in, like the system's regional settings Excel follows. Set with `app.region.set`.
+    pub region: String,
 }
 
 /// The selection statistics shown on the status bar, set with `view.statusBar`. Excel turns on
@@ -476,6 +491,7 @@ impl Default for Prefs {
             formula_bar: true,
             status_bar: StatusBarStats::default(),
             recent_functions: recent::defaults(),
+            region: gridcraft_core::region::default_region().tag.into(),
         }
     }
 }
@@ -632,8 +648,26 @@ impl Session {
         }
         cmd::locked_cell_error(sh, at, &d.unlocked_ranges)
     }
+    /// The regional format the session reads typed entry in ([`Prefs::region`]).
+    pub fn region(&self) -> &'static gridcraft_core::Region {
+        gridcraft_core::region::find(&self.prefs.region).unwrap_or_else(gridcraft_core::region::default_region)
+    }
+    /// Sets the regional format of the session and of every open workbook.
+    pub fn set_region(&mut self, region: &'static gridcraft_core::Region) {
+        self.prefs.region = region.tag.into();
+        self.sync_region();
+    }
+    /// Puts the session's region on every open workbook (a workbook read from a file or brought
+    /// back by Undo carries the one it had).
+    pub fn sync_region(&mut self) {
+        let r = self.region();
+        for d in &mut self.docs {
+            d.set_region(r);
+        }
+    }
     /// Opens a workbook in a new window, which becomes the active one.
-    pub fn add_document(&mut self, d: DocState) -> usize {
+    pub fn add_document(&mut self, mut d: DocState) -> usize {
+        d.set_region(self.region());
         let uid = d.uid;
         self.docs.push(d);
         let w = self.push_window(uid);
@@ -728,6 +762,7 @@ impl Session {
     /// Panics inside commands are caught and reported; the workbook is restored.
     pub fn execute(&mut self, id: &str, params: Json) -> Result<Json> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
+        self.sync_region();
         if let Err(why) = (spec.enabled)(self) {
             return Err(EngineError::Disabled(id.to_string(), why));
         }

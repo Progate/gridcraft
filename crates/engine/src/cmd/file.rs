@@ -27,6 +27,15 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             options
         ),
+        cmd!(
+            noundo "app.region.set",
+            "Regional Format",
+            ["File", "Options"],
+            None,
+            "{region: \"ja-JP\" | \"en-US\" | any BCP 47 or system locale tag (ja_JP.UTF-8)} → {region, name}: the regional format typed entry is read in and built-in dates are shown in, like the operating system's regional settings Excel follows (ja-JP: 2026/11/10 and 11月10日 are dates, full-width digits are numbers, ¥ amounts; pivot and subtotal captions in Japanese). An application setting, not saved in the file; {} reports the current one",
+            always,
+            region_set
+        ),
         cmd!(noundo "window.activate", "Switch Window", ["Window"], None, "{window} | {doc} | {index} (a window id, a workbook id, or the workbook's position in the list)", has_doc, activate_window),
         cmd!(noundo "window.close", "Close Window", ["Window"], None, "{window?, doc?, force?: bool} → {closed, document}: closes a window (the active one by default); its workbook closes with its last window, asking first when it has unsaved changes unless `force`", has_doc, close_window),
         cmd!(query "window.list", "Windows", ["Window"], None, "{} → [{window, doc, index, title, dirty, active, hidden}]", always, |s, _| Ok(s.window_list())),
@@ -269,6 +278,18 @@ fn options(s: &mut Session, _: &Json) -> Result<Json> {
         json!({"mode": mode, "iterative": c.iterative, "maxIterations": c.max_iterations, "maxChange": c.max_change, "precisionAsDisplayed": c.precision_as_displayed})
     });
     Ok(json!({"calculation": calculation}))
+}
+
+fn region_set(s: &mut Session, p: &Json) -> Result<Json> {
+    if let Some(tag) = str_param(p, "region").or_else(|| str_param(p, "locale")) {
+        let tag = tag.trim();
+        if tag.is_empty() {
+            return Err(bad("app.region.set", "`region` is empty"));
+        }
+        s.set_region(gridcraft_core::region::lookup(tag));
+    }
+    let r = s.region();
+    Ok(json!({"region": r.tag, "name": r.name}))
 }
 
 fn activate_window(s: &mut Session, p: &Json) -> Result<Json> {

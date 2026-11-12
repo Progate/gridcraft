@@ -31,6 +31,15 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
     if fmt_is_text {
         return Ok(Some(Cell { value: Value::text(input), formula: None, style, py: None }));
     }
+    // Japanese Excel takes a formula typed with the input method's full-width characters
+    // (`＝ＳＵＭ（Ａ１：Ａ３）`) and keeps it in ASCII; text in quotes stays as typed.
+    let halfwidth;
+    let input = if wb.region.is_japanese() && input.starts_with('＝') {
+        halfwidth = halfwidth_formula(input);
+        halfwidth.as_str()
+    } else {
+        input
+    };
     let is_formula = is_formula_input(input);
     if is_formula && gridcraft_model::python::is_py_formula(input) {
         return Err(EngineError::Other(PY_FORMULA.into()));
@@ -58,13 +67,21 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
             } else {
                 None
             };
+            // Otherwise a formula that adds to or picks a date (`=C2+$H$2`, `=MAX(C2:C9)`) shows
+            // a date like the cell it reads, as Excel copies that cell's format.
+            let followed = match (auto, &cell.formula) {
+                (None, Some(f)) => f.expr.as_deref().and_then(|e| referenced_date_format(e, wb, sheet, 0)),
+                _ => None,
+            };
             if let Some(code) = auto {
                 cell.style = wb.styles.derive(style, |s| s.num_fmt = gridcraft_model::NumFmt::new(code));
+            } else if let Some(fmt) = followed {
+                cell.style = wb.styles.derive(style, |s| s.num_fmt = fmt);
             }
         }
         return Ok(Some(cell));
     }
-    let mut parsed = gridcraft_core::parse::parse_input(input, wb.date_system);
+    let mut parsed = gridcraft_core::parse::parse_input_in(input, wb.date_system, wb.region);
     // Like Excel's automatic percent entry: a bare number of 1 or more typed into a cell already
     // formatted as a percentage is a percent (3 -> 3%); smaller numbers are taken as fractions.
     if parsed.format.is_none()
@@ -87,6 +104,70 @@ pub(crate) fn input_to_cell(input: &str, sheet: usize, at: CellRef, wb: &mut gri
         style = wb.styles.derive(style, |s| s.align.wrap = true);
     }
     Ok(Some(Cell { value: parsed.value, formula: None, style, py: None }))
+}
+
+/// Functions whose result is one of their arguments or a date counted from the first one, so a
+/// formula calling them in a General cell takes the date format of the cell they read.
+const FOLLOWS_ARGUMENT_FORMAT: [&str; 13] =
+    ["MIN", "MAX", "SUM", "AVERAGE", "MEDIAN", "EDATE", "EOMONTH", "WORKDAY", "WORKDAY.INTL", "IFERROR", "ROUND", "ROUNDDOWN", "ROUNDUP"];
+
+/// The date or time format of the first cell `expr` reads whose format its result follows: a
+/// reference added to, subtracted from or passed through [`FOLLOWS_ARGUMENT_FORMAT`] (or an IF's
+/// results). `None` when that cell is not formatted as a date or time, or the formula computes
+/// something else (`=YEAR(C2)`, `=C2*2`).
+fn referenced_date_format(
+    expr: &gridcraft_formula::Expr,
+    wb: &gridcraft_model::Workbook,
+    sheet: usize,
+    depth: u32,
+) -> Option<gridcraft_model::NumFmt> {
+    use gridcraft_formula::{BinOp, Expr, SheetSel, UnOp};
+    // A formula nests at most 64 levels in Excel; deeper input is left General.
+    if depth > 64 {
+        return None;
+    }
+    let next = depth + 1;
+    match expr {
+        Expr::Paren(e) | Expr::Unary(UnOp::Neg | UnOp::Plus, e) => referenced_date_format(e, wb, sheet, next),
+        Expr::Binary(BinOp::Add | BinOp::Sub, a, b) => {
+            referenced_date_format(a, wb, sheet, next).or_else(|| referenced_date_format(b, wb, sheet, next))
+        }
+        Expr::Call(name, args) if name == "IF" => args.iter().skip(1).find_map(|a| referenced_date_format(a, wb, sheet, next)),
+        Expr::Call(name, args) if FOLLOWS_ARGUMENT_FORMAT.contains(&name.as_str()) => {
+            args.iter().find_map(|a| referenced_date_format(a, wb, sheet, next))
+        }
+        Expr::Ref(r) => {
+            let at = match &r.sheet {
+                SheetSel::Current => sheet,
+                SheetSel::Named(name) => wb.sheet_index(name)?,
+                SheetSel::Span(..) => return None,
+            };
+            let sh = wb.sheet(at)?;
+            let range = r.range();
+            let fmt = &wb.styles.get(sh.style_id(range.start)).num_fmt;
+            crate::display::parsed(fmt.as_str()).is_date().then(|| fmt.clone())
+        }
+        _ => None,
+    }
+}
+
+/// A formula typed with full-width characters, in ASCII outside its quoted text.
+fn halfwidth_formula(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut quoted = false;
+    for c in input.chars() {
+        let mut buf = [0u8; 4];
+        let narrow = gridcraft_core::parse::to_halfwidth(c.encode_utf8(&mut buf));
+        if quoted && narrow != "\"" {
+            out.push(c);
+            continue;
+        }
+        if narrow == "\"" {
+            quoted = !quoted;
+        }
+        out.push_str(&narrow);
+    }
+    out
 }
 
 /// Parses a formula as it is typed (without the `=`). Excel closes missing parentheses for you,

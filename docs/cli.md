@@ -37,7 +37,7 @@ cargo install --path apps/gridcraft-cli     # or: cargo run -p gridcraft-cli -- 
 ## `run`
 
 ```sh
-gridcraft-cli run [--in FILE | --sample budget|sales|grades] \
+gridcraft-cli run [--in FILE | --sample budget|sales|grades] [--locale TAG] \
     [--cmd 'id={json}']... [--script steps.jsonl] \
     [--out FILE] [--print RANGE|used] [--sheet S] [--csv] [--formulas] [--quiet]
 ```
@@ -56,6 +56,13 @@ gridcraft-cli run --in book.xlsx \
   --cmd 'edit.fillDown={"range":"D2:D20"}' \
   --out book.xlsx --print A1:D5
 ```
+
+`--locale ja-JP` sets the regional format (`app.region.set`) before the steps run, as the Japanese interface does in
+the app and the browser build (`LANG=ja_JP.UTF-8`): typed entry reads `2026/11/10`, `11/10`, `2026年11月10日`,
+`令和8年11月10日`, `9時30分`, `午後9:30`, full-width digits (`３８０`), `￥1,280` and `＝ＳＵＭ（Ａ１：Ａ３）` as Japanese Excel
+does, built-in date formats 14 and 22 show as `yyyy/m/d`, Currency, Accounting and Comma Style are in yen, and PivotTables
+and subtotals are captioned 行ラベル, 総計, `合計 / 売上`, `東 集計`. A saved workbook keeps Japanese Excel's built-in date
+ids (`m"月"d"日"` is `numFmtId="56"`). The default is `en-US`.
 
 Command ids and parameters: `gridcraft-cli commands`.
 
