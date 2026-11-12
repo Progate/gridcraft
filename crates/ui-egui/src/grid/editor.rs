@@ -89,10 +89,19 @@ pub(super) fn popup_dismissed(response: &egui::Response, was_open: bool) -> bool
     response.ctx.input(|i| !i.focused || i.key_pressed(egui::Key::Escape)) || (was_open && response.clicked_elsewhere())
 }
 
-/// The dropdown arrow beside a cell with an in-cell list validation.
+/// The table whose total row holds `c`, and the column's index in it.
+pub(crate) fn totals_cell(sh: &Sheet, c: CellRef) -> Option<(&gridcraft_engine::model::Table, usize)> {
+    let t = sh.tables.iter().find(|t| t.totals_range().is_some_and(|r| r.contains(c)))?;
+    let i = (c.col - t.range.start.col) as usize;
+    (i < t.columns.len()).then_some((t, i))
+}
+
+/// The dropdown arrow beside a cell with an in-cell list validation, or beside a cell of a table's
+/// total row (Excel's totals function list).
 pub fn validation_arrow(sh: &Sheet, geo: &Geo, c: CellRef) -> Option<Rect> {
-    let dv = sh.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(c)))?;
-    if dv.kind != gridcraft_engine::model::ValidationKind::List || !dv.in_cell_dropdown || geo.hidden_under_frozen(sh, c) {
+    let dv = sh.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(c)));
+    let list = dv.is_some_and(|dv| dv.kind == gridcraft_engine::model::ValidationKind::List && dv.in_cell_dropdown);
+    if !(list || dv.is_none() && totals_cell(sh, c).is_some()) || geo.hidden_under_frozen(sh, c) {
         return None;
     }
     let r = geo.cell_rect(sh, c);
@@ -122,7 +131,10 @@ pub(super) fn list_picker(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_
     let si = wb.active_sheet();
     let Some(sh) = wb.sheet(si) else { return };
     let Some(dv) = sh.validations.iter().find(|x| x.ranges.iter().any(|r| r.contains(c))).cloned() else {
-        app.grid.list_picker = None;
+        match totals_cell(sh, c) {
+            Some((t, i)) => totals_picker(app, ui, geo, sh, c, t, i, was_open),
+            None => app.grid.list_picker = None,
+        }
         return;
     };
     let items = gridcraft_engine::cmd::data::list_items(&wb, si, c, &dv);
@@ -155,6 +167,74 @@ pub(super) fn list_picker(app: &mut SheetApp, ui: &mut egui::Ui, geo: &Geo, was_
             });
         });
     });
+    if close || popup_dismissed(&response.response, was_open) {
+        app.grid.list_picker = None;
+    }
+}
+
+/// The functions of a total row's list, in Excel's order: (label, `table.totalFunction` name).
+pub(crate) const TOTALS_FUNCTIONS: [(&str, &str); 9] = [
+    ("None", "none"),
+    ("Average", "average"),
+    ("Count", "count"),
+    ("Count Numbers", "countNums"),
+    ("Total Row|Max", "max"),
+    ("Total Row|Min", "min"),
+    ("Sum", "sum"),
+    ("StdDev", "stdDev"),
+    ("Var", "var"),
+];
+
+/// Excel's list beside a total row cell: None, the SUBTOTAL functions and More Functions…, which
+/// opens Insert Function for the cell.
+#[allow(clippy::too_many_arguments)]
+fn totals_picker(
+    app: &mut SheetApp,
+    ui: &mut egui::Ui,
+    geo: &Geo,
+    sh: &Sheet,
+    c: CellRef,
+    t: &gridcraft_engine::model::Table,
+    i: usize,
+    was_open: bool,
+) {
+    use gridcraft_engine::model::TotalsFn;
+    let lang = crate::i18n::current(ui.ctx());
+    let current = t.columns.get(i).map(|x| match x.totals {
+        TotalsFn::None => "none",
+        TotalsFn::Average => "average",
+        TotalsFn::Count => "count",
+        TotalsFn::CountNums => "countNums",
+        TotalsFn::Max => "max",
+        TotalsFn::Min => "min",
+        TotalsFn::Sum => "sum",
+        TotalsFn::StdDev => "stdDev",
+        TotalsFn::Var => "var",
+        TotalsFn::Custom => "",
+    });
+    let (table, column) = (t.name.clone(), t.columns.get(i).map(|x| x.name.clone()).unwrap_or_default());
+    let r = geo.cell_rect(sh, c);
+    let width = r.width().max(140.0);
+    let (at, pivot) = (geo.mirror_pos(r.left_bottom()), if geo.rtl { Align2::RIGHT_TOP } else { Align2::LEFT_TOP });
+    let mut close = false;
+    let response =
+        egui::Area::new(egui::Id::unique("table_totals_list")).fixed_pos(at).pivot(pivot).order(egui::Order::Foreground).show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).inner_margin(2.0).show(ui, |ui| {
+                ui.set_min_width(width);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (label, f) in TOTALS_FUNCTIONS {
+                    let button = egui::Button::selectable(current == Some(f), lang.tr(label)).min_size(vec2(width, LIST_PICKER_ROW_H));
+                    if ui.add(button).clicked() {
+                        app.run_or_alert("table.totalFunction", json!({"table": table, "column": column, "function": f}));
+                        close = true;
+                    }
+                }
+                if ui.add(egui::Button::selectable(false, lang.tr("More Functions…")).min_size(vec2(width, LIST_PICKER_ROW_H))).clicked() {
+                    app.open_dialog("insertFunction", json!({}));
+                    close = true;
+                }
+            });
+        });
     if close || popup_dismissed(&response.response, was_open) {
         app.grid.list_picker = None;
     }

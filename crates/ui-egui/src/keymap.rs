@@ -351,7 +351,10 @@ pub(crate) fn dispatch(app: &mut SheetApp, ctx: &egui::Context, key: Key, physic
         Shortcut::PythonMode => app.toggle_python_mode(),
         Shortcut::ContextMenu => app.grid.context_menu = Some(geo.cell_rect(sh, active).center()),
         Shortcut::DropDown => {
-            if sh.validations.iter().any(|d| d.in_cell_dropdown && d.ranges.iter().any(|r| r.contains(active))) {
+            // A list validation's items, or a total row cell's functions.
+            if sh.validations.iter().any(|d| d.in_cell_dropdown && d.ranges.iter().any(|r| r.contains(active)))
+                || crate::grid::totals_cell(sh, active).is_some()
+            {
                 app.grid.list_picker = Some(active);
             } else if sh.has_filter_button(active) {
                 let at = geo.mirror_pos(crate::grid::filter_button_rect(geo, sh, active).center());

@@ -49,7 +49,9 @@ pub(super) fn table_design(app: &mut SheetApp, ui: &mut Ui) {
         ] {
             let mut on = v;
             if ui.checkbox(&mut on, app.ui.language.tr(label)).changed() {
-                act(app, cmd, json!({"table": tname, "on": on}));
+                // The total row's label is written in the interface language, as Excel writes 集計.
+                let total = app.ui.language.tr("Total").to_string();
+                act(app, cmd, json!({"table": tname, "on": on, "label": total}));
             }
         }
     });

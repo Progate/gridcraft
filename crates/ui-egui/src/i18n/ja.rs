@@ -1273,6 +1273,8 @@ pub(super) const EXTRA: &[(&str, &str)] = &[
     ("StdDev", "標本標準偏差"),
     ("StdDevp", "標準偏差"),
     ("Var", "標本分散"),
+    ("Total Row|Max", "最大"),
+    ("Total Row|Min", "最小"),
     ("Varp", "分散"),
     ("No Calculation", "計算なし"),
     ("% of Grand Total", "総計に対する比率"),

@@ -486,3 +486,28 @@ fn kept_sheet_geometry_and_cf_statistics_follow_every_change() {
     assert!(!Arc::ptr_eq(&kept(&app).0, &ri));
     check_cf(&mut app);
 }
+
+#[test]
+fn total_row_list_reads_as_excel_in_japanese() {
+    use crate::i18n::Language;
+    let labels: Vec<&str> = super::editor::TOTALS_FUNCTIONS.iter().map(|(label, _)| Language::Ja.tr(label)).collect();
+    assert_eq!(labels, ["なし", "平均", "個数", "数値の個数", "最大", "最小", "合計", "標本標準偏差", "標本分散"]);
+    assert_eq!(Language::Ja.tr("More Functions…"), "その他の関数…");
+    let english: Vec<&str> = super::editor::TOTALS_FUNCTIONS.iter().map(|(label, _)| Language::En.tr(label)).collect();
+    assert_eq!(english, ["None", "Average", "Count", "Count Numbers", "Max", "Min", "Sum", "StdDev", "Var"]);
+}
+
+#[test]
+fn total_row_cells_have_a_function_list() {
+    let mut s = gridcraft_engine::Session::new();
+    s.new_workbook();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["a", "b"], [1, 2]]})).unwrap();
+    s.execute("insert.table", json!({"range": "A1:B2", "header": true})).unwrap();
+    s.execute("table.totalRow", json!({"table": "Table1", "on": true})).unwrap();
+    let wb = s.doc().unwrap().wb.clone();
+    let sh = wb.sheet(0).unwrap();
+    let (t, i) = super::totals_cell(sh, CellRef::new(2, 1)).unwrap();
+    assert_eq!((t.name.as_str(), i), ("Table1", 1));
+    assert!(super::totals_cell(sh, CellRef::new(1, 1)).is_none());
+    assert!(super::totals_cell(sh, CellRef::new(2, 2)).is_none());
+}
