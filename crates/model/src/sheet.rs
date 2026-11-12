@@ -158,6 +158,9 @@ pub struct Sheet {
     /// Allow Edit Ranges (meaningful while the sheet is protected).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub edit_ranges: Vec<crate::EditRange>,
+    /// What-If Analysis ▸ Scenario Manager (`<scenarios>`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scenarios: Option<crate::Scenarios>,
     pub print: PrintSettings,
     /// Last selection and scroll position, saved with the file.
     pub view_active: CellRef,
@@ -232,6 +235,7 @@ impl Sheet {
             pivots: vec![],
             protection: None,
             edit_ranges: vec![],
+            scenarios: None,
             print: PrintSettings::default(),
             view_active: CellRef::default(),
             view_top_left: CellRef::default(),

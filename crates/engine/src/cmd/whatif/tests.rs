@@ -104,14 +104,13 @@ fn scenarios() {
     assert_eq!(n(&s, "B10"), 300.0);
     s.execute("data.scenarioShow", json!({"name": "Base"})).unwrap();
     assert_eq!(n(&s, "B10"), 200.0);
-    // Stored in a hidden workbook name.
+    // Stored on the sheet, as Excel's `<scenarios>`, not in a hidden name.
     let d = s.doc().unwrap();
-    assert!(d.wb.names.iter().any(|n| n.name == super::SCENARIO_NAME && n.hidden));
+    assert!(d.wb.names.iter().all(|n| n.name != super::SCENARIO_NAME));
+    assert_eq!(d.wb.active().unwrap().scenarios.as_ref().unwrap().list.len(), 2);
     assert_eq!(super::load_scenarios(&d.wb).len(), 2);
-    // Long data is split into 250-character literals and survives an xlsx round trip.
+    // A long comment survives an xlsx round trip.
     s.execute("data.scenarioAdd", json!({"name": "Long", "changing": "B2", "values": [1], "comment": "x".repeat(600)})).unwrap();
-    let f = s.doc().unwrap().wb.names.iter().find(|n| n.name == super::SCENARIO_NAME).unwrap().formula.clone();
-    assert!(f.matches("\"&\"").count() >= 2, "{f}");
     let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
     s.execute("file.open", json!({"name": "sc.xlsx", "base64": b64})).unwrap();
     let l = s.execute("data.scenarioManager", json!({})).unwrap();
@@ -133,6 +132,83 @@ fn scenarios() {
     s.execute("data.scenarioDelete", json!({"name": "Base"})).unwrap();
     assert!(s.doc().unwrap().wb.names.iter().all(|n| n.name != super::SCENARIO_NAME));
     assert!(s.execute("data.scenarioSummary", json!({})).is_err());
+}
+
+fn sheet1_xml(s: &mut Session) -> String {
+    let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+    let bytes = crate::io::base64_decode(&b64).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(), &mut xml).unwrap();
+    xml
+}
+
+#[test]
+fn scenarios_are_saved_as_excel_scenarios_and_read_back() {
+    let mut s = s();
+    s.prefs.user_name = "Ana".into();
+    s.execute("cell.set", json!({"cell": "B2", "input": "100"})).unwrap();
+    s.execute("cell.set", json!({"cell": "B3", "input": "2"})).unwrap();
+    s.execute("data.scenarioAdd", json!({"name": "Base", "changing": "B2:B3"})).unwrap();
+    s.execute("data.scenarioAdd", json!({"name": "Best & <more>", "changing": "B2,B3", "values": [150, 0.25], "comment": "good \"case\""})).unwrap();
+    s.execute("data.scenarioShow", json!({"name": "Best & <more>"})).unwrap();
+    let xml = sheet1_xml(&mut s);
+    let at = |tag: &str| xml.find(tag).unwrap_or_else(|| panic!("no {tag} in {xml}"));
+    assert!(xml.contains(
+        "<scenarios current=\"1\" show=\"1\" sqref=\"B2 B3\"><scenario name=\"Base\" locked=\"1\" count=\"2\" user=\"Ana\"><inputCells r=\"B2\" val=\"100\"/><inputCells r=\"B3\" val=\"2\"/></scenario><scenario name=\"Best &amp; &lt;more&gt;\" locked=\"1\" count=\"2\" user=\"Ana\" comment=\"good &quot;case&quot;\"><inputCells r=\"B2\" val=\"150\"/><inputCells r=\"B3\" val=\"0.25\"/></scenario></scenarios>"
+    ), "{xml}");
+    // CT_Worksheet order: after sheetData (and sheetProtection), before pageMargins.
+    assert!(at("</sheetData>") < at("<scenarios") && at("</scenarios>") < at("<pageMargins"));
+    s.execute("review.protectSheet", json!({})).unwrap();
+    let xml = sheet1_xml(&mut s);
+    assert!(xml.find("<sheetProtection").unwrap() < xml.find("<scenarios").unwrap(), "{xml}");
+    s.execute("review.unprotectSheet", json!({})).unwrap();
+
+    let b64 = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap()["base64"].as_str().unwrap().to_string();
+    s.execute("file.open", json!({"name": "sc.xlsx", "base64": b64})).unwrap();
+    let l = s.execute("data.scenarioManager", json!({})).unwrap();
+    assert_eq!(l["scenarios"][0]["name"], "Base");
+    assert_eq!(l["scenarios"][1]["name"], "Best & <more>");
+    assert_eq!(l["scenarios"][1]["changing"], "B2,B3");
+    assert_eq!(l["scenarios"][1]["values"], json!([150.0, 0.25]));
+    assert_eq!(l["scenarios"][1]["comment"], "good \"case\"");
+    assert_eq!(l["scenarios"][1]["user"], "Ana");
+    assert_eq!(l["scenarios"][1]["locked"], true);
+    let set = s.doc().unwrap().wb.active().unwrap().scenarios.clone().unwrap();
+    assert_eq!((set.current, set.show), (Some(1), Some(1)));
+    s.execute("data.scenarioShow", json!({"name": "Base"})).unwrap();
+    assert_eq!(n(&s, "B2"), 100.0);
+    // Edit under a new name replaces the scenario in place.
+    s.execute("data.scenarioAdd", json!({"name": "Base 2", "old": "Base", "changing": "B2", "values": [7]})).unwrap();
+    let l = s.execute("data.scenarioManager", json!({})).unwrap();
+    assert_eq!(l["scenarios"][0]["name"], "Base 2");
+    assert_eq!(l["scenarios"].as_array().unwrap().len(), 2);
+    // Deleting the last one removes the element.
+    s.execute("data.scenarioDelete", json!({"name": "Base 2"})).unwrap();
+    s.execute("data.scenarioDelete", json!({"name": "Best & <more>"})).unwrap();
+    assert!(!sheet1_xml(&mut s).contains("<scenarios"));
+}
+
+#[test]
+fn scenarios_in_the_legacy_hidden_name_are_still_read_and_move_to_the_sheet() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "B2", "input": "1"})).unwrap();
+    let legacy = r#"[{"name":"Old","sheet":"Sheet1","changing":"B2","values":[42],"comment":"kept"}]"#;
+    std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().wb).names.push(gridcraft_model::DefinedName {
+        name: super::SCENARIO_NAME.into(),
+        scope: None,
+        formula: format!("\"{}\"", legacy.replace('"', "\"\"")),
+        comment: String::new(),
+        hidden: true,
+    });
+    let l = s.execute("data.scenarioManager", json!({})).unwrap();
+    assert_eq!(l["scenarios"][0]["name"], "Old", "{l}");
+    assert_eq!(l["scenarios"][0]["comment"], "kept");
+    s.execute("data.scenarioShow", json!({"name": "Old"})).unwrap();
+    assert_eq!(n(&s, "B2"), 42.0);
+    let d = s.doc().unwrap();
+    assert!(d.wb.names.iter().all(|n| n.name != super::SCENARIO_NAME));
+    assert_eq!(d.wb.active().unwrap().scenarios.as_ref().unwrap().current, Some(0));
 }
 
 #[test]

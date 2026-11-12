@@ -8,9 +8,11 @@ use crate::style::{Color, Style};
 
 mod pivot;
 mod print;
+mod scenarios;
 
 pub use pivot::{PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotShowAs, PivotSort, PivotTable, PivotValue};
 pub use print::{EditRange, HfPage, LineInfo, Orientation, PageOrder, PrintSettings, SheetProtection, password_hash};
+pub use scenarios::{ScenarioDef, ScenarioInput, Scenarios};
 
 // ---------------------------------------------------------------- tables
 

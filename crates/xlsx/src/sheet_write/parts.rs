@@ -349,6 +349,57 @@ pub(super) fn protected_ranges_xml(sheet: &Sheet) -> String {
     if s.is_empty() { s } else { format!("<protectedRanges>{s}</protectedRanges>") }
 }
 
+/// Scenario Manager: `<scenarios>` (after `protectedRanges`, before `autoFilter`).
+pub(super) fn scenarios_xml(sheet: &Sheet) -> String {
+    let Some(set) = sheet.scenarios.as_ref().filter(|x| !x.list.is_empty()) else { return String::new() };
+    let mut s = String::from("<scenarios");
+    let n = set.list.len() as u32;
+    for (attr, v) in [("current", set.current), ("show", set.show)] {
+        if let Some(v) = v.filter(|v| *v < n) {
+            let _ = write!(s, " {attr}=\"{v}\"");
+        }
+    }
+    if !set.sqref.is_empty() {
+        let sqref: Vec<String> = set.sqref.iter().map(|x| x.a1()).collect();
+        let _ = write!(s, " sqref=\"{}\"", sqref.join(" "));
+    }
+    s.push('>');
+    for sc in &set.list {
+        let _ = write!(s, "<scenario name=\"{}\"", esc_attr(&sc.name));
+        if sc.locked {
+            s.push_str(" locked=\"1\"");
+        }
+        if sc.hidden {
+            s.push_str(" hidden=\"1\"");
+        }
+        let _ = write!(s, " count=\"{}\"", sc.inputs.len());
+        if !sc.user.is_empty() {
+            let _ = write!(s, " user=\"{}\"", esc_attr(&sc.user));
+        }
+        if !sc.comment.is_empty() {
+            let _ = write!(s, " comment=\"{}\"", esc_attr(&sc.comment));
+        }
+        s.push('>');
+        for i in &sc.inputs {
+            let _ = write!(s, "<inputCells r=\"{}\"", i.cell.a1());
+            if i.deleted {
+                s.push_str(" deleted=\"1\"");
+            }
+            if i.undone {
+                s.push_str(" undone=\"1\"");
+            }
+            let _ = write!(s, " val=\"{}\"", esc_attr(&i.value));
+            if let Some(f) = i.num_fmt_id {
+                let _ = write!(s, " numFmtId=\"{f}\"");
+            }
+            s.push_str("/>");
+        }
+        s.push_str("</scenario>");
+    }
+    s.push_str("</scenarios>");
+    s
+}
+
 /// A note box's `<x:Anchor>` text and its width and height in points: the box read from the file
 /// or [`DEFAULT_NOTE_BOX`], its corners moved with the note's `cell` and kept on the sheet.
 fn note_anchor(cell: CellRef, b: Option<&NoteBox>) -> (String, (f64, f64)) {

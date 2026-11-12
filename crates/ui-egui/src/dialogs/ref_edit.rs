@@ -70,7 +70,8 @@ struct Home {
 /// Whether the dialog has reference boxes: Goal Seek, Solver, Data Analysis, and any form with a
 /// [`Field::Ref`].
 fn has_reference_boxes(d: &Dialog) -> bool {
-    matches!(d.name.as_str(), "goalSeek" | "solver" | "analysisToolPak") || d.fields.iter().any(|f| matches!(f, Field::Ref { .. }))
+    matches!(d.name.as_str(), "goalSeek" | "solver" | "analysisToolPak" | "scenarioManager")
+        || d.fields.iter().any(|f| matches!(f, Field::Ref { .. }))
 }
 
 /// Records the sheet shown as the dialog's own when a dialog with reference boxes opens, from the
@@ -145,10 +146,10 @@ fn ref_edit_id(key: &str) -> egui::Id {
 }
 
 /// Whether the reference box `key` of dialog `dialog` takes several areas joined by commas.
-/// Solver's variable cells do; every other box takes one cell or range, which its command parses
-/// as a single reference.
+/// Solver's variable cells and a scenario's changing and result cells do; every other box takes
+/// one cell or range, which its command parses as a single reference.
 fn takes_several_areas(dialog: &str, key: &str) -> bool {
-    dialog == "solver" && key == "variables"
+    matches!((dialog, key), ("solver", "variables") | ("scenarioManager", "changing" | "resultCells"))
 }
 
 /// The grid selection as a reference, with the sheet name when the selection is on another sheet

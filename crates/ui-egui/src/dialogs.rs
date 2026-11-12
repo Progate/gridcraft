@@ -26,6 +26,7 @@ mod names;
 mod page_setup;
 mod paste;
 mod ref_edit;
+mod scenarios;
 mod show;
 mod spelling;
 mod zoom;
@@ -691,6 +692,7 @@ impl Dialog {
             }
             "equation" => return crate::equation::open_editor(app, &params),
             "goalSeek" => Dialog::custom("goalSeek", "Goal Seek", json!({"set": active, "to": "0", "changing": ""})),
+            "scenarioManager" => scenarios::open(app),
             "forecastSheet" => Dialog::form(
                 "forecastSheet",
                 "Create Forecast Worksheet",

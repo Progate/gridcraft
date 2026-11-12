@@ -1,11 +1,13 @@
 use super::{
-    Cell, CellRef, DefinedName, Deserialize, EngineError, HashMap, Json, Result, Serialize, Session, Sheet, StyleId, Trial, Value, Workbook, bad,
-    bool_param, cell_list, edit, json, json_value, str_param, value_json,
+    Cell, CellRef, Deserialize, EngineError, HashMap, Json, Result, Serialize, Session, Sheet, StyleId, Trial, Value, Workbook, bad, bool_param,
+    cell_list, edit, json, json_value, str_param, value_json,
 };
 
 // ---------------------------------------------------------------- scenarios
 
-/// Hidden workbook-scope name holding the scenarios as a quoted JSON string.
+/// Hidden workbook-scope name that held the scenarios as a quoted JSON string before they were
+/// saved as Excel's own `<scenarios>` element. Still read, so a workbook saved that way keeps its
+/// scenarios; the next change moves them to their sheets and drops the name.
 pub(crate) const SCENARIO_NAME: &str = "_sc_scenarios";
 
 const MAX_SCENARIO_CELLS: usize = 32;
@@ -20,11 +22,63 @@ pub(crate) struct Scenario {
     pub values: Vec<Json>,
     #[serde(default)]
     pub comment: String,
+    /// Prevent changes (Excel's default for a new scenario).
+    #[serde(default)]
+    pub locked: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub user: String,
 }
 
+/// Every scenario in the workbook, sheet by sheet: those in the sheets' `<scenarios>`, then any
+/// in the legacy hidden name for a sheet that has none of its own.
 pub(crate) fn load_scenarios(wb: &Workbook) -> Vec<Scenario> {
+    let mut out = Vec::new();
+    for sh in &wb.sheets {
+        for d in sh.scenarios.iter().flat_map(|x| x.list.iter()) {
+            let inputs: Vec<&gridcraft_model::ScenarioInput> = d.inputs.iter().filter(|i| !i.deleted).collect();
+            out.push(Scenario {
+                name: d.name.clone(),
+                sheet: sh.name.clone(),
+                changing: inputs.iter().map(|i| i.cell.a1()).collect::<Vec<_>>().join(","),
+                values: inputs.iter().map(|i| val_json(&i.value)).collect(),
+                comment: d.comment.clone(),
+                locked: d.locked,
+                hidden: d.hidden,
+                user: d.user.clone(),
+            });
+        }
+    }
+    let has_own = |sheet: &str| wb.sheet_index(sheet).and_then(|i| wb.sheet(i)).is_some_and(|sh| sh.scenarios.is_some());
+    out.extend(legacy_scenarios(wb).into_iter().filter(|sc| !has_own(&sc.sheet)));
+    out
+}
+
+fn legacy_scenarios(wb: &Workbook) -> Vec<Scenario> {
     let Some(n) = wb.names.iter().find(|n| n.scope.is_none() && n.name.eq_ignore_ascii_case(SCENARIO_NAME)) else { return vec![] };
     serde_json::from_str(&string_literals(&n.formula)).unwrap_or_default()
+}
+
+/// A scenario value as Excel saves it in `inputCells val`: numbers in invariant notation, text as
+/// typed, booleans as `TRUE`/`FALSE`.
+fn json_val(v: &Json) -> String {
+    match v {
+        Json::Null => String::new(),
+        Json::Bool(b) => if *b { "TRUE" } else { "FALSE" }.into(),
+        Json::Number(n) => n.as_f64().map(|f| f.to_string()).unwrap_or_else(|| n.to_string()),
+        Json::String(t) => t.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// The value of an `inputCells val`: a number when it reads as one, else its text (which Show
+/// enters as typed input).
+fn val_json(v: &str) -> Json {
+    match v.trim().parse::<f64>() {
+        Ok(n) if n.is_finite() && !v.trim().is_empty() => json!(n),
+        _ => json!(v),
+    }
 }
 
 /// Concatenates the string literals of a `"a"&"b""c"` formula.
@@ -53,30 +107,78 @@ fn string_literals(f: &str) -> String {
     out
 }
 
+/// Saves `list` as each sheet's `<scenarios>` (Excel's own form, so Excel's Scenario Manager
+/// lists them) and drops the legacy hidden name. A sheet keeps its shown and selected scenario
+/// while that index still exists.
 fn store_scenarios(wb: &mut Workbook, list: &[Scenario]) {
     wb.names.retain(|n| !(n.scope.is_none() && n.name.eq_ignore_ascii_case(SCENARIO_NAME)));
-    if list.is_empty() {
-        return;
+    for si in 0..wb.sheets.len() {
+        let Some(sh) = wb.sheet(si) else { continue };
+        let mine: Vec<&Scenario> = list.iter().filter(|x| x.sheet.eq_ignore_ascii_case(&sh.name)).collect();
+        let set = (!mine.is_empty()).then(|| {
+            let defs: Vec<gridcraft_model::ScenarioDef> = mine
+                .iter()
+                .map(|x| gridcraft_model::ScenarioDef {
+                    name: x.name.clone(),
+                    locked: x.locked,
+                    hidden: x.hidden,
+                    user: x.user.clone(),
+                    comment: x.comment.clone(),
+                    inputs: x
+                        .changing
+                        .split(',')
+                        .filter_map(|c| CellRef::parse(c.trim()))
+                        .zip(x.values.iter())
+                        .map(|(cell, v)| gridcraft_model::ScenarioInput { cell, value: json_val(v), ..Default::default() })
+                        .collect(),
+                })
+                .collect();
+            let mut cells: Vec<CellRef> = Vec::new();
+            for c in defs.iter().flat_map(|d| d.inputs.iter().map(|i| i.cell)) {
+                if !cells.contains(&c) {
+                    cells.push(c);
+                }
+            }
+            let n = defs.len() as u32;
+            let old = sh.scenarios.as_ref();
+            gridcraft_model::Scenarios {
+                current: old.and_then(|o| o.current).filter(|i| *i < n),
+                show: old.and_then(|o| o.show).filter(|i| *i < n),
+                sqref: cells.into_iter().map(gridcraft_core::RangeRef::cell).collect(),
+                list: defs,
+            }
+        });
+        if sh.scenarios != set
+            && let Some(sh) = wb.sheet_mut(si)
+        {
+            sh.scenarios = set;
+        }
     }
-    let text = serde_json::to_string(list).unwrap_or_else(|_| "[]".into());
-    wb.names.push(DefinedName {
-        name: SCENARIO_NAME.into(),
-        scope: None,
-        // Excel caps string literals at 255 characters: store `"…"&"…"` chunks.
-        formula: text
-            .chars()
-            .collect::<Vec<char>>()
-            .chunks(250)
-            .map(|c| format!("\"{}\"", c.iter().collect::<String>().replace('"', "\"\"")))
-            .collect::<Vec<_>>()
-            .join("&"),
-        comment: "GridCraft Scenario Manager data".into(),
-        hidden: true,
-    });
+}
+
+/// Records which scenario was shown last on its sheet (`<scenarios current>`).
+fn mark_current(wb: &mut Workbook, sheet: &str, name: &str) {
+    let Some(si) = wb.sheet_index(sheet) else { return };
+    let Some(sh) = wb.sheet_mut(si) else { return };
+    if let Some(set) = sh.scenarios.as_mut()
+        && let Some(i) = set.list.iter().position(|d| d.name.eq_ignore_ascii_case(name))
+    {
+        set.current = Some(i as u32);
+        set.show = Some(i as u32);
+    }
 }
 
 fn scenario_json(sc: &Scenario) -> Json {
-    json!({"name": sc.name, "sheet": sc.sheet, "changing": sc.changing, "values": sc.values, "comment": sc.comment})
+    json!({
+        "name": sc.name,
+        "sheet": sc.sheet,
+        "changing": sc.changing,
+        "values": sc.values,
+        "comment": sc.comment,
+        "locked": sc.locked,
+        "hidden": sc.hidden,
+        "user": sc.user,
+    })
 }
 
 pub(super) fn scenario_list(s: &mut Session, p: &Json) -> Result<Json> {
@@ -110,11 +212,26 @@ pub(super) fn scenario_add(s: &mut Session, p: &Json) -> Result<Json> {
         None => cells.iter().map(|c| value_json(&sh.value(*c))).collect(),
     };
     let changing = cells.iter().map(|c| c.a1()).collect::<Vec<_>>().join(",");
-    let sc = Scenario { name: name.clone(), sheet: sh.name.clone(), changing, values, comment: str_param(p, "comment").unwrap_or("").to_string() };
     let replace = bool_param(p, "replace").unwrap_or(false);
     let mut list = load_scenarios(&d.wb);
-    match list.iter().position(|x| x.name.eq_ignore_ascii_case(&name) && x.sheet.eq_ignore_ascii_case(&sc.sheet)) {
-        Some(i) if replace => {
+    let sc = Scenario {
+        name: name.clone(),
+        sheet: sh.name.clone(),
+        changing,
+        values,
+        comment: str_param(p, "comment").unwrap_or("").to_string(),
+        // Excel ticks Prevent changes for a new scenario.
+        locked: bool_param(p, "locked").unwrap_or(true),
+        hidden: bool_param(p, "hidden").unwrap_or(false),
+        user: s.prefs.user_name.clone(),
+    };
+    // Editing a scenario under a new name (the Edit Scenario dialog) replaces the one named `old`.
+    let renamed_from = str_param(p, "old")
+        .filter(|o| !o.eq_ignore_ascii_case(&name))
+        .and_then(|o| list.iter().position(|x| x.name.eq_ignore_ascii_case(o) && x.sheet.eq_ignore_ascii_case(&sc.sheet)));
+    let existing = list.iter().position(|x| x.name.eq_ignore_ascii_case(&name) && x.sheet.eq_ignore_ascii_case(&sc.sheet));
+    match existing.or(renamed_from) {
+        Some(i) if replace || existing.is_none() => {
             if let Some(slot) = list.get_mut(i) {
                 *slot = sc.clone();
             }
@@ -173,6 +290,11 @@ pub(super) fn scenario_show(s: &mut Session, p: &Json) -> Result<Json> {
             }
             cx.touch(si, *c);
         }
+        // A scenario from the legacy name is moved to its sheet first, so it can be marked.
+        if cx.wb.sheet(si).is_some_and(|sh| sh.scenarios.is_none()) {
+            store_scenarios(&mut cx.wb, &list);
+        }
+        mark_current(&mut cx.wb, &sc.sheet, &sc.name);
         Ok(())
     })?;
     Ok(scenario_json(&sc))

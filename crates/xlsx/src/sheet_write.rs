@@ -542,6 +542,7 @@ fn write_sheet_rules(s: &mut String, sheet: &Sheet, rels: &mut Rels, out: &mut O
         s.push_str("/>");
     }
     s.push_str(&protected_ranges_xml(sheet));
+    s.push_str(&parts::scenarios_xml(sheet));
     // autoFilter (a sheet filter overlapping a table would be invalid).
     if let Some(af) = &sheet.autofilter
         && !sheet.tables.iter().any(|t| t.range.intersects(&af.range))

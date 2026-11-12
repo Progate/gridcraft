@@ -344,6 +344,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
             }
             "extLst" => read_ext(cx, e, &mut sheet),
             "protectedRanges" => read_protected_ranges(e, &mut sheet),
+            "scenarios" => read_scenarios(e, &mut sheet),
             _ => {}
         }
     }
@@ -480,6 +481,46 @@ fn read_protected_ranges(e: &El, sheet: &mut Sheet) {
         let title = p.attr("name").unwrap_or("").to_string();
         sheet.edit_ranges.push(EditRange { title, ranges, password, security_descriptor: p.attr("securityDescriptor").map(str::to_string) });
     }
+}
+
+/// Most scenarios, and changing cells per scenario, read from a file (Excel allows 32 cells).
+const MAX_SCENARIOS: usize = 1000;
+const MAX_SCENARIO_CELLS: usize = 1000;
+
+fn read_scenarios(e: &El, sheet: &mut Sheet) {
+    let mut list = Vec::new();
+    for sc in e.kids("scenario").take(MAX_SCENARIOS) {
+        let inputs: Vec<gridcraft_model::ScenarioInput> = sc
+            .kids("inputCells")
+            .take(MAX_SCENARIO_CELLS)
+            .filter_map(|i| {
+                Some(gridcraft_model::ScenarioInput {
+                    cell: CellRef::parse(i.attr("r")?)?,
+                    value: i.attr("val").unwrap_or("").to_string(),
+                    deleted: i.flag("deleted", false),
+                    undone: i.flag("undone", false),
+                    num_fmt_id: i.attr_u32("numFmtId"),
+                })
+            })
+            .collect();
+        list.push(gridcraft_model::ScenarioDef {
+            name: sc.attr("name").unwrap_or("").to_string(),
+            locked: sc.flag("locked", false),
+            hidden: sc.flag("hidden", false),
+            user: sc.attr("user").unwrap_or("").to_string(),
+            comment: sc.attr("comment").unwrap_or("").to_string(),
+            inputs,
+        });
+    }
+    if list.is_empty() {
+        return;
+    }
+    sheet.scenarios = Some(gridcraft_model::Scenarios {
+        current: e.attr_u32("current"),
+        show: e.attr_u32("show"),
+        sqref: e.attr("sqref").unwrap_or("").split_whitespace().filter_map(RangeRef::parse).take(MAX_SCENARIO_CELLS).collect(),
+        list,
+    });
 }
 
 fn read_views(e: &El, sheet: &mut Sheet) {

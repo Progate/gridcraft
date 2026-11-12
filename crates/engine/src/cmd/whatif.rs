@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 
 use gridcraft_calc::Calc;
 use gridcraft_core::{CellRef, RangeRef, Value};
-use gridcraft_model::{CalcMode, Cell, DefinedName, Sheet, StyleId, Workbook};
+use gridcraft_model::{CalcMode, Cell, Sheet, StyleId, Workbook};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as Json, json};
 
