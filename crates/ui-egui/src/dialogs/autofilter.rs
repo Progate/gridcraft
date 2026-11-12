@@ -97,12 +97,13 @@ pub(super) fn open_custom(app: &SheetApp, params: &Json) -> Option<Dialog> {
         let (op, value) = shown_condition(&a.0, &a.1, kind);
         values["op"] = json!(op);
         values["value"] = json!(value);
-        if let Some(b) = b {
+        if let Some(b) = &b {
             let (op2, value2) = shown_condition(&b.0, &b.1, kind);
             values["op2"] = json!(op2);
             values["value2"] = json!(value2);
         }
-        values["and"] = json!(and);
+        // A single condition is stored without And; the dialog still starts on And, as Excel's does.
+        values["and"] = json!(and || b.is_none());
     }
     for key in ["op", "op2", "and"] {
         if let Some(v) = params.get(key) {

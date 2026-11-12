@@ -42,10 +42,10 @@ fn every_condition_filter_is_written_as_excel_writes_it_and_read_back() {
             custom((">=", "100"), Some(("<", "200")), true),
             r#"<customFilters and="1"><customFilter operator="greaterThanOrEqual" val="100"/><customFilter operator="lessThan" val="200"/></customFilters>"#,
         ),
-        (custom(("=", "abc"), None, true), r#"<customFilters and="1"><customFilter val="abc"/></customFilters>"#),
+        (custom(("=", "abc"), None, false), r#"<customFilters><customFilter val="abc"/></customFilters>"#),
         (custom(("=", "abc*"), Some(("=", "*xyz")), false), r#"<customFilters><customFilter val="abc*"/><customFilter val="*xyz"/></customFilters>"#),
-        (custom(("<>", "*abc*"), None, true), r#"<customFilters and="1"><customFilter operator="notEqual" val="*abc*"/></customFilters>"#),
-        (custom((">", "46085"), None, true), r#"<customFilters and="1"><customFilter operator="greaterThan" val="46085"/></customFilters>"#),
+        (custom(("<>", "*abc*"), None, false), r#"<customFilters><customFilter operator="notEqual" val="*abc*"/></customFilters>"#),
+        (custom((">", "46085"), None, false), r#"<customFilters><customFilter operator="greaterThan" val="46085"/></customFilters>"#),
         (FilterCriterion::Top10 { bottom: false, percent: false, count: 10, filter_val: Some(42.0) }, r#"<top10 val="10" filterVal="42"/>"#),
         (
             FilterCriterion::Top10 { bottom: true, percent: true, count: 10, filter_val: Some(3.5) },

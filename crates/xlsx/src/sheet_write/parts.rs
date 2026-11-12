@@ -74,7 +74,8 @@ pub(super) fn autofilter_xml(range: RangeRef, criteria: &[(u32, FilterCriterion)
                 s.push_str("</filters>");
             }
             FilterCriterion::Custom { a, b, and } => {
-                let _ = write!(s, "<customFilters{}>", if *and { " and=\"1\"" } else { "" });
+                // Excel marks `and` only when two conditions are joined by And.
+                let _ = write!(s, "<customFilters{}>", if *and && b.is_some() { " and=\"1\"" } else { "" });
                 for (op, v) in std::iter::once(a).chain(b.iter()) {
                     // Text operators kept from older models are written as Excel writes them: wildcards on `val`.
                     let (op, v) = gridcraft_model::custom_filter_condition(op, v).unwrap_or_else(|| (op.clone(), v.clone()));

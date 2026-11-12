@@ -125,7 +125,9 @@ fn filter_criterion(p: &Json, sys: DateSystem) -> Result<Option<FilterCriterion>
             Some(op) => Some(cond(op, c.get("value2"))?),
             None => None,
         };
-        return Ok(Some(FilterCriterion::Custom { a, b, and: c.get("and").and_then(Json::as_bool).unwrap_or(true) }));
+        // `and` only means something for two conditions; a single one keeps it off, as the file does.
+        let and = b.is_some() && c.get("and").and_then(Json::as_bool).unwrap_or(true);
+        return Ok(Some(FilterCriterion::Custom { a, b, and }));
     }
     if let Some(t) = p.get("top") {
         let percent = t.get("percent").and_then(Json::as_bool).unwrap_or(false);
