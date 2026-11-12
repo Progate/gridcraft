@@ -106,7 +106,7 @@ fn styles_theme_and_sizes() {
         <xf numFmtId="164" fontId="1" fillId="2" borderId="1" applyAlignment="1"><alignment horizontal="centerContinuous" vertical="top" wrapText="1" indent="2" textRotation="135"/><protection locked="0" hidden="1"/></xf>
         <xf numFmtId="14" fontId="2" fillId="3" borderId="0"/>
         <xf numFmtId="10" fontId="0" fillId="4" borderId="0"/>
-        <xf numFmtId="30" fontId="0" fillId="0" borderId="0"/></cellXfs>
+        <xf numFmtId="60" fontId="0" fillId="0" borderId="0"/></cellXfs>
       <dxfs count="1"><dxf><font><b/><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>
     </styleSheet>"#;
     let theme = r#"<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office"><a:themeElements><a:clrScheme name="x">
