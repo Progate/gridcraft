@@ -777,4 +777,31 @@ fn name_box_goes_to_references_and_names_and_defines_new_names() {
     let err = s.execute("edit.nameBox", json!({"text": "Rate"})).unwrap_err().to_string();
     assert!(err.contains("Reference isn't valid."), "{err}");
     assert!(s.execute("edit.nameBox", json!({"text": "Sheet9!A1"})).is_err());
+#[test]
+fn format_painter_copies_merged_cells_and_unmerges_the_destination() {
+    let mut s = Session::new();
+    s.new_workbook();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["Title", null, "x"]]})).unwrap();
+    s.execute("home.mergeCenter", json!({"range": "A1:B1"})).unwrap();
+    s.execute("home.mergeCells", json!({"range": "E5:G5"})).unwrap();
+    s.execute("selection.set", json!({"range": "A1:C1"})).unwrap();
+    s.execute("edit.formatPainter", json!({})).unwrap();
+    // Clicking one cell paints the source's shape: A1:B1 merged lands on E5:F5, G5 is unmerged.
+    s.execute("edit.formatPainter", json!({"apply": "E5"})).unwrap();
+    let merges = |s: &Session| s.doc().unwrap().wb.active().unwrap().merges.clone();
+    assert_eq!(merges(&s), [RangeRef::parse("A1:B1").unwrap(), RangeRef::parse("E5:F5").unwrap()]);
+    let sh = s.doc().unwrap().wb.active().unwrap();
+    assert_eq!(s.doc().unwrap().wb.styles.get(sh.style_id(CellRef::parse("E5").unwrap())).align.h, gridcraft_model::HAlign::Center);
+    // A source without merges unmerges the cells it paints, and undo puts the merge back.
+    s.execute("selection.set", json!({"range": "C1"})).unwrap();
+    s.execute("edit.formatPainter", json!({})).unwrap();
+    s.execute("edit.formatPainter", json!({"apply": "E5:F5"})).unwrap();
+    assert_eq!(merges(&s), [RangeRef::parse("A1:B1").unwrap()]);
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(merges(&s), [RangeRef::parse("A1:B1").unwrap(), RangeRef::parse("E5:F5").unwrap()]);
+    // A destination too small for the source merge gets none.
+    s.execute("selection.set", json!({"range": "A1:B1"})).unwrap();
+    s.execute("edit.formatPainter", json!({})).unwrap();
+    s.execute("edit.formatPainter", json!({"apply": "J1:J3"})).unwrap();
+    assert_eq!(merges(&s).len(), 2);
 }

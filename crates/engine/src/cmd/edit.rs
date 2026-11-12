@@ -465,6 +465,37 @@ fn format_painter(s: &mut Session, p: &Json) -> Result<Json> {
                 *cx.sel = crate::Selection::range(dest);
                 return Ok(());
             }
+            // Merged cells are formatting to the Format Painter, as in Excel: the source's merges
+            // repeat over the destination where they fit, and merges already there go.
+            let src_merges: Vec<RangeRef> = src_sheet.merges.iter().filter(|m| src.contains_range(m)).copied().collect();
+            let mut merges = Vec::new();
+            let mut row = dest.start.row;
+            while row <= dest.end.row && merges.len() < 100_000 {
+                let mut col = dest.start.col;
+                while col <= dest.end.col && merges.len() < 100_000 {
+                    for m in &src_merges {
+                        let start = CellRef::new(row + (m.start.row - src.start.row), col + (m.start.col - src.start.col));
+                        let end = CellRef::new(start.row.saturating_add(m.height() - 1), start.col.saturating_add(m.width() - 1));
+                        let tile = RangeRef::new(start, end);
+                        if dest.contains_range(&tile) {
+                            merges.push(tile);
+                        }
+                    }
+                    col = col.saturating_add(w.max(1));
+                    if col == u32::MAX {
+                        break;
+                    }
+                }
+                row = row.saturating_add(h.max(1));
+                if row == u32::MAX {
+                    break;
+                }
+            }
+            let sh = cx.sheet_mut(dest_sheet)?;
+            if !merges.is_empty() || sh.merges.iter().any(|m| m.intersection(&dest).is_some()) {
+                sh.merges.retain(|m| m.intersection(&dest).is_none());
+                sh.merges.extend(merges);
+            }
             for c in dest.iter().take(2_000_000) {
                 let sc = CellRef::new(src.start.row + (c.row - dest.start.row) % h, src.start.col + (c.col - dest.start.col) % w);
                 let st = src_sheet.style_id(sc);
