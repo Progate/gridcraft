@@ -111,6 +111,7 @@ pub(super) fn autofilter_xml(range: RangeRef, criteria: &[(u32, FilterCriterion)
 }
 
 pub(super) fn table_xml(t: &Table, cols: &[String], name: &str, id: u32, out: &mut Out) -> String {
+    let display = name;
     let mut s =
         format!("{XML_DECL}<table xmlns=\"{NS_MAIN}\" id=\"{id}\" name=\"{0}\" displayName=\"{0}\" ref=\"{1}\"", esc_attr(name), t.range.a1());
     if !t.header_row {
@@ -170,10 +171,10 @@ pub(super) fn table_xml(t: &Table, cols: &[String], name: &str, id: u32, out: &m
         }
         s.push('>');
         if let Some(f) = calc {
-            let _ = write!(s, "<calculatedColumnFormula>{}</calculatedColumnFormula>", esc(&text_to_file(f)));
+            let _ = write!(s, "<calculatedColumnFormula>{}</calculatedColumnFormula>", esc(&text_to_file_in(f, Some(display))));
         }
         if let Some(f) = custom {
-            let _ = write!(s, "<totalsRowFormula>{}</totalsRowFormula>", esc(&text_to_file(f)));
+            let _ = write!(s, "<totalsRowFormula>{}</totalsRowFormula>", esc(&text_to_file_in(f, Some(display))));
         }
         if let Some(x) = xml {
             let _ = write!(s, "<xmlColumnPr mapId=\"{}\" xpath=\"{}\"", x.map_id, esc_attr(&x.xpath));

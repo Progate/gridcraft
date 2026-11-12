@@ -10,7 +10,7 @@ use gridcraft_model::{
 };
 
 use crate::drawing::{Obj, image_content_type, image_ext};
-use crate::fmla::text_to_file;
+use crate::fmla::{text_to_file, text_to_file_in};
 use crate::styles::{color_attrs, dxf_id};
 use crate::tables::{paper_id, px_to_col_width, px_to_pt};
 use crate::write::{
@@ -237,6 +237,8 @@ struct CellWriteInput<'a> {
     header_override: Option<&'a String>,
     spill_value: Option<&'a Value>,
     dynamic_range: Option<&'a RangeRef>,
+    /// The name of the table the cell is in, which its unnamed structured references refer to.
+    table: Option<&'a str>,
 }
 
 /// The sheet's slicer part and one cache part per slicer; returns the worksheet extension that
@@ -723,6 +725,10 @@ fn write_sheet_data(s: &mut String, data: SheetCellData<'_>, sid: &dyn Fn(gridcr
                     header_override: ov,
                     spill_value: ex,
                     dynamic_range: array.as_ref(),
+                    table: cell
+                        .filter(|x| x.formula.is_some())
+                        .and_then(|_| sheet.tables.iter().find(|t| t.range.contains(cell_ref)))
+                        .map(|t| t.name.as_str()),
                 },
                 sid,
                 out,
@@ -800,7 +806,7 @@ fn write_sheet_views(s: &mut String, sheet: &Sheet, selected: bool) {
 }
 
 fn write_cell(s: &mut String, input: CellWriteInput<'_>, sid: &dyn Fn(gridcraft_model::StyleId) -> u32, out: &mut Out) {
-    let CellWriteInput { reference: c, cell, picture, header_override: ov, spill_value: extra, dynamic_range: dynamic } = input;
+    let CellWriteInput { reference: c, cell, picture, header_override: ov, spill_value: extra, dynamic_range: dynamic, table } = input;
     let style = cell.map(|x| sid(x.style)).unwrap_or(0);
     s.push_str("<c r=\"");
     push_a1(s, c);
@@ -852,7 +858,7 @@ fn write_cell(s: &mut String, input: CellWriteInput<'_>, sid: &dyn Fn(gridcraft_
         s.push_str(" cm=\"1\"");
         out.dynamic_arrays = true;
     }
-    let text = formula.map(|f| esc(&crate::fmla::to_file(f))).or_else(|| py_text.map(|t| esc(&t)));
+    let text = formula.map(|f| esc(&crate::fmla::to_file_in(f, table))).or_else(|| py_text.map(|t| esc(&t)));
     if let Some(text) = text {
         let t = match &value {
             Value::Text(_) => " t=\"str\"",

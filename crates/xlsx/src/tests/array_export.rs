@@ -289,11 +289,63 @@ fn this_row_references_are_written_in_long_form() {
     assert_eq!(cell(&sheet, "B2").child("f").unwrap().text, "Data[[#This Row],[Input]]*2");
     let table = pkg.read_xml("xl/tables/table1.xml").unwrap().unwrap();
     let column = table.child("tableColumns").unwrap().kids("tableColumn").nth(1).unwrap();
-    assert_eq!(column.child("calculatedColumnFormula").unwrap().text, "[[#This Row],[Input]]*2");
+    // Excel names the table in every structured reference it saves, its own cells' too.
+    assert_eq!(column.child("calculatedColumnFormula").unwrap().text, "Data[[#This Row],[Input]]*2");
     let (back, _) = read_xlsx(&bytes).unwrap();
     let sh = back.sheet(0).unwrap();
+    // ...and shows a this-row reference to the cell's own table as `[@Input]`.
     assert_eq!(sh.tables[0].columns[1].formula.as_deref(), Some("[@Input]*2"));
-    assert_eq!(sh.cell(at("B2")).unwrap().formula.as_ref().unwrap().text, "Data[@Input]*2");
+    assert_eq!(sh.cell(at("B2")).unwrap().formula.as_ref().unwrap().text, "[@Input]*2");
+}
+
+#[test]
+fn unnamed_structured_references_are_written_with_their_table() {
+    let mut wb = Workbook::new();
+    let sh = wb.sheet_mut(0).unwrap();
+    sh.cells.set(at("A1"), Cell::value(Value::text("単価")));
+    sh.cells.set(at("B1"), Cell::value(Value::text("金額")));
+    sh.cells.set(at("A2"), Cell::value(Value::Number(3.0)));
+    sh.cells.set(at("B2"), formula("[@単価]*2+SUM([単価])", 9.0));
+    sh.cells.set(at("A3"), Cell::value(Value::text("集計")));
+    sh.cells.set(at("D1"), formula("SUM(注文[金額])+注文[[#Totals],[単価]]+COUNTA(注文[#All])", 0.0));
+    let col = |name: &str, formula: Option<&str>| TableColumn {
+        name: name.into(),
+        totals: TotalsFn::None,
+        totals_label: None,
+        formula: formula.map(str::to_string),
+        unique_name: None,
+        xml: None,
+    };
+    sh.tables.push(Table {
+        id: 1,
+        name: "注文".into(),
+        range: range("A1:B3"),
+        header_row: true,
+        totals_row: true,
+        columns: vec![col("単価", None), col("金額", Some("[@単価]*2+SUM([単価])"))],
+        style: "TableStyleMedium2".into(),
+        banded_rows: true,
+        banded_cols: false,
+        first_col: false,
+        last_col: false,
+        filter_button: true,
+        filter: vec![],
+        table_type: None,
+        connection_id: None,
+    });
+    let bytes = write_xlsx(&wb).unwrap();
+    let mut pkg = Package::open(&bytes).unwrap();
+    let sheet = pkg.read_xml("xl/worksheets/sheet1.xml").unwrap().unwrap();
+    assert_eq!(cell(&sheet, "B2").child("f").unwrap().text, "注文[[#This Row],[単価]]*2+SUM(注文[単価])");
+    assert_eq!(cell(&sheet, "D1").child("f").unwrap().text, "SUM(注文[金額])+注文[[#Totals],[単価]]+COUNTA(注文[#All])");
+    let table = pkg.read_xml("xl/tables/table1.xml").unwrap().unwrap();
+    let column = table.child("tableColumns").unwrap().kids("tableColumn").nth(1).unwrap();
+    assert_eq!(column.child("calculatedColumnFormula").unwrap().text, "注文[[#This Row],[単価]]*2+SUM(注文[単価])");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let sh = back.sheet(0).unwrap();
+    assert_eq!(sh.cell(at("B2")).unwrap().formula.as_ref().unwrap().text, "[@単価]*2+SUM(注文[単価])");
+    assert_eq!(sh.tables[0].columns[1].formula.as_deref(), Some("[@単価]*2+SUM(注文[単価])"));
+    assert_eq!(sh.cell(at("D1")).unwrap().formula.as_ref().unwrap().text, "SUM(注文[金額])+注文[[#Totals],[単価]]+COUNTA(注文[#All])");
 }
 
 /// Compare both cell and formula metadata, collecting all boundaries in the group on failure.

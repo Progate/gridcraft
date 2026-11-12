@@ -6,10 +6,17 @@ use gridcraft_model::Formula;
 
 /// Formula text for a file.
 pub fn to_file(f: &Formula) -> String {
+    to_file_in(f, None)
+}
+
+/// Formula text for a file, for a formula inside the table named `table`: a structured reference
+/// without a table name (`[@Col]`, which only a cell of the table can hold) is written with it,
+/// `table[[#This Row],[Col]]`, as Excel writes every structured reference.
+pub fn to_file_in(f: &Formula, table: Option<&str>) -> String {
     match f.expr_arc() {
         // Most formulas have nothing the file spells differently: print them without copying.
         Some(e) if !needs_file_spelling(&e) => gridcraft_formula::print(&e),
-        Some(e) => expr_to_file(Expr::clone(&e)),
+        Some(e) => expr_to_file(Expr::clone(&e), table),
         None => f.text.clone(),
     }
 }
@@ -31,9 +38,15 @@ fn needs_file_spelling(e: &Expr) -> bool {
 
 /// Arbitrary formula text (names, CF, validation) for a file. Unparseable text is kept.
 pub fn text_to_file(text: &str) -> String {
+    text_to_file_in(text, None)
+}
+
+/// [`text_to_file`] for a formula that belongs to the table named `table` (a calculated column or
+/// totals row formula): see [`to_file_in`].
+pub fn text_to_file_in(text: &str, table: Option<&str>) -> String {
     let body = text.strip_prefix('=').unwrap_or(text);
     match gridcraft_formula::parse(body) {
-        Ok(e) => expr_to_file(e),
+        Ok(e) => expr_to_file(e, table),
         Err(_) => body.to_string(),
     }
 }
@@ -100,7 +113,7 @@ fn prefix_params(e: Expr, scope: &[String]) -> Expr {
     }
 }
 
-fn expr_to_file(e: Expr) -> String {
+fn expr_to_file(e: Expr, table: Option<&str>) -> String {
     let e = prefix_params(e, &[]);
     let e = e.map(&mut |x| match x {
         Expr::Call(name, args) => match crate::tables::file_function_name(&name) {
@@ -122,8 +135,16 @@ fn expr_to_file(e: Expr) -> String {
             }],
         ),
         // Nor the `[@Col]` shorthand: files spell it `[[#This Row],[Col]]`, or Excel repairs
-        // the file and drops the table. Carried as a name, which prints verbatim.
-        Expr::Struct(st) => Expr::Name(gridcraft_formula::printer::struct_ref_file(&st)),
+        // the file and drops the table. Excel also names the table in every reference, its own
+        // cells' too. Carried as a name, which prints verbatim.
+        Expr::Struct(mut st) => {
+            if st.table.is_empty()
+                && let Some(t) = table
+            {
+                st.table = t.to_string();
+            }
+            Expr::Name(gridcraft_formula::printer::struct_ref_file(&st))
+        }
         // Nor trim-reference operators: written as the equivalent `TRIMRANGE(range,n,n)`, which
         // every Excel with trim references reads. (Excel's own file spelling of `A1:.E10` is
         // not publicly documented; the `_xlfn._TRO_*` call forms are accepted on read.)
@@ -166,6 +187,25 @@ fn strip_param_prefixes(e: Expr) -> Expr {
         Expr::Call(n, args) => Expr::Call(strip_param_prefix(n), args),
         other => other,
     })
+}
+
+/// `e`, a formula inside the table named `table`, with its this-row references to that table
+/// shortened to `[@Col]`, as Excel shows them (its files name the table in every reference), or
+/// `None` when it has none.
+pub fn own_table_shorthand(e: &Expr, table: &str) -> Option<Expr> {
+    let own = |st: &gridcraft_formula::StructRef| st.table.eq_ignore_ascii_case(table) && st.specifiers == [gridcraft_formula::StructItem::ThisRow];
+    let mut found = false;
+    e.walk(&mut |x| found |= matches!(x, Expr::Struct(st) if own(st)));
+    if !found {
+        return None;
+    }
+    Some(e.clone().map(&mut |x| match x {
+        Expr::Struct(mut st) if own(&st) => {
+            st.table.clear();
+            Expr::Struct(st)
+        }
+        other => other,
+    }))
 }
 
 /// The function Google Sheets' XLSX export wraps formulas in when it thinks Excel lacks one of
@@ -292,7 +332,7 @@ mod tests {
             "T[@C]",
         ] {
             let f = Formula::new(text);
-            assert_eq!(to_file(&f), expr_to_file(f.expr().unwrap()), "{text}");
+            assert_eq!(to_file(&f), expr_to_file(f.expr().unwrap(), None), "{text}");
         }
     }
 
@@ -327,7 +367,7 @@ mod tests {
                 let text = shape.replace("{}", &call).replace("{{", "{").replace("}}", "}");
                 let f = Formula::new(&text);
                 let Some(e) = f.expr() else { continue };
-                assert_eq!(to_file(&f), expr_to_file(e), "{text}");
+                assert_eq!(to_file(&f), expr_to_file(e, None), "{text}");
                 checked += 1;
             }
         }
