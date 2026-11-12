@@ -303,3 +303,62 @@ fn ctrl_alt_letter_that_typed_text_is_not_select_all() {
     assert_eq!(h.state().session.active().unwrap().selection.current().a1(), "B2");
     assert_eq!(h.state().editor.as_ref().unwrap().text, "\u{e4}");
 }
+
+/// A key press where the layout's character (`key`) is not on the US key at that position
+/// (`physical`), as egui-winit and the browser host report it.
+fn key_on(h: &mut Harness, k: Key, physical: Key, m: Modifiers) {
+    h.input_mut().events.push(Event::Key { key: k, physical_key: Some(physical), pressed: true, repeat: false, modifiers: m });
+    h.input_mut().events.push(Event::Key { key: k, physical_key: Some(physical), pressed: false, repeat: false, modifiers: m });
+    h.run_steps(2);
+}
+
+fn text_at(h: &Harness, a1: &str) -> String {
+    let d = h.state().session.active().unwrap();
+    gridcraft_engine::display::edit_text(&d.wb, d.wb.active().unwrap(), CellRef::parse(a1).unwrap())
+}
+
+fn editor_text(h: &Harness) -> Option<String> {
+    h.state().editor.as_ref().map(|e| e.text.clone())
+}
+
+#[test]
+fn punctuation_shortcuts_follow_the_character_on_a_jis_keyboard() {
+    // JIS: `:` is its own key where a US keyboard has `'`, and `+` is Shift+`;`.
+    assert_eq!(lookup(Key::Colon, Some(Key::Quote), CTRL, false), Some(Shortcut::Time));
+    assert_eq!(lookup(Key::Plus, Some(Key::Semicolon), CTRL_SHIFT, false), None, "Ctrl++ is Insert (ribbon::shortcut)");
+    assert_eq!(lookup(Key::Semicolon, Some(Key::Semicolon), CTRL, false), None, "Ctrl+; is the date (ribbon::shortcut)");
+    assert_eq!(lookup(Key::Minus, Some(Key::Minus), CTRL, false), None, "Ctrl+- is Delete (ribbon::shortcut)");
+    // JIS `'` is Shift+7: the digit keeps its place (the outline border), as on a US keyboard.
+    assert_eq!(lookup(Key::Quote, Some(Key::Num7), CTRL_SHIFT, false), Some(Shortcut::Run("home.borders", json!({"preset": "outside"}))));
+    // The US layout is unchanged.
+    assert_eq!(lookup(Key::Colon, Some(Key::Semicolon), CTRL_SHIFT, false), Some(Shortcut::Time));
+    assert_eq!(lookup(Key::Semicolon, Some(Key::Semicolon), CTRL_SHIFT, false), Some(Shortcut::Time));
+    assert_eq!(lookup(Key::Quote, Some(Key::Quote), CTRL, false), Some(Shortcut::FormulaAbove));
+    assert_eq!(lookup(Key::Quote, Some(Key::Quote), CTRL_SHIFT, false), Some(Shortcut::ValueAbove));
+    assert_eq!(lookup(Key::Plus, Some(Key::Equals), CTRL_SHIFT, false), None);
+    assert_eq!(lookup(Key::Minus, Some(Key::Minus), CTRL_SHIFT, false), Some(Shortcut::Run("home.borders", json!({"preset": "none"}))));
+}
+
+#[test]
+fn jis_ctrl_colon_inserts_the_time_and_ctrl_shift_semicolon_inserts_cells() {
+    let mut h = harness(book("C2"));
+    key_on(&mut h, Key::Colon, Key::Quote, CTRL);
+    let time = editor_text(&h).unwrap();
+    assert!(time.contains(':') && !time.contains('='), "Ctrl+: typed {time:?}, not the time");
+    key(&mut h, Key::Escape, Modifiers::NONE);
+    key_on(&mut h, Key::Semicolon, Key::Semicolon, CTRL);
+    assert!(editor_text(&h).unwrap().contains('/'), "Ctrl+; is the date");
+    key(&mut h, Key::Escape, Modifiers::NONE);
+    // Ctrl+Shift+; is Ctrl++ on JIS: whole rows go in at once, a cell asks how to shift.
+    h.state_mut().session.run("selection.set", json!({"range": "2:2"})).unwrap();
+    key_on(&mut h, Key::Plus, Key::Semicolon, CTRL_SHIFT);
+    assert!(h.state().editor.is_none());
+    assert_eq!(text_at(&h, "A2"), "");
+    assert_eq!(text_at(&h, "A3"), "3");
+    // Ctrl+- deletes the row again.
+    key_on(&mut h, Key::Minus, Key::Minus, CTRL);
+    assert_eq!(text_at(&h, "A2"), "3");
+    h.state_mut().session.run("selection.set", json!({"range": "B2"})).unwrap();
+    key_on(&mut h, Key::Plus, Key::Semicolon, CTRL_SHIFT);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name()), Some("insertCells"));
+}

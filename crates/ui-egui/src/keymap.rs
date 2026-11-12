@@ -59,10 +59,17 @@ fn borders(preset: &str) -> Shortcut {
 /// layout (as Excel matches Ctrl+Shift+4 rather than the `$` character); `mac` selects the Excel
 /// for Mac variants where they differ. Navigation keys go by the logical key: with Num Lock off
 /// the numpad's arrows and Page Down report the digit keys (Num6, Num3) as their physical keys.
+///
+/// Punctuation Excel matches by its character goes by the logical key: on a Japanese (JIS)
+/// keyboard `:` is a key of its own (where a US keyboard has `'`) and `+` is Shift+`;`, and Excel
+/// takes Ctrl+: as the time and Ctrl+Shift+; as Ctrl++ (Insert). A digit key keeps its position
+/// even when Shift types punctuation with it (Ctrl+Shift+7 is the outline border wherever `'` is).
 pub fn lookup(key: Key, physical: Option<Key>, m: Modifiers, mac: bool) -> Option<Shortcut> {
     use Key::*;
     let navigation = matches!(key, ArrowLeft | ArrowRight | ArrowUp | ArrowDown | PageUp | PageDown | Home | End | Insert | Delete);
-    let key = if navigation { key } else { physical.unwrap_or(key) };
+    let digit = matches!(physical, Some(Num0 | Num1 | Num2 | Num3 | Num4 | Num5 | Num6 | Num7 | Num8 | Num9));
+    let character = matches!(key, Colon | Semicolon | Plus | Quote) && !digit;
+    let key = if navigation || character { key } else { physical.unwrap_or(key) };
     let ctx = LookupContext {
         key,
         modifiers: m,
@@ -117,6 +124,8 @@ fn lookup_number_formats(ctx: LookupContext) -> Option<Shortcut> {
         Num8 if ctrl && s => run("selection.currentRegion"),
         // Ctrl+. (Control on a Mac too): Next Corner of Selection.
         Period if ctrl && !s => run("selection.nextCorner"),
+        // Ctrl+: (Ctrl+Shift+; on a US keyboard) inserts the time.
+        Colon if ctrl => Shortcut::Time,
         Semicolon if ctrl && s => Shortcut::Time,
         Quote if ctrl && s => Shortcut::ValueAbove,
         Quote if ctrl => Shortcut::FormulaAbove,
