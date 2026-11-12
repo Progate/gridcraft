@@ -70,8 +70,10 @@ pub struct SheetLayout {
     /// Heading sizes in sheet pixels (0 when headings are off).
     pub heading_w: f32,
     pub heading_h: f32,
-    /// Manual page breaks apply (they don't when the sheet is fitted to pages).
-    pub manual_breaks: bool,
+    /// Manual page breaks apply, (rows, columns). Fit To drops them along each dimension it sets a
+    /// page count for and keeps them along one left blank, as Excel does ("Fit to 1 page wide by
+    /// [blank] tall" still breaks pages at the manual row breaks).
+    pub manual_breaks: (bool, bool),
 }
 
 impl SheetLayout {
@@ -254,9 +256,9 @@ pub fn layout_sheet(wb: &Workbook, si: usize, opts: &PrintOptions, range_overrid
         title_cols,
         heading_w,
         heading_h,
-        manual_breaks: fit.is_none(),
+        manual_breaks: (true, true),
     };
-    let paginate = |lay: &mut SheetLayout, manual: bool| {
+    let paginate = |lay: &mut SheetLayout, manual: (bool, bool)| {
         lay.manual_breaks = manual;
         (lay.row_bands, lay.col_bands) = split_bands(sh, lay, MAX_PAGES);
         lay.pages = page_sequence(lay.row_bands.len(), lay.col_bands.len(), lay.settings.page_order, MAX_PAGES);
@@ -274,7 +276,7 @@ pub fn layout_sheet(wb: &Workbook, si: usize, opts: &PrintOptions, range_overrid
             let sh_ = if fh > 0 { ah * fh as f32 / (total_h * PX_TO_PT).max(1.0) } else { f32::INFINITY };
             lay.scale = sw.min(sh_).min(1.0).clamp(0.1, 1.0);
             for _ in 0..40 {
-                paginate(&mut lay, false);
+                paginate(&mut lay, (fh == 0, fw == 0));
                 let ok_w = fw == 0 || lay.col_bands.len() <= fw as usize;
                 let ok_h = fh == 0 || lay.row_bands.len() <= fh as usize;
                 if (ok_w && ok_h) || lay.scale <= 0.1 {
@@ -283,7 +285,7 @@ pub fn layout_sheet(wb: &Workbook, si: usize, opts: &PrintOptions, range_overrid
                 lay.scale = (lay.scale * 0.97).max(0.1);
             }
         }
-        None => paginate(&mut lay, true),
+        None => paginate(&mut lay, (true, true)),
     }
     Some(lay)
 }
@@ -311,15 +313,15 @@ pub(crate) fn page_sequence(rows: usize, cols: usize, order: PageOrder, cap: usi
 pub(crate) type Bands = Vec<(u32, u32)>;
 
 /// Splits a layout's area into row and column bands that fit its pages (at most `cap` of each),
-/// honouring manual breaks (when `lay.manual_breaks`), print headings and repeated titles. The
+/// honouring manual breaks (where `lay.manual_breaks` keeps them), print headings and repeated titles. The
 /// one pagination rule shared by printing, PDF export, Page Break Preview and Page Layout view.
 pub(crate) fn split_bands(sh: &Sheet, lay: &SheetLayout, cap: usize) -> (Bands, Bands) {
     let k = lay.k();
     let (aw, ah) = lay.avail();
     let (aw, ah) = (aw / k, ah / k);
     let st = &lay.settings;
-    let mut rb: Vec<u32> = if lay.manual_breaks { st.row_breaks.clone() } else { vec![] };
-    let mut cb: Vec<u32> = if lay.manual_breaks { st.col_breaks.clone() } else { vec![] };
+    let mut rb: Vec<u32> = if lay.manual_breaks.0 { st.row_breaks.clone() } else { vec![] };
+    let mut cb: Vec<u32> = if lay.manual_breaks.1 { st.col_breaks.clone() } else { vec![] };
     rb.sort_unstable();
     cb.sort_unstable();
     let (title_rows, title_cols) = (lay.title_rows, lay.title_cols);

@@ -997,3 +997,24 @@ fn chart_budget_counts_path_points_and_drops_charts_that_do_not_fit() {
     assert!(pics.chart((0, 1), || vec![line(1000)]).is_none());
     assert!(pics.charts.is_empty() && pics.rejected_charts.contains(&(0, 1)));
 }
+
+/// Fit To drops manual page breaks along the dimensions it fits and keeps them along a blank one
+/// (Microsoft KB 214109: "Excel clears the manual page breaks for only the width or height that
+/// you specify"); Adjust To keeps them all.
+#[test]
+fn fit_to_drops_manual_breaks_only_along_the_fitted_dimension() {
+    let mut s = s();
+    let rows: Vec<Vec<Json>> = (0..20).map(|r| (0..4).map(|c| json!(r * 10 + c)).collect()).collect();
+    s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+    s.execute("pageLayout.pageSetup", json!({"rowBreaks": [11], "colBreaks": ["C"]})).unwrap();
+    assert_eq!(page_ranges(&mut s), ["A1:B10", "A11:B20", "C1:D10", "C11:D20"]);
+    // 1 page wide by [blank] tall: the row break stays, the column break goes.
+    s.execute("pageLayout.pageSetup", json!({"fitWidth": 1, "fitHeight": 0})).unwrap();
+    assert_eq!(page_ranges(&mut s), ["A1:D10", "A11:D20"]);
+    // [blank] wide by 1 tall: the other way round.
+    s.execute("pageLayout.pageSetup", json!({"fitWidth": 0, "fitHeight": 1})).unwrap();
+    assert_eq!(page_ranges(&mut s), ["A1:B20", "C1:D20"]);
+    // 1 by 1: neither.
+    s.execute("pageLayout.pageSetup", json!({"fitWidth": 1, "fitHeight": 1})).unwrap();
+    assert_eq!(page_ranges(&mut s), ["A1:D20"]);
+}
