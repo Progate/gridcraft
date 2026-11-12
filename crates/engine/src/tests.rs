@@ -1717,6 +1717,44 @@ fn formatting_and_styles() {
 }
 
 #[test]
+fn cell_styles_keep_what_they_do_not_include_and_link_the_cell() {
+    let mut s = s();
+    s.execute("cell.set", json!({"cell": "B2", "input": "1234.5"})).unwrap();
+    s.execute("home.borders", json!({"range": "B2", "preset": "all"})).unwrap();
+    s.execute("home.numberFormat", json!({"range": "B2", "code": "#,##0.00"})).unwrap();
+    s.execute("home.alignRight", json!({"range": "B2"})).unwrap();
+    s.execute("home.cellStyle", json!({"range": "B2", "name": "Bad"})).unwrap();
+    let style = |s: &Session| {
+        let d = s.doc().unwrap();
+        let sh = d.wb.active().unwrap();
+        d.wb.styles.get(sh.style_id(CellRef::parse("B2").unwrap())).clone()
+    };
+    let st = style(&s);
+    assert_eq!(st.cell_style.as_deref(), Some("Bad"));
+    assert!(!st.borders.left.is_none(), "Bad keeps the borders");
+    assert_eq!(st.num_fmt.as_str(), "#,##0.00");
+    assert_eq!(st.align.h, gridcraft_model::HAlign::Right);
+    assert_ne!(st.fill, gridcraft_model::Fill::default());
+    // Heading 1 includes borders: they are replaced; Percent changes the number format only.
+    s.execute("home.cellStyle", json!({"range": "B2", "name": "Heading 1"})).unwrap();
+    let st = style(&s);
+    assert!(st.borders.left.is_none() && !st.borders.bottom.is_none());
+    assert_ne!(st.fill, gridcraft_model::Fill::default(), "Heading 1 keeps the fill Bad gave");
+    s.execute("home.cellStyle", json!({"range": "B2", "name": "Percent"})).unwrap();
+    assert_eq!((style(&s).num_fmt.as_str(), style(&s).cell_style.as_deref()), ("0%", Some("Percent")));
+    s.execute("home.cellStyle", json!({"range": "B2", "name": "Bad"})).unwrap();
+    // Saved and reopened, the cell still names its style.
+    let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
+    let b64 = r["base64"].as_str().unwrap().to_string();
+    s.execute("file.open", json!({"name": "x.xlsx", "base64": b64})).unwrap();
+    assert_eq!(style(&s).cell_style.as_deref(), Some("Bad"));
+    assert!(!style(&s).borders.bottom.is_none(), "Bad kept the border Heading 1 gave");
+    // Normal resets everything and unlinks.
+    s.execute("home.cellStyle", json!({"range": "B2", "name": "Normal"})).unwrap();
+    assert_eq!(style(&s), s.doc().unwrap().wb.styles.get(gridcraft_model::StyleId::DEFAULT).clone());
+}
+
+#[test]
 fn spill_references_roundtrip_through_xlsx() {
     let mut s = s();
     s.execute("cell.set", json!({"cell": "B1", "input": "=SEQUENCE(4)"})).unwrap();

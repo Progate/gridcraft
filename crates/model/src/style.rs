@@ -396,6 +396,115 @@ pub struct Style {
     /// Differential formats only.
     #[serde(default)]
     pub dxf_stated: DxfStated,
+    /// The named cell style the format is based on (`Bad`, `Heading 1` or a workbook's own),
+    /// saved as the cell format's `xfId`; `None` is Normal. Built-in styles go by their English
+    /// names (see [`builtin_cell_style_id`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_style: Option<String>,
+}
+
+/// The parts of a cell's format a cell style sets: Excel's "Style includes" (By Example) boxes,
+/// saved as the `apply…` flags of the style's `cellStyleXfs` entry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StyleIncludes {
+    pub number: bool,
+    pub alignment: bool,
+    pub font: bool,
+    pub border: bool,
+    pub fill: bool,
+    pub protection: bool,
+}
+
+impl StyleIncludes {
+    pub const ALL: StyleIncludes = StyleIncludes { number: true, alignment: true, font: true, border: true, fill: true, protection: true };
+    const NONE: StyleIncludes = StyleIncludes { number: false, alignment: false, font: false, border: false, fill: false, protection: false };
+
+    /// What the built-in style `name` sets, as Excel defines it; every part for Normal and for a
+    /// workbook's own styles.
+    pub fn of(name: &str) -> StyleIncludes {
+        let n = StyleIncludes::NONE;
+        let Some(id) = builtin_cell_style_id(name) else { return StyleIncludes::ALL };
+        match id {
+            // Comma, Currency, Percent, Comma [0], Currency [0].
+            3..=7 => StyleIncludes { number: true, ..n },
+            // Hyperlink, Followed Hyperlink, Warning Text, Title, Heading 4, Explanatory Text.
+            8 | 9 | 11 | 15 | 19 | 53 => StyleIncludes { font: true, ..n },
+            // Note.
+            10 => StyleIncludes { fill: true, border: true, ..n },
+            // Heading 1 to 3, Linked Cell, Total.
+            16..=18 | 24 | 25 => StyleIncludes { font: true, border: true, ..n },
+            // Input, Output, Calculation, Check Cell.
+            20..=23 => StyleIncludes { font: true, border: true, fill: true, ..n },
+            // Good, Bad, Neutral and the accent styles.
+            26..=52 => StyleIncludes { font: true, fill: true, ..n },
+            _ => StyleIncludes::ALL,
+        }
+    }
+}
+
+/// The built-in cell styles by `builtinId` (ECMA-376 Part 1, 18.8.7), under the English names a
+/// file's `<cellStyle name>` may localise (`悪い` for Bad in Japanese Excel).
+const BUILTIN_CELL_STYLES: &[(u32, &str)] = &[
+    (0, "Normal"),
+    (3, "Comma"),
+    (4, "Currency"),
+    (5, "Percent"),
+    (6, "Comma [0]"),
+    (7, "Currency [0]"),
+    (8, "Hyperlink"),
+    (9, "Followed Hyperlink"),
+    (10, "Note"),
+    (11, "Warning Text"),
+    (15, "Title"),
+    (16, "Heading 1"),
+    (17, "Heading 2"),
+    (18, "Heading 3"),
+    (19, "Heading 4"),
+    (20, "Input"),
+    (21, "Output"),
+    (22, "Calculation"),
+    (23, "Check Cell"),
+    (24, "Linked Cell"),
+    (25, "Total"),
+    (26, "Good"),
+    (27, "Bad"),
+    (28, "Neutral"),
+    (53, "Explanatory Text"),
+];
+
+/// The `builtinId` of a built-in cell style (`Bad` → 27, `40% - Accent2` → 35), ignoring case.
+pub fn builtin_cell_style_id(name: &str) -> Option<u32> {
+    if let Some((id, _)) = BUILTIN_CELL_STYLES.iter().find(|(_, n)| n.eq_ignore_ascii_case(name)) {
+        return Some(*id);
+    }
+    // Accent1..6 are 29, 33, …, 49; their 20%, 40% and 60% tints follow each.
+    let (tint, rest) = match name.split_once("% - ") {
+        Some((p, r)) => (Some(p.trim()), r),
+        None => (None, name),
+    };
+    let rest = rest.get(..6).filter(|a| a.eq_ignore_ascii_case("Accent")).and(rest.get(6..))?;
+    let i: u32 = rest.parse().ok().filter(|i| (1..=6).contains(i))?;
+    let offset = match tint {
+        None => 0,
+        Some("20") => 1,
+        Some("40") => 2,
+        Some("60") => 3,
+        Some(_) => return None,
+    };
+    Some(29 + (i - 1) * 4 + offset)
+}
+
+/// The English name of the built-in cell style with `builtinId` `id`.
+pub fn builtin_cell_style_name(id: u32) -> Option<String> {
+    if let Some((_, n)) = BUILTIN_CELL_STYLES.iter().find(|(i, _)| *i == id) {
+        return Some((*n).to_string());
+    }
+    let k = id.checked_sub(29).filter(|k| *k < 24)?;
+    let accent = k / 4 + 1;
+    Some(match k % 4 {
+        0 => format!("Accent{accent}"),
+        t => format!("{}% - Accent{accent}", t * 20),
+    })
 }
 
 /// The parts a differential format states at a value its `Style` can't tell from unset: a dxf's
@@ -571,5 +680,38 @@ mod tests {
         assert!(json.contains("major_font_ea") && json.contains("游ゴシック"), "{json}");
         assert_eq!(serde_json::from_str::<Theme>(&json)?, t);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod cell_style_id_tests {
+    use super::*;
+
+    #[test]
+    fn built_in_cell_style_ids_follow_excel() {
+        for (name, id) in [
+            ("Normal", 0),
+            ("Comma", 3),
+            ("Currency [0]", 7),
+            ("Note", 10),
+            ("Title", 15),
+            ("Heading 4", 19),
+            ("Total", 25),
+            ("Bad", 27),
+            ("Accent1", 29),
+            ("20% - Accent1", 30),
+            ("60% - Accent1", 32),
+            ("Accent2", 33),
+            ("60% - Accent6", 52),
+            ("Explanatory Text", 53),
+        ] {
+            assert_eq!(builtin_cell_style_id(name), Some(id), "{name}");
+            assert_eq!(builtin_cell_style_name(id).as_deref(), Some(name), "{id}");
+        }
+        assert_eq!(builtin_cell_style_id("Accent7"), None);
+        assert_eq!(builtin_cell_style_id("Mine"), None);
+        assert!(StyleIncludes::of("Mine").border);
+        let bad = StyleIncludes::of("Bad");
+        assert!(bad.font && bad.fill && !bad.border && !bad.number && !bad.alignment);
     }
 }

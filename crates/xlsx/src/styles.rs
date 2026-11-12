@@ -6,8 +6,8 @@ use std::fmt::Write as _;
 
 use gridcraft_model::style::{DxfStated, Protection};
 use gridcraft_model::{
-    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, HAlign, NumFmt, PatternType, ReadingOrder, Style, Underline, VAlign, VertAlign,
-    Workbook,
+    Alignment, BorderLine, BorderStyle, Borders, Color, Fill, Font, HAlign, NumFmt, PatternType, ReadingOrder, Style, StyleIncludes, Underline,
+    VAlign, VertAlign, Workbook, builtin_cell_style_id, builtin_cell_style_name,
 };
 
 use crate::tables::{INDEXED, builtin_format, builtin_id};
@@ -375,9 +375,30 @@ pub fn read_styles(root: &El, checkboxes: &[bool], minor_font: &str) -> StylesIn
     let fonts: Vec<Font> = root.child("fonts").map(|f| f.kids("font").map(body_font).collect()).unwrap_or_default();
     let fills: Vec<Fill> = root.child("fills").map(|f| f.kids("fill").map(|e| read_fill(e, &palette, false)).collect()).unwrap_or_default();
     let borders: Vec<Borders> = root.child("borders").map(|f| f.kids("border").map(|e| read_border(e, &palette)).collect()).unwrap_or_default();
+    // Style names by `cellStyleXfs` index. A built-in style goes by its English name whatever
+    // language wrote the file (`悪い` with builtinId 27 is Bad); Normal links nothing.
+    let mut style_names: HashMap<u32, String> = HashMap::new();
+    if let Some(cs) = root.child("cellStyles") {
+        for c in cs.kids("cellStyle") {
+            let name = c.attr_u32("builtinId").and_then(builtin_cell_style_name).or_else(|| c.attr("name").map(str::to_string));
+            if let (Some(name), Some(xf)) = (name, c.attr_u32("xfId"))
+                && name != "Normal"
+            {
+                style_names.entry(xf).or_insert(name);
+            }
+        }
+    }
     let xfs = root
         .child("cellXfs")
-        .map(|x| x.kids("xf").map(|xf| read_xf(xf, &fonts, &fills, &borders, &shared_fmts, checkboxes)).collect())
+        .map(|x| {
+            x.kids("xf")
+                .map(|xf| {
+                    let mut s = read_xf(xf, &fonts, &fills, &borders, &shared_fmts, checkboxes);
+                    s.cell_style = xf.attr_u32("xfId").and_then(|i| style_names.get(&i)).cloned();
+                    s
+                })
+                .collect()
+        })
         .unwrap_or_default();
     let style_xfs: Vec<Style> = root
         .child("cellStyleXfs")
@@ -386,10 +407,11 @@ pub fn read_styles(root: &El, checkboxes: &[bool], minor_font: &str) -> StylesIn
     let mut named = Vec::new();
     if let Some(cs) = root.child("cellStyles") {
         for c in cs.kids("cellStyle") {
-            if let (Some(name), Some(s)) = (c.attr("name"), c.attr_u32("xfId").and_then(|i| style_xfs.get(i as usize)))
+            let name = c.attr_u32("builtinId").and_then(builtin_cell_style_name).or_else(|| c.attr("name").map(str::to_string));
+            if let (Some(name), Some(s)) = (name, c.attr_u32("xfId").and_then(|i| style_xfs.get(i as usize)))
                 && name != "Normal"
             {
-                named.push((name.to_string(), s.clone()));
+                named.push((name, s.clone()));
             }
         }
     }
@@ -675,6 +697,10 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
     // The default style's font is font 0.
     intern(&mut fonts, &mut font_map, &wb.styles.get(gridcraft_model::StyleId::DEFAULT).font);
 
+    // The named styles in `cellStyleXfs` order: Normal, then the workbook's own.
+    let named_styles: Vec<&(String, Style)> = wb.cell_styles.iter().filter(|(name, _)| !name.is_empty() && name != "Normal").collect();
+    let style_xf_id = |name: &str| named_styles.iter().position(|(n, _)| n.eq_ignore_ascii_case(name)).map_or(0, |i| i + 1);
+
     let mut xfs = String::new();
     let mut count = 0;
     for (_, st) in wb.styles.iter() {
@@ -684,7 +710,8 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
         // A checkbox is General plus the feature-property-bag complement (see `feature_bags`).
         let checkbox = st.num_fmt.as_str() == "checkbox";
         let fmt = if checkbox { 0 } else { nf.id(st.num_fmt.as_str()) };
-        let _ = write!(xfs, "<xf numFmtId=\"{fmt}\" fontId=\"{font}\" fillId=\"{fill}\" borderId=\"{border}\" xfId=\"0\"");
+        let xf_id = st.cell_style.as_deref().map_or(0, style_xf_id);
+        let _ = write!(xfs, "<xf numFmtId=\"{fmt}\" fontId=\"{font}\" fillId=\"{fill}\" borderId=\"{border}\" xfId=\"{xf_id}\"");
         if fmt != 0 {
             xfs.push_str(" applyNumberFormat=\"1\"");
         }
@@ -723,15 +750,26 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
     let mut style_xfs = String::from("<xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/>");
     let mut cell_styles = String::from("<cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/>");
     let mut named = 1;
-    for (name, st) in &wb.cell_styles {
-        if name.is_empty() || name == "Normal" {
-            continue;
-        }
+    for (name, st) in named_styles {
         let font = intern(&mut fonts, &mut font_map, &st.font);
         let fill = intern(&mut fills, &mut fill_map, &st.fill);
         let border = intern(&mut borders, &mut border_map, &st.borders);
         let fmt = nf.id(st.num_fmt.as_str());
         let _ = write!(style_xfs, "<xf numFmtId=\"{fmt}\" fontId=\"{font}\" fillId=\"{fill}\" borderId=\"{border}\"");
+        // The parts the style leaves alone ("Style includes" unticked), as Excel marks them.
+        let inc = StyleIncludes::of(name);
+        for (included, attr) in [
+            (inc.number, "applyNumberFormat"),
+            (inc.font, "applyFont"),
+            (inc.fill, "applyFill"),
+            (inc.border, "applyBorder"),
+            (inc.alignment, "applyAlignment"),
+            (inc.protection, "applyProtection"),
+        ] {
+            if !included {
+                let _ = write!(style_xfs, " {attr}=\"0\"");
+            }
+        }
         let al = alignment_xml(&st.align);
         let pr = protection_xml(&st.protection);
         if al.is_none() && pr.is_none() {
@@ -739,7 +777,16 @@ pub fn write_styles(wb: &Workbook, dxfs: &[Style], extra_fmts: &[String]) -> (St
         } else {
             let _ = write!(style_xfs, ">{}{}</xf>", al.unwrap_or_default(), pr.unwrap_or_default());
         }
-        let _ = write!(cell_styles, "<cellStyle name=\"{}\" xfId=\"{named}\" customBuiltin=\"1\"/>", esc_attr(name));
+        // A built-in style is known by its id (Excel shows it under its own name in every
+        // language); the workbook's own styles by their names.
+        match builtin_cell_style_id(name) {
+            Some(id) => {
+                let _ = write!(cell_styles, "<cellStyle name=\"{}\" xfId=\"{named}\" builtinId=\"{id}\"/>", esc_attr(name));
+            }
+            None => {
+                let _ = write!(cell_styles, "<cellStyle name=\"{}\" xfId=\"{named}\"/>", esc_attr(name));
+            }
+        }
         named += 1;
     }
 
@@ -841,6 +888,38 @@ mod tests {
             assert_eq!(align, Alignment::default(), "{attribute}");
             assert_eq!(alignment_xml(&align), None);
         }
+    }
+
+    #[test]
+    fn built_in_cell_styles_are_written_and_read_by_builtin_id() {
+        let mut wb = Workbook::new();
+        let bad = Style { fill: Fill::solid(Color::rgb(0xFF, 0xC7, 0xCE)), ..Style::default() };
+        wb.cell_styles.push(("Bad".into(), bad.clone()));
+        wb.cell_styles.push(("40% - Accent2".into(), Style::default()));
+        wb.cell_styles.push(("Mine".into(), Style::default()));
+        let thin = BorderLine { style: BorderStyle::Thin, color: Color::Auto };
+        let cell = Style { borders: Borders { bottom: thin, ..Borders::default() }, cell_style: Some("Bad".into()), ..bad };
+        wb.styles.intern(cell.clone());
+        let (xml, _) = write_styles(&wb, &[], &[]);
+        assert!(xml.contains(r#"<cellStyle name="Normal" xfId="0" builtinId="0"/>"#), "{xml}");
+        assert!(xml.contains(r#"<cellStyle name="Bad" xfId="1" builtinId="27"/>"#), "{xml}");
+        assert!(xml.contains(r#"<cellStyle name="40% - Accent2" xfId="2" builtinId="35"/>"#), "{xml}");
+        assert!(xml.contains(r#"<cellStyle name="Mine" xfId="3"/>"#), "{xml}");
+        // Bad sets the font and fill only.
+        assert!(xml.contains(r#"fillId="2" borderId="0" applyNumberFormat="0" applyBorder="0" applyAlignment="0" applyProtection="0"/>"#), "{xml}");
+        let root = crate::xml::parse(xml.as_bytes()).unwrap();
+        let xfs = root.child("cellXfs").unwrap();
+        assert_eq!(xfs.kids("xf").map(|x| x.attr_u32("xfId")).collect::<Vec<_>>(), [Some(0), Some(1)]);
+        let back = read_styles(&root, &[], "Calibri");
+        assert_eq!(back.xfs[1], cell);
+        assert_eq!(back.named.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Bad", "40% - Accent2", "Mine"]);
+
+        // Japanese Excel names built-in styles in Japanese; the id says which they are.
+        let xml = r#"<styleSheet><cellStyleXfs><xf/><xf/></cellStyleXfs><cellXfs><xf xfId="0"/><xf xfId="1"/></cellXfs>
+            <cellStyles><cellStyle name="標準" xfId="0" builtinId="0"/><cellStyle name="悪い" xfId="1" builtinId="27"/></cellStyles></styleSheet>"#;
+        let ja = read_styles(&crate::xml::parse(xml.as_bytes()).unwrap(), &[], "Calibri");
+        assert_eq!(ja.xfs.iter().map(|x| x.cell_style.as_deref()).collect::<Vec<_>>(), [None, Some("Bad")]);
+        assert_eq!(ja.named.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>(), ["Bad"]);
     }
 
     #[test]

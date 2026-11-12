@@ -1,3 +1,5 @@
+use gridcraft_model::{StyleId, StyleIncludes};
+
 use super::{
     ACCOUNTING, BorderLine, BorderStyle, Borders, COMMA, Color, Fill, Json, NumFmt, Result, Session, Style, Theme, apply_style, bad, str_param,
 };
@@ -176,24 +178,42 @@ pub const CELL_STYLE_NAMES: &[&str] = &[
 pub(super) fn cell_style(s: &mut Session, p: &Json) -> Result<Json> {
     let name = str_param(p, "name").unwrap_or("Normal").to_string();
     let d = s.doc()?;
-    let style =
-        d.wb.cell_styles
-            .iter()
-            .find(|(n, _)| n.eq_ignore_ascii_case(&name))
-            .map(|(_, s)| s.clone())
-            .or_else(|| builtin_cell_style(&name, &d.wb.theme));
-    let Some(style) = style else { return Err(bad("home.cellStyle", format!("unknown cell style `{name}`"))) };
-    // Number-format styles only change the number format.
-    let only_fmt = matches!(name.as_str(), "Comma" | "Comma [0]" | "Currency" | "Currency [0]" | "Percent");
+    let own = d.wb.cell_styles.iter().find(|(n, _)| n.eq_ignore_ascii_case(&name)).cloned();
+    let builtin = builtin_cell_style(&name, &d.wb.theme)
+        .map(|st| (CELL_STYLE_NAMES.iter().find(|n| n.eq_ignore_ascii_case(&name)).map_or(name.clone(), |n| n.to_string()), st));
+    let Some((name, style)) = own.or(builtin) else { return Err(bad("home.cellStyle", format!("unknown cell style `{name}`"))) };
+    let normal = name == "Normal";
+    // Normal puts back the workbook's own default format (its font, General).
+    let style = if normal { d.wb.styles.get(StyleId::DEFAULT).clone() } else { style };
+    // The workbook keeps every style its cells use, as Excel does, so the file names the style
+    // (`<cellStyle name="Bad" builtinId="27"/>`) and the cells' `xfId` points at it.
+    if !normal && !d.wb.cell_styles.iter().any(|(n, _)| n.eq_ignore_ascii_case(&name)) {
+        let doc = s.doc_mut()?;
+        std::sync::Arc::make_mut(&mut doc.wb).cell_styles.push((name.clone(), style.clone()));
+    }
+    // Excel's styles set only the parts they include: Bad changes the font and fill and keeps the
+    // cell's borders, number format and alignment.
+    let inc = StyleIncludes::of(&name);
+    let link = (!normal).then(|| name.clone());
     apply_style(s, p, move |st| {
-        if only_fmt {
+        if inc.number {
             st.num_fmt = style.num_fmt.clone();
-        } else {
-            let keep_fmt = st.num_fmt.clone();
-            *st = style.clone();
-            if style.num_fmt.as_str() == "General" {
-                st.num_fmt = keep_fmt;
-            }
         }
+        if inc.alignment {
+            st.align = style.align;
+        }
+        if inc.font {
+            st.font = style.font.clone();
+        }
+        if inc.border {
+            st.borders = style.borders;
+        }
+        if inc.fill {
+            st.fill = style.fill;
+        }
+        if inc.protection {
+            st.protection = style.protection;
+        }
+        st.cell_style = link.clone();
     })
 }

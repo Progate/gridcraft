@@ -64,6 +64,13 @@ pub(super) fn cell_style_gallery(app: &mut SheetApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     ui.set_width(520.0);
     let Some(wb) = app.session.active().map(|d| d.wb.clone()) else { return };
+    // The active cell's style is marked, as in Excel (Normal when it has none).
+    let applied = app
+        .session
+        .active()
+        .and_then(|d| d.wb.active().map(|sh| d.wb.styles.get(sh.style_id(d.selection.active)).cell_style.clone()))
+        .flatten()
+        .unwrap_or_else(|| "Normal".to_string());
     let groups: &[(&str, &[&str])] = &[
         ("Good, Bad and Neutral", &["Normal", "Bad", "Good", "Neutral"]),
         ("Data and Model", &["Calculation", "Check Cell", "Explanatory Text", "Input", "Linked Cell", "Note", "Output", "Warning Text"]),
@@ -132,9 +139,10 @@ pub(super) fn cell_style_gallery(app: &mut SheetApp, ui: &mut Ui) {
                     egui::FontId::new((st.font.size).clamp(10.0, 15.0), fam),
                     col,
                 );
-                if resp.hovered() {
+                if resp.hovered() || applied.eq_ignore_ascii_case(n) {
                     ui.painter().rect_stroke(r.expand(1.5), 2.0, Stroke::new(2.0, Tokens::get(ui.ctx()).cat(Cat::Orange)), StrokeKind::Outside);
                 }
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, applied.eq_ignore_ascii_case(n), *n));
                 if resp.clicked() {
                     act(app, "home.cellStyle", json!({"name": n}));
                     ui.close();
