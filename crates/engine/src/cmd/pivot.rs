@@ -113,7 +113,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Value Field Settings",
             ["PivotTable Analyze", "Active Field"],
             None,
-            "{pivot?, field: caption or source field | index: n, func?, name?, showAs?: normal|percentOfGrandTotal|percentOfColumnTotal|percentOfRowTotal|runningTotal|rank, numberFormat?: \"#,##0\" | null, replace?}",
+            "{pivot?, field: caption or source field | index: n, func?, name?, showAs?: normal|percentOfGrandTotal|percentOfColumnTotal|percentOfRowTotal|percentOfParentRowTotal|percentOfParentColumnTotal|runningTotal|percentOfRunningTotal|rank|rankAscending|index, numberFormat?: \"#,##0\" | null, replace?}",
             has_doc,
             value_settings
         ),

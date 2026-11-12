@@ -868,17 +868,29 @@ fn write_data_fields(s: &mut String, c: &Cache, layout: &PivotTableLayout<'_>, f
             PivotShowAs::RunningTotal => {
                 let _ = write!(s, " showDataAs=\"runTotal\" baseField=\"{base_field}\" baseItem=\"0\"");
             }
-            PivotShowAs::Rank => {
+            PivotShowAs::Index => s.push_str(" showDataAs=\"index\" baseField=\"0\" baseItem=\"0\""),
+            // Excel 2010's additions keep `showDataAs` normal and name the calculation in the
+            // `x14:dataField` extension below; the ones that run along a field name it in `baseField`.
+            PivotShowAs::Rank | PivotShowAs::RankAscending | PivotShowAs::PercentOfRunningTotal => {
                 let _ = write!(s, " baseField=\"{base_field}\" baseItem=\"0\"");
             }
+            PivotShowAs::PercentOfParentRowTotal | PivotShowAs::PercentOfParentColumnTotal => s.push_str(" baseField=\"0\" baseItem=\"0\""),
         }
         if let Some(id) = value.number_format.as_deref().and_then(fmt_id) {
             let _ = write!(s, " numFmtId=\"{id}\"");
         }
-        if value.show_as == PivotShowAs::Rank {
+        let x14 = match value.show_as {
+            PivotShowAs::Rank => Some("rankDescending"),
+            PivotShowAs::RankAscending => Some("rankAscending"),
+            PivotShowAs::PercentOfParentRowTotal => Some("percentOfParentRow"),
+            PivotShowAs::PercentOfParentColumnTotal => Some("percentOfParentCol"),
+            PivotShowAs::PercentOfRunningTotal => Some("percentOfRunningTotal"),
+            _ => None,
+        };
+        if let Some(x14) = x14 {
             let _ = write!(
                 s,
-                "><extLst><ext uri=\"{EXT_X14_DATA_FIELD}\" xmlns:x14=\"{NS_X14}\"><x14:dataField pivotShowAs=\"rankDescending\"/></ext></extLst></dataField>"
+                "><extLst><ext uri=\"{EXT_X14_DATA_FIELD}\" xmlns:x14=\"{NS_X14}\"><x14:dataField pivotShowAs=\"{x14}\"/></ext></extLst></dataField>"
             );
         } else {
             s.push_str("/>");

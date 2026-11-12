@@ -28,6 +28,21 @@ pub(crate) fn build_params(d: &Dialog) -> Json {
                 m.remove("text");
             }
         }
+        "pivotValueSettings" => {
+            if let Some(m) = v.as_object_mut() {
+                // An unchanged caption is not sent: renaming a field to its own caption is refused when
+                // the caption is also a source field's name.
+                let original = m.remove("originalName");
+                if m.get("name").and_then(Json::as_str).is_some_and(|n| original.as_ref().and_then(Json::as_str) == Some(n) || n.trim().is_empty()) {
+                    m.remove("name");
+                }
+                m.remove("sourceName");
+                // A blank format means automatic (the default for the calculation).
+                if m.get("numberFormat").and_then(Json::as_str).is_some_and(|f| f.trim().is_empty()) {
+                    m.insert("numberFormat".into(), Json::Null);
+                }
+            }
+        }
         "advancedFilter" => {
             if let Some(m) = v.as_object_mut() {
                 m.remove("action");
@@ -652,9 +667,9 @@ pub(super) fn form_fields(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog) {
                     ui.vertical(|ui| {
                         let field_label = ui.label(egui::RichText::new(lang.tr(label)).strong());
                         let cur = d.values.get(key).and_then(Json::as_str).unwrap_or("").to_string();
-                        if d.name == "dataValidation" {
+                        if matches!(d.name.as_str(), "dataValidation" | "pivotValueSettings") {
                             let selected = options.iter().find(|(val, _)| *val == cur).map(|(_, text)| lang.tr(text)).unwrap_or("");
-                            craft_ui::ComboBox::from_id_salt(("dataValidation", key))
+                            craft_ui::ComboBox::from_id_salt((d.name.clone(), key))
                                 .selected_text(selected)
                                 .width(300.0)
                                 .show_ui(ui, |ui| {

@@ -343,6 +343,10 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 .find_map(|e| e.attr("pivotShowAs").map(str::to_string));
             let show_as = match (ext.as_deref(), d.attr("showDataAs")) {
                 (Some("rankDescending"), _) => PivotShowAs::Rank,
+                (Some("rankAscending"), _) => PivotShowAs::RankAscending,
+                (Some("percentOfParentRow"), _) => PivotShowAs::PercentOfParentRowTotal,
+                (Some("percentOfParentCol"), _) => PivotShowAs::PercentOfParentColumnTotal,
+                (Some("percentOfRunningTotal"), _) => PivotShowAs::PercentOfRunningTotal,
                 (Some(other), _) => {
                     cx.warn(format!("PivotTable show-values-as {other} is not supported"));
                     PivotShowAs::Normal
@@ -352,6 +356,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 (None, Some("percentOfCol")) => PivotShowAs::PercentOfColumnTotal,
                 (None, Some("percentOfRow")) => PivotShowAs::PercentOfRowTotal,
                 (None, Some("runTotal")) => PivotShowAs::RunningTotal,
+                (None, Some("index")) => PivotShowAs::Index,
                 (None, Some(other)) => {
                     cx.warn(format!("PivotTable show-values-as {other} is not supported"));
                     PivotShowAs::Normal

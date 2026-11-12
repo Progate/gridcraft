@@ -76,6 +76,16 @@ pub enum PivotShowAs {
     RunningTotal,
     /// Rank largest to smallest among sibling row items.
     Rank,
+    /// Each value over its parent row item's value (the grand total for outermost items).
+    PercentOfParentRowTotal,
+    /// Each value over its parent column item's value (the grand total for outermost items).
+    PercentOfParentColumnTotal,
+    /// The running total in the first row field over that field's total.
+    PercentOfRunningTotal,
+    /// Rank smallest to largest among sibling row items.
+    RankAscending,
+    /// (value × grand total) ÷ (row total × column total).
+    Index,
 }
 
 /// A field in the Values area.

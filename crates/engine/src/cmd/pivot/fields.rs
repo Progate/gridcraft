@@ -1,5 +1,5 @@
 use super::create::pivot_json;
-use super::params::{area_param, func_param, position_param, show_as_param};
+use super::params::{area_param, func_name, func_param, position_param, show_as_name, show_as_param};
 use super::{
     Json, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotShowAs, PivotTable, PivotValue, Result, Session, Workbook, bad,
     bool_param, edit, find_pivot, json, ok, other, pv, str_param, u32_param,
@@ -472,6 +472,14 @@ pub(super) fn move_field(s: &mut Session, p: &Json) -> Result<Json> {
     })
 }
 
+/// The value field captioned `field`, else the first one summarizing the source field `field`.
+fn value_position(pt: &PivotTable, field: &str) -> Option<usize> {
+    pt.values
+        .iter()
+        .position(|v| v.name.eq_ignore_ascii_case(field))
+        .or_else(|| pt.values.iter().position(|v| v.source_col.eq_ignore_ascii_case(field)))
+}
+
 pub(super) fn value_settings(s: &mut Session, p: &Json) -> Result<Json> {
     const C: &str = "pivot.valueSettings";
     let field = str_param(p, "field").map(str::to_string);
@@ -486,15 +494,34 @@ pub(super) fn value_settings(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let name = str_param(p, "name").map(str::to_string);
     let fmt = p.get("numberFormat").cloned();
+    if func.is_none() && show.is_none() && name.is_none() && fmt.is_none() {
+        // Menu-style call (which field, no settings): the Value Field Settings dialog.
+        let (si, pi) = find_pivot(s, p)?;
+        let d = s.doc()?;
+        let pt = d.wb.sheet(si).and_then(|sh| sh.pivots.get(pi)).ok_or_else(|| other("There's no such PivotTable."))?;
+        let i = match (index, &field) {
+            (Some(i), _) => i,
+            (None, Some(f)) => value_position(pt, f).ok_or_else(|| bad(C, format!("`{f}` isn't in the values area")))?,
+            (None, None) => 0,
+        };
+        let v = pt.values.get(i).ok_or_else(|| bad(C, "no value field at that index"))?;
+        let params = json!({
+            "pivot": pt.name,
+            "field": v.name,
+            "sourceName": v.source_col,
+            "name": v.name,
+            "originalName": v.name,
+            "func": func_name(v.func),
+            "showAs": show_as_name(v.show_as),
+            "numberFormat": v.number_format.clone().unwrap_or_default(),
+        });
+        s.ui_requests.push(crate::UiRequest::Dialog("pivotValueSettings".into(), params));
+        return ok();
+    }
     update(s, p, |pt, src, _| {
         let i = match (index, &field) {
             (Some(i), _) => i,
-            (None, Some(f)) => pt
-                .values
-                .iter()
-                .position(|v| v.name.eq_ignore_ascii_case(f))
-                .or_else(|| pt.values.iter().position(|v| v.source_col.eq_ignore_ascii_case(f)))
-                .ok_or_else(|| bad(C, format!("`{f}` isn't in the values area")))?,
+            (None, Some(f)) => value_position(pt, f).ok_or_else(|| bad(C, format!("`{f}` isn't in the values area")))?,
             (None, None) => {
                 if pt.values.len() == 1 {
                     0

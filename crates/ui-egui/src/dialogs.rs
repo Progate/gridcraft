@@ -40,6 +40,36 @@ pub(crate) use show::build_params;
 pub use show::show;
 use zoom::zoom_preset;
 
+/// Value Field Settings › Summarize value field by: `pivot.valueSettings` `func` values.
+pub(crate) const PIVOT_FUNCS: [(&str, &str); 11] = [
+    ("sum", "Sum"),
+    ("count", "Count"),
+    ("average", "Average"),
+    ("max", "Max"),
+    ("min", "Min"),
+    ("product", "Product"),
+    ("countNumbers", "Count Numbers"),
+    ("stdDev", "StdDev"),
+    ("stdDevP", "StdDevp"),
+    ("var", "Var"),
+    ("varP", "Varp"),
+];
+
+/// Value Field Settings › Show values as: `pivot.valueSettings` `showAs` values, in Excel's order.
+pub(crate) const PIVOT_SHOW_AS: [(&str, &str); 11] = [
+    ("normal", "No Calculation"),
+    ("percentOfGrandTotal", "% of Grand Total"),
+    ("percentOfColumnTotal", "% of Column Total"),
+    ("percentOfRowTotal", "% of Row Total"),
+    ("percentOfParentRowTotal", "% of Parent Row Total"),
+    ("percentOfParentColumnTotal", "% of Parent Column Total"),
+    ("runningTotal", "Running Total In"),
+    ("percentOfRunningTotal", "% Running Total In"),
+    ("rankAscending", "Rank Smallest to Largest"),
+    ("rank", "Rank Largest to Smallest"),
+    ("index", "Index"),
+];
+
 /// A form field. `Ref` is a range reference that can also be picked by selecting on the grid
 /// (a RefEdit box).
 #[derive(Clone, Debug, PartialEq)]
@@ -962,6 +992,31 @@ impl Dialog {
                 vec![Text { key: "name", label: "Name:" }, Text { key: "formula", label: "Formula:" }],
                 json!({"pivot": p("pivot"), "name": p("name"), "formula": p("formula")}),
             ),
+            "pivotValueSettings" => {
+                let source = p("sourceName").as_str().unwrap_or_default().to_string();
+                Dialog::form(
+                    "pivotValueSettings",
+                    "Value Field Settings",
+                    "pivot.valueSettings",
+                    vec![
+                        Note(format!("Source Name: {source}")),
+                        Text { key: "name", label: "Custom Name:" },
+                        Choice { key: "func", label: "Summarize value field by", options: PIVOT_FUNCS.to_vec() },
+                        Choice { key: "showAs", label: "Show values as", options: PIVOT_SHOW_AS.to_vec() },
+                        Note("Running Total In, % Running Total In and the ranks run along the first row field.".into()),
+                        Text { key: "numberFormat", label: "Number Format (blank = automatic):" },
+                    ],
+                    json!({
+                        "pivot": p("pivot"),
+                        "field": p("field"),
+                        "name": p("name"),
+                        "originalName": p("originalName"),
+                        "func": p("func").as_str().unwrap_or("sum"),
+                        "showAs": p("showAs").as_str().unwrap_or("normal"),
+                        "numberFormat": p("numberFormat").as_str().unwrap_or_default(),
+                    }),
+                )
+            }
             "goToSpecial" => Dialog::form(
                 "goToSpecial",
                 "Go To Special",
@@ -1152,6 +1207,37 @@ mod tests {
         assert_eq!(build_params(&dialog)["range"], "B2:C5");
         dialog.set_value("range", json!("D2:E6"));
         assert_eq!(build_params(&dialog)["range"], "D2:E6");
+    }
+
+    /// The value field's menu opens Value Field Settings on the field; OK applies the choices and
+    /// leaves an unchanged caption alone (renaming "Sum of Sales" to itself would be refused).
+    #[test]
+    fn value_field_settings_opens_on_the_field_and_applies_the_choices() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        session.execute("range.setValues", json!({"range": "A1", "values": [["Region", "Sales"], ["East", 1], ["West", 3]]})).unwrap();
+        session.execute("selection.set", json!({"range": "A1"})).unwrap();
+        session.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"]})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        app.run("pivot.valueSettings", json!({"field": "Sum of Sales"})).unwrap();
+        app.after_engine();
+        let mut d = app.dialog.take().unwrap();
+        assert_eq!(d.name(), "pivotValueSettings");
+        assert_eq!(
+            (d.values["name"].as_str(), d.values["func"].as_str(), d.values["showAs"].as_str()),
+            (Some("Sum of Sales"), Some("sum"), Some("normal"))
+        );
+        d.set_value("showAs", json!("percentOfColumnTotal"));
+        d.set_value("func", json!("average"));
+        let params = build_params(&d);
+        assert!(params.get("name").is_none() && params.get("originalName").is_none(), "{params}");
+        assert_eq!(params["numberFormat"], Json::Null);
+        app.run(d.command.unwrap(), params).unwrap();
+        let v = app.session.active().unwrap().wb.active().unwrap().pivots[0].values[0].clone();
+        assert_eq!(
+            (v.name.as_str(), v.func, v.show_as),
+            ("Average of Sales", gridcraft_engine::model::PivotFunc::Average, gridcraft_engine::model::PivotShowAs::PercentOfColumnTotal)
+        );
     }
 
     #[test]

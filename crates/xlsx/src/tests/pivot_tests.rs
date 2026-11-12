@@ -509,7 +509,7 @@ fn hostile_pivot_parts_warn_not_panic() {
         r#"<notAPivot/>"#,
         r#"<pivotTableDefinition name="P" cacheId="1"/>"#,
         r#"<pivotTableDefinition name="P" cacheId="1"><location ref="nonsense"/></pivotTableDefinition>"#,
-        r#"<pivotTableDefinition name="" cacheId="9"><location ref="$D$3:$F$9"/><pivotFields count="1"><pivotField axis="axisRow" sortType="descending"><items><item x="99" h="1" sd="0"/><item x="-4"/><item t="default"/></items></pivotField></pivotFields><rowFields><field x="0"/><field x="4294967295"/><field x="-2"/><field x="77"/></rowFields><colFields><field x="1"/></colFields><pageFields><pageField fld="0" item="9999"/><pageField fld="-1"/><pageField fld="55"/></pageFields><dataFields><dataField fld="1" subtotal="bogus" showDataAs="index" numFmtId="99999"/><dataField fld="12"/><dataField name="E" fld="0"><extLst><ext><dataField pivotShowAs="percentOfParent"/></ext></extLst></dataField></dataFields></pivotTableDefinition>"#,
+        r#"<pivotTableDefinition name="" cacheId="9"><location ref="$D$3:$F$9"/><pivotFields count="1"><pivotField axis="axisRow" sortType="descending"><items><item x="99" h="1" sd="0"/><item x="-4"/><item t="default"/></items></pivotField></pivotFields><rowFields><field x="0"/><field x="4294967295"/><field x="-2"/><field x="77"/></rowFields><colFields><field x="1"/></colFields><pageFields><pageField fld="0" item="9999"/><pageField fld="-1"/><pageField fld="55"/></pageFields><dataFields><dataField fld="1" subtotal="bogus" showDataAs="difference" numFmtId="99999"/><dataField fld="12"/><dataField name="E" fld="0"><extLst><ext><dataField pivotShowAs="percentOfParent"/></ext></extLst></dataField></dataFields></pivotTableDefinition>"#,
     ];
     let caches = [
         None,
@@ -540,7 +540,7 @@ fn hostile_pivot_parts_warn_not_panic() {
     assert!(pt.values.iter().any(|v| v.func == PivotFunc::Sum && v.source_col == "V"));
     assert!(report.warnings.iter().any(|w| w.contains("bogus")), "{:?}", report.warnings);
     assert!(report.warnings.iter().any(|w| w.contains("grouping")), "{:?}", report.warnings);
-    assert!(report.warnings.iter().any(|w| w.contains("index")), "{:?}", report.warnings);
+    assert!(report.warnings.iter().any(|w| w.contains("difference")), "{:?}", report.warnings);
 }
 
 #[test]
@@ -759,4 +759,80 @@ fn two_value_fields_without_columns_hide_the_values_row() {
     let t = &one["xl/pivotTables/pivotTable1.xml"];
     assert!(t.contains("firstHeaderRow=\"1\""), "{t}");
     assert!(!t.contains("hideValuesRow"), "{t}");
+}
+
+/// Every Show Values As calculation is written as Excel writes it (`showDataAs`, or the Excel 2010
+/// `x14:dataField` extension) and read back.
+#[test]
+fn every_show_values_as_round_trips() {
+    let cases = [
+        (PivotShowAs::Normal, None, None),
+        (PivotShowAs::PercentOfGrandTotal, Some("percentOfTotal"), None),
+        (PivotShowAs::PercentOfColumnTotal, Some("percentOfCol"), None),
+        (PivotShowAs::PercentOfRowTotal, Some("percentOfRow"), None),
+        (PivotShowAs::RunningTotal, Some("runTotal"), None),
+        (PivotShowAs::Index, Some("index"), None),
+        (PivotShowAs::Rank, None, Some("rankDescending")),
+        (PivotShowAs::RankAscending, None, Some("rankAscending")),
+        (PivotShowAs::PercentOfParentRowTotal, None, Some("percentOfParentRow")),
+        (PivotShowAs::PercentOfParentColumnTotal, None, Some("percentOfParentCol")),
+        (PivotShowAs::PercentOfRunningTotal, None, Some("percentOfRunningTotal")),
+    ];
+    for (show_as, data_as, x14) in cases {
+        let cols = [
+            ("Region", vec![Value::text("East"), Value::text("West"), Value::text("East")]),
+            ("Product", vec![Value::text("A"), Value::text("B"), Value::text("B")]),
+            ("Sales", vec![Value::number(10.0), Value::number(20.0), Value::number(5.0)]),
+        ];
+        let value = PivotValue {
+            source_col: "Sales".into(),
+            func: PivotFunc::Sum,
+            name: "Sum of Sales".into(),
+            show_as,
+            number_format: Some("0.00%".into()),
+        };
+        let parts = small_pivot(&cols, |pt| {
+            pt.rows = vec![field("Region")];
+            pt.columns = vec![field("Product")];
+            pt.values = vec![value.clone()];
+        });
+        let table = &parts["xl/pivotTables/pivotTable1.xml"];
+        let data_field = table.split("<dataField ").nth(1).unwrap();
+        let data_field = &data_field[..data_field.find("</dataFields>").unwrap()];
+        assert!(data_field.starts_with("name=\"Sum of Sales\" fld=\"2\""), "{data_field}");
+        assert!(data_field.contains("numFmtId=\"10\""), "{data_field}");
+        match data_as {
+            Some(a) => assert!(data_field.contains(&format!("showDataAs=\"{a}\"")), "{show_as:?}: {data_field}"),
+            None => assert!(!data_field.contains("showDataAs"), "{show_as:?}: {data_field}"),
+        }
+        match x14 {
+            Some(a) => assert!(data_field.contains(&format!("<x14:dataField pivotShowAs=\"{a}\"/>")), "{show_as:?}: {data_field}"),
+            None => assert!(!data_field.contains("x14:dataField"), "{show_as:?}: {data_field}"),
+        }
+        let mut wb = Workbook::new();
+        let data = wb.sheet_mut(0).unwrap();
+        data.name = "Data".into();
+        for (c, (h, vals)) in cols.iter().enumerate() {
+            data.cells.set(CellRef::new(0, c as u32), Cell::value(Value::text(*h)));
+            for (r, v) in vals.iter().enumerate() {
+                data.cells.set(CellRef::new(r as u32 + 1, c as u32), Cell::value(v.clone()));
+            }
+        }
+        let mut report = Sheet::new("Report");
+        report.pivots = vec![PivotTable {
+            id: 1,
+            name: "PT".into(),
+            source: "Data!$A$1:$C$4".into(),
+            anchor: at("A3"),
+            rows: vec![field("Region")],
+            columns: vec![field("Product")],
+            values: vec![value],
+            ..PivotTable::default()
+        }];
+        wb.sheets.push(Arc::new(report));
+        let (back, report) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+        assert!(report.warnings.iter().all(|w| !w.contains("show-values-as")), "{:?}", report.warnings);
+        let v = &back.sheet(1).unwrap().pivots[0].values[0];
+        assert_eq!((v.show_as, v.number_format.as_deref()), (show_as, Some("0.00%")));
+    }
 }

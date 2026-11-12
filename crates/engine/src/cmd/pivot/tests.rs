@@ -209,6 +209,59 @@ fn show_values_as() {
     assert_eq!(text(&s, "B3"), "Biggest sale");
 }
 
+/// Excel 2010's Show Values As additions: % of parent row/column total, % running total, rank
+/// smallest to largest and index.
+#[test]
+fn show_values_as_parent_running_rank_and_index() {
+    let close = |a: Value, b: f64| assert!((a.as_f64().unwrap() - b).abs() < 1e-12, "{a:?} != {b}");
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"]})).unwrap();
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "rankAscending"})).unwrap();
+    assert_eq!([val(&s, "B4"), val(&s, "B5"), val(&s, "B6")], [Value::Number(3.0), Value::Number(1.0), Value::Number(2.0)]);
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "percentOfRunningTotal"})).unwrap();
+    close(val(&s, "B4"), 415.0 / TOTAL);
+    close(val(&s, "B5"), 550.0 / TOTAL);
+    close(val(&s, "B6"), 1.0);
+    close(val(&s, "B7"), 1.0);
+
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "values": ["Sales"]})).unwrap();
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "percentOfParentRowTotal"})).unwrap();
+    let east = find_row(&s, "East").unwrap();
+    close(val(&s, &CellRef::new(east, 1).a1()), 415.0 / TOTAL);
+    close(val(&s, &CellRef::new(east + 1, 1).a1()), 160.0 / 415.0);
+    assert_eq!(pt(&s).values[0].show_as, gridcraft_model::PivotShowAs::PercentOfParentRowTotal);
+
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Region"], "columns": ["Product"], "values": ["Sales"]})).unwrap();
+    let east = find_row(&s, "East").unwrap();
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "index"})).unwrap();
+    close(val(&s, &CellRef::new(east, 1).a1()), 160.0 * TOTAL / (415.0 * 420.0));
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "percentOfParentColumnTotal"})).unwrap();
+    close(val(&s, &CellRef::new(east, 1).a1()), 160.0 / 415.0);
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "percentOfColumnTotal"})).unwrap();
+    close(val(&s, &CellRef::new(east, 1).a1()), 160.0 / 420.0);
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "percentOfRowTotal"})).unwrap();
+    close(val(&s, &CellRef::new(east, 1).a1()), 160.0 / 415.0);
+}
+
+/// Value Field Settings with only the field (menu-style) opens the dialog on its current settings.
+#[test]
+fn value_settings_without_settings_opens_the_dialog() {
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"]})).unwrap();
+    s.execute("pivot.valueSettings", json!({"index": 0, "showAs": "percentOfColumnTotal", "func": "average"})).unwrap();
+    s.ui_requests.clear();
+    s.execute("pivot.valueSettings", json!({"field": "Sales"})).unwrap();
+    let Some(crate::UiRequest::Dialog(name, params)) = s.ui_requests.last() else { panic!("no dialog") };
+    assert_eq!(name, "pivotValueSettings");
+    assert_eq!(params["field"], "Average of Sales");
+    assert_eq!(params["func"], "average");
+    assert_eq!(params["showAs"], "percentOfColumnTotal");
+    assert_eq!(params["numberFormat"], "");
+    assert!(s.execute("pivot.valueSettings", json!({"field": "Units"})).is_err());
+}
+
 /// Running Total over nested rows adds up each child's value across the top-level items, in the
 /// order they appear: the same value as summing the plain values of the earlier items' rows.
 #[test]

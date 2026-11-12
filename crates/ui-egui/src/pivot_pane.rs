@@ -127,12 +127,19 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                                 for (sa, l) in [
                                     ("normal", "Show as No Calculation"),
                                     ("percentOfGrandTotal", "Show as % of Grand Total"),
+                                    ("percentOfColumnTotal", "Show as % of Column Total"),
+                                    ("percentOfRowTotal", "Show as % of Row Total"),
                                     ("runningTotal", "Show as Running Total"),
                                     ("rank", "Show as Rank"),
                                 ] {
                                     if ui.button(lang.tr(l)).clicked() {
                                         app.run_or_alert("pivot.valueSettings", json!({"pivot": name, "field": f, "showAs": sa}));
                                     }
+                                }
+                                ui.separator();
+                                // Only the field: the command opens the Value Field Settings dialog on it.
+                                if ui.button(lang.tr("Value Field Settings…")).clicked() {
+                                    app.run_or_alert("pivot.valueSettings", json!({"pivot": name, "field": f}));
                                 }
                             } else {
                                 ui.separator();

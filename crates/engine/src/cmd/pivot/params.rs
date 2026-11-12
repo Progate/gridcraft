@@ -51,7 +51,12 @@ pub(super) fn show_as_param(v: &str) -> Option<PivotShowAs> {
         "percentofcolumntotal" => PivotShowAs::PercentOfColumnTotal,
         "percentofrowtotal" => PivotShowAs::PercentOfRowTotal,
         "runningtotal" => PivotShowAs::RunningTotal,
-        "rank" => PivotShowAs::Rank,
+        "rank" | "rankdescending" => PivotShowAs::Rank,
+        "percentofparentrowtotal" => PivotShowAs::PercentOfParentRowTotal,
+        "percentofparentcolumntotal" => PivotShowAs::PercentOfParentColumnTotal,
+        "percentofrunningtotal" => PivotShowAs::PercentOfRunningTotal,
+        "rankascending" => PivotShowAs::RankAscending,
+        "index" => PivotShowAs::Index,
         _ => return None,
     })
 }
@@ -64,6 +69,11 @@ pub(super) fn show_as_name(v: PivotShowAs) -> &'static str {
         PivotShowAs::PercentOfRowTotal => "percentOfRowTotal",
         PivotShowAs::RunningTotal => "runningTotal",
         PivotShowAs::Rank => "rank",
+        PivotShowAs::PercentOfParentRowTotal => "percentOfParentRowTotal",
+        PivotShowAs::PercentOfParentColumnTotal => "percentOfParentColumnTotal",
+        PivotShowAs::PercentOfRunningTotal => "percentOfRunningTotal",
+        PivotShowAs::RankAscending => "rankAscending",
+        PivotShowAs::Index => "index",
     }
 }
 

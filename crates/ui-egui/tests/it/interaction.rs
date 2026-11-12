@@ -714,6 +714,7 @@ fn dialogs_open_and_close() {
         "spelling",
         "goTo",
         "pivotCalculatedField",
+        "pivotValueSettings",
         "about",
         "macros",
         "recordMacro",

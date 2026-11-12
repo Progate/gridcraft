@@ -364,10 +364,30 @@ struct ShowCache {
 }
 
 fn running_total(raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>) -> Value {
-    let Some((first, rest)) = context.row_path.split_first() else { return raw };
+    if context.row_path.is_empty() || !matches!(raw, Value::Number(_)) {
+        return raw;
+    }
+    running_parts(lookup, context).map_or(raw, |(running, _)| Value::number(running))
+}
+
+/// % Running Total In: the running total over the total of all the items it runs through. The
+/// grand total row (no row item) is the whole run, 100%.
+fn percent_of_running_total(raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>) -> Value {
     if !matches!(raw, Value::Number(_)) {
         return raw;
     }
+    if context.row_path.is_empty() {
+        return ratio(raw.clone(), Some(raw));
+    }
+    match running_parts(lookup, context) {
+        Some((running, all)) => ratio(Value::number(running), Some(Value::number(all))),
+        None => raw,
+    }
+}
+
+/// The running total in the first row field at this cell's item, and the total of the whole run.
+fn running_parts(lookup: &ValueLookup<'_>, context: &ShowContext<'_>) -> Option<(f64, f64)> {
+    let (first, rest) = context.row_path.split_first()?;
     let mut index = context.cache.items_by_rest.borrow_mut();
     let items_by_rest = index.get_or_insert_with(|| {
         let position: HashMap<u32, usize> = context.level0.iter().enumerate().rev().map(|(at, item)| (*item, at)).collect();
@@ -399,10 +419,10 @@ fn running_total(raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>
         }
         (by_item, total)
     });
-    Value::number(by_item.get(first).copied().unwrap_or(*all))
+    Some((by_item.get(first).copied().unwrap_or(*all), *all))
 }
 
-fn ranked_value(raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>) -> Value {
+fn ranked_value(raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>, ascending: bool) -> Value {
     let Some((_, parent)) = context.row_path.split_last() else { return Value::Empty };
     let Some(me) = raw.as_f64() else { return raw };
     let mut cache = context.cache.ranks.borrow_mut();
@@ -424,8 +444,23 @@ fn ranked_value(raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>)
     });
     // Excel's ranks are dense: ties share a rank and the next value takes the next one
     // (5, 4, 3, 3, 4 rank 1, 2, 3, 3, 2), so count the distinct larger values.
-    let larger = sorted.len() - sorted.partition_point(|value| *value <= me);
-    Value::number(larger as f64 + 1.0)
+    let before = if ascending { sorted.partition_point(|value| *value < me) } else { sorted.len() - sorted.partition_point(|value| *value <= me) };
+    Value::number(before as f64 + 1.0)
+}
+
+/// Show Values As Index: (value × grand total) ÷ (row total × column total).
+fn index_value(raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>) -> Value {
+    let Some(me) = raw.as_f64() else { return raw };
+    let at = |row: &[u32], col: &[u32]| lookup.get(row, col, context.value_index);
+    let parts = [at(&[], &[]), at(context.row_path, &[]), at(&[], context.col_path)];
+    if let Some(Value::Error(error)) = parts.iter().flatten().find(|value| matches!(value, Value::Error(_))) {
+        return Value::Error(error.clone());
+    }
+    match parts.map(|part| number(&part)) {
+        [Some(grand), Some(row), Some(col)] if row * col != 0.0 => Value::number(me * grand / (row * col)),
+        [Some(_), Some(_), Some(_)] => Value::Error(CellError::Div0),
+        _ => raw,
+    }
 }
 
 fn show_value(definition: &PivotValue, raw: Value, lookup: &ValueLookup<'_>, context: &ShowContext<'_>) -> Value {
@@ -435,7 +470,18 @@ fn show_value(definition: &PivotValue, raw: Value, lookup: &ValueLookup<'_>, con
         PivotShowAs::PercentOfColumnTotal => ratio(raw, lookup.get(&[], context.col_path, context.value_index)),
         PivotShowAs::PercentOfRowTotal => ratio(raw, lookup.get(context.row_path, &[], context.value_index)),
         PivotShowAs::RunningTotal => running_total(raw, lookup, context),
-        PivotShowAs::Rank => ranked_value(raw, lookup, context),
+        PivotShowAs::PercentOfRunningTotal => percent_of_running_total(raw, lookup, context),
+        PivotShowAs::Rank => ranked_value(raw, lookup, context, false),
+        PivotShowAs::RankAscending => ranked_value(raw, lookup, context, true),
+        PivotShowAs::PercentOfParentRowTotal => {
+            let parent = context.row_path.split_last().map_or(context.row_path, |(_, parent)| parent);
+            ratio(raw, lookup.get(parent, context.col_path, context.value_index))
+        }
+        PivotShowAs::PercentOfParentColumnTotal => {
+            let parent = context.col_path.split_last().map_or(context.col_path, |(_, parent)| parent);
+            ratio(raw, lookup.get(context.row_path, parent, context.value_index))
+        }
+        PivotShowAs::Index => index_value(raw, lookup, context),
     }
 }
 
@@ -681,10 +727,13 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
     let data_fmt: Vec<Option<String>> = vals
         .iter()
         .map(|(vs, v)| match v.show_as {
-            PivotShowAs::PercentOfGrandTotal | PivotShowAs::PercentOfColumnTotal | PivotShowAs::PercentOfRowTotal => {
-                Some(v.number_format.clone().unwrap_or_else(|| "0.00%".into()))
-            }
-            PivotShowAs::Rank => v.number_format.clone(),
+            PivotShowAs::PercentOfGrandTotal
+            | PivotShowAs::PercentOfColumnTotal
+            | PivotShowAs::PercentOfRowTotal
+            | PivotShowAs::PercentOfParentRowTotal
+            | PivotShowAs::PercentOfParentColumnTotal
+            | PivotShowAs::PercentOfRunningTotal => Some(v.number_format.clone().unwrap_or_else(|| "0.00%".into())),
+            PivotShowAs::Rank | PivotShowAs::RankAscending | PivotShowAs::Index => v.number_format.clone(),
             _ => v.number_format.clone().or_else(|| match v.func {
                 PivotFunc::Count | PivotFunc::CountNumbers => None,
                 _ => {
