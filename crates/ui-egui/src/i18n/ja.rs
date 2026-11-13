@@ -51,8 +51,8 @@ pub(super) const CORE: &[(&str, &str)] = &[
     ("Page Layout|Orientation", "印刷の向き"),
     ("Angle Counterclockwise", "左回りに回転"),
     ("Angle Clockwise", "右回りに回転"),
-    ("Rotate Text Up", "文字列を上に回転"),
-    ("Rotate Text Down", "文字列を下に回転"),
+    ("Rotate Text Up", "上へ回転"),
+    ("Rotate Text Down", "下へ回転"),
     ("Accounting Number Format", "通貨表示形式"),
     ("Percent Style", "パーセント表示"),
     ("Comma Style", "桁区切りスタイル"),
@@ -64,7 +64,7 @@ pub(super) const CORE: &[(&str, &str)] = &[
     ("Format\nas Table", "テーブルとして書式設定"),
     ("Cell\nStyles", "セルのスタイル"),
     ("Format Cells…", "セルの書式設定…"),
-    ("Format Cell Alignment…", "セルの配置…"),
+    ("Format Cell Alignment…", "セルの配置の書式設定"),
     ("Format\nPane", "書式ウィンドウ"),
     ("Format", "書式"),
     ("Insert", "挿入"),
@@ -2153,6 +2153,91 @@ pub(super) const CONDITIONAL_FORMATTING: &[(&str, &str)] = &[
     ("Below Average…", "平均より下…"),
 ];
 
+/// Format Cells' Number, Alignment and Border tabs as Japanese Excel words them (表示形式, 配置, 罫線).
+const FORMAT_CELLS: &[(&str, &str)] = &[
+    ("Format Cells|Number", "表示形式"),
+    ("Number Category|Special", "その他"),
+    ("Number Category|Custom", "ユーザー定義"),
+    ("Decimal places:", "小数点以下の桁数:"),
+    ("Use 1000 Separator (,)", "桁区切り (,) を使用する"),
+    ("Negative numbers:", "負の数の表示形式:"),
+    ("Symbol:", "記号:"),
+    ("Symbol|None", "なし"),
+    ("€ Euro (€ 123)", "€ ユーロ (€ 123)"),
+    ("Calendar type:", "カレンダーの種類:"),
+    ("Gregorian", "グレゴリオ暦"),
+    ("Japanese Era", "和暦"),
+    ("General format cells have no specific number format.", "標準形式のセルには、特定の表示形式が設定されません。"),
+    (
+        "Text format cells are treated as text even when a number is in the cell. The cell is displayed exactly as entered.",
+        "文字列形式のセルでは、数値も文字列として扱われます。セルには入力したとおりに表示されます。",
+    ),
+    ("Up to one digit (1/4)", "1 桁増加 (1/4)"),
+    ("Up to two digits (21/25)", "2 桁増加 (21/25)"),
+    ("Up to three digits (312/943)", "3 桁増加 (312/943)"),
+    ("As halves (1/2)", "2 分の 1 (1/2)"),
+    ("As quarters (2/4)", "4 分の 1 (2/4)"),
+    ("As eighths (4/8)", "8 分の 1 (4/8)"),
+    ("As sixteenths (8/16)", "16 分の 1 (8/16)"),
+    ("As tenths (3/10)", "10 分の 1 (3/10)"),
+    ("As hundredths (30/100)", "100 分の 1 (30/100)"),
+    ("Postal Code", "郵便番号"),
+    ("Phone Number (Tokyo)", "電話番号 (東京)"),
+    ("Kanji Numerals (十二万三千四百)", "漢数字 (十二万三千四百)"),
+    ("Kanji Numerals (一二三四五)", "漢数字 (一二三四五)"),
+    ("Formal Kanji (壱拾弐萬参阡四百)", "大字 (壱拾弐萬参阡四百)"),
+    ("Formal Kanji (壱弐参四五)", "大字 (壱弐参四五)"),
+    ("Full-width (１２３４５)", "全角 (１２３４５)"),
+    ("Full-width with Separator (１２,３４５)", "全角 桁区切り (１２,３４５)"),
+    ("Zip Code", "郵便番号 (米国)"),
+    ("Zip Code + 4", "郵便番号 + 4 (米国)"),
+    ("Phone Number", "電話番号 (米国)"),
+    ("Social Security Number", "社会保障番号 (米国)"),
+    ("Text alignment", "文字の配置"),
+    ("Horizontal:", "横位置:"),
+    ("Vertical:", "縦位置:"),
+    ("Indent:", "インデント:"),
+    ("Horizontal Alignment|General", "標準"),
+    ("Left (Indent)", "左詰め (インデント)"),
+    ("Horizontal Alignment|Center", "中央揃え"),
+    ("Right (Indent)", "右詰め (インデント)"),
+    ("Horizontal Alignment|Fill", "繰り返し"),
+    ("Horizontal Alignment|Justify", "両端揃え"),
+    ("Distributed (Indent)", "均等割り付け (インデント)"),
+    ("Vertical Alignment|Top", "上詰め"),
+    ("Vertical Alignment|Center", "中央揃え"),
+    ("Vertical Alignment|Bottom", "下詰め"),
+    ("Vertical Alignment|Justify", "両端揃え"),
+    ("Vertical Alignment|Distributed", "均等割り付け"),
+    ("Text control", "文字の制御"),
+    ("Merge cells", "セルを結合する"),
+    ("Right-to-left", "右から左"),
+    ("Text direction:", "文字の方向:"),
+    ("Degrees", "度"),
+    ("Orientation|Text", "文字列"),
+    ("Border|Line", "線"),
+    ("Style:", "スタイル:"),
+    ("Border Color", "罫線の色"),
+    ("Line style", "線のスタイル"),
+    ("Presets", "プリセット"),
+    ("Border Preset|None", "なし"),
+    ("Border Preset|Outline", "外枠"),
+    ("Border Preset|Inside", "内側"),
+    ("Border Edge|Top", "上罫線"),
+    ("Border Edge|Inside Horizontal", "横罫線 (内側)"),
+    ("Border Edge|Bottom", "下罫線"),
+    ("Border Edge|Diagonal Up", "右上がり斜線"),
+    ("Border Edge|Left", "左罫線"),
+    ("Border Edge|Inside Vertical", "縦罫線 (内側)"),
+    ("Border Edge|Right", "右罫線"),
+    ("Border Edge|Diagonal Down", "右下がり斜線"),
+    ("Border preview|Text", "文字列"),
+    (
+        "The selected border style can be applied by clicking the presets, preview diagram or the buttons above.",
+        "選択した罫線スタイルは、プリセット、プレビュー枠内、または上のボタンをクリックして適用できます。",
+    ),
+];
+
 /// Engine messages with one varying part, `{}`: the part is translated by the catalog when it
 /// knows it, else kept.
 const MESSAGE_TEMPLATES: &[(&str, &str)] = &[
@@ -2189,6 +2274,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         .chain(EXTRA)
         .chain(AUTOFILTER)
         .chain(CONDITIONAL_FORMATTING)
+        .chain(FORMAT_CELLS)
         .find(|(english, _)| *english == text)
         .map(|(_, translated)| *translated)
 }
@@ -2256,6 +2342,19 @@ mod tests {
             catalog_keys().chain(EXTRA.iter().map(|(english, _)| *english)).chain(AUTOFILTER.iter().map(|(english, _)| *english)).collect();
         let mut seen = HashSet::new();
         for (english, japanese) in CONDITIONAL_FORMATTING {
+            assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
+            assert!(!others.contains(english), "{english:?} is already in another list");
+            assert!(seen.insert(*english), "duplicate key: {english:?}");
+            assert_eq!(translate(english), Some(*japanese));
+        }
+    }
+
+    #[test]
+    fn format_cells_labels_are_their_own() {
+        let others: HashSet<&str> =
+            catalog_keys().chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).map(|(english, _)| *english)).collect();
+        let mut seen = HashSet::new();
+        for (english, japanese) in FORMAT_CELLS {
             assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
             assert!(!others.contains(english), "{english:?} is already in another list");
             assert!(seen.insert(*english), "duplicate key: {english:?}");

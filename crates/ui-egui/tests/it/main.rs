@@ -47,6 +47,7 @@ mod floating_pictures;
 mod font_box_filter;
 mod font_size_box;
 mod form_controls;
+mod format_cells_dialog;
 mod format_chart_type;
 mod format_painter;
 mod formula_bar;

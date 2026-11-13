@@ -85,45 +85,36 @@ fn colored_borders() -> Borders {
     }
 }
 
-fn preview_lines(h: &egui_kittest::Harness<'static, SheetApp>, color: Color32) -> usize {
-    let preview = h.get_by_label("Border preview").rect();
-    h.output()
-        .shapes
-        .iter()
-        .filter(|shape| match &shape.shape {
-            Shape::LineSegment { points, stroke } => stroke.color == color && points.iter().all(|p| preview.contains(*p)),
-            _ => false,
-        })
-        .count()
-}
-
 #[test]
-fn border_preview_uses_the_colored_draft_until_ok_and_cancel_discards_it() {
+fn border_tab_sets_the_chosen_line_on_the_clicked_edge_only_on_ok() {
     let mut h = harness();
     let original = colored_borders();
     h.state_mut().run("home.formatCells", json!({"style": {"borders": original}})).unwrap();
     h.state_mut().open_dialog("formatCells", json!({"tab": "Border"}));
     h.run_steps(6);
-    for line in [original.top, original.bottom, original.left, original.right, original.diag_down, original.diag_up] {
-        let [r, g, b] = line.color.resolve(&Default::default()).unwrap();
-        assert_eq!(preview_lines(&h, Color32::from_rgb(r, g, b)), 1);
-    }
-    h.get_by_label("Top double").click();
+    h.get_by_label("Line style double").click();
     h.run_steps(6);
-    assert_eq!(borders(&h, "A1"), original);
-    assert_eq!(preview_lines(&h, Color32::from_rgb(0xab, 0x19, 0x2d)), 2);
+    h.get_by_label("Top").click();
+    h.run_steps(6);
+    assert_eq!(borders(&h, "A1"), original, "the draft stays in the dialog");
     h.get_by_label(" Cancel ").click();
     h.run_steps(6);
     assert!(h.state().dialog.is_none());
     assert_eq!(borders(&h, "A1"), original);
     h.state_mut().open_dialog("formatCells", json!({"tab": "Border"}));
     h.run_steps(6);
-    h.get_by_label("Top double").click();
+    h.get_by_label("Line style double").click();
+    h.run_steps(6);
+    h.get_by_label("Top").click();
     h.run_steps(6);
     h.get_by_label("   OK   ").click();
     h.run_steps(6);
     assert!(h.state().dialog.is_none());
+    // The selection's top edge (A1 and B1), not the line between its rows.
     assert_eq!(borders(&h, "A1").top.style, BorderStyle::Double);
+    assert_eq!(borders(&h, "B1").top.style, BorderStyle::Double);
+    assert_eq!(borders(&h, "A2").top, original.top);
+    assert_eq!(borders(&h, "A1").bottom, original.bottom, "other edges stay");
     h.state_mut().run("edit.undo", json!({})).unwrap();
     assert_eq!(borders(&h, "A1"), original);
 }

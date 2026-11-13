@@ -1,7 +1,7 @@
 //! Original border diagrams, painted with the same strokes as worksheet cells.
 
-use egui::{Align2, Color32, Rect, Response, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use gridcraft_engine::model::{BorderStyle, Borders, Theme};
+use egui::{Align2, Rect, Response, Ui, pos2, vec2};
+use gridcraft_engine::model::BorderStyle;
 
 use crate::grid::paint_border;
 use crate::theme::{self, Tokens};
@@ -47,36 +47,4 @@ pub(crate) fn preset_button(ui: &mut Ui, label: &str, preset: &str) -> Response 
     }
     ui.painter().text(pos2(response.rect.left() + 36.0, response.rect.center().y), Align2::LEFT_CENTER, label, theme::ui_font(12.5), t.text);
     response
-}
-
-/// Preview only reads the dialog draft. A white worksheet surface keeps automatic
-/// and explicit border colors faithful in both light and dark application themes.
-pub(crate) fn sample(ui: &mut Ui, borders: &Borders, theme: &Theme) {
-    ui.add_space(8.0);
-    ui.label("Preview");
-    let (area, response) = ui.allocate_exact_size(vec2(248.0, 104.0), Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, "Border preview"));
-    let t = Tokens::get(ui.ctx());
-    ui.painter().rect_filled(area, 4.0, t.grid_bg);
-    ui.painter().rect_stroke(area, 4.0, Stroke::new(1.0, t.input_border), StrokeKind::Inside);
-    let rect = area.shrink2(vec2(30.0, 20.0));
-    let edges = [
-        (borders.top, [rect.left_top(), rect.right_top()]),
-        (borders.bottom, [rect.left_bottom(), rect.right_bottom()]),
-        (borders.left, [rect.left_top(), rect.left_bottom()]),
-        (borders.right, [rect.right_top(), rect.right_bottom()]),
-        (borders.diag_down, [rect.left_top(), rect.right_bottom()]),
-        (borders.diag_up, [rect.left_bottom(), rect.right_top()]),
-    ];
-    for (line, points) in edges.iter().take(4) {
-        if line.is_none() {
-            ui.painter().extend(egui::Shape::dotted_line(points, Color32::from_gray(190), 4.0, 0.5));
-        }
-    }
-    for (line, points) in edges {
-        if !line.is_none() {
-            let color = line.color.resolve(theme).map(theme::color32).unwrap_or(Color32::BLACK);
-            paint_border(ui.painter(), points, line.style, color);
-        }
-    }
 }
