@@ -699,6 +699,31 @@ fn select_data_dialog_sets_the_category_axis_labels() {
 }
 
 #[test]
+fn select_data_dialog_switches_row_column_and_keeps_it_for_a_new_range() {
+    // Excel's Switch Row/Column button sits in Select Data; a new data range keeps the orientation.
+    let mut s = blank();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["", "A", "B"], ["X", 1, 2], ["Y", 3, 4], ["Z", 5, 6]]})).unwrap();
+    let id = s.execute("insert.chart", json!({"range": "A1:C3", "type": "column"})).unwrap()["chart"].as_u64().unwrap();
+    let mut h = harness(s);
+    h.state_mut().select_object_id(Some(id as u32));
+    h.state_mut().open_dialog("selectData", json!({"chart": id}));
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().unwrap().values["names"], json!(["A", "B"]));
+    h.get_by_label("Switch Row/Column").click();
+    h.run_steps(2);
+    let d = h.state_mut().dialog.as_mut().unwrap();
+    assert_eq!(d.values["names"], json!(["X", "Y"]), "the series list shows the rows at once");
+    d.values.insert("range".into(), json!("=Sheet1!$A$1:$C$4"));
+    h.run_steps(1);
+    key(&mut h, Key::Enter, Modifiers::NONE);
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    let chart = h.state().session.active().unwrap().wb.active().unwrap().charts[0].clone();
+    assert!(chart.by_rows);
+    assert_eq!(chart.series.len(), 3);
+}
+
+#[test]
 /// Each listed dialog opens, passes accessibility and closes.
 fn dialogs_open_and_close() {
     let mut h = harness(blank());

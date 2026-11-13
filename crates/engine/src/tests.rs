@@ -3376,7 +3376,7 @@ fn show_outline_symbols_toggles() {
     assert!(!on(&s));
 }
 
-fn reopen(s: &mut Session) {
+pub(super) fn reopen(s: &mut Session) {
     let r = s.execute("file.saveBytes", json!({"format": "xlsx"})).unwrap();
     let b64 = r["base64"].as_str().unwrap().to_string();
     s.execute("file.open", json!({"name": "x.xlsx", "base64": b64})).unwrap();
@@ -3532,7 +3532,7 @@ fn scatter_of_two_columns_is_one_series_with_the_first_as_x() {
     assert_eq!(c.series.len(), 1);
     assert_eq!(c.series[0].categories.as_deref(), Some("Sheet1!$A$2:$A$4"));
     s.execute("range.setValues", json!({"range": "D1", "values": [[1, 2, 3, 4], [10, 20, 30, 40]]})).unwrap();
-    s.execute("chart.selectData", json!({"range": "D1:G2"})).unwrap();
+    s.execute("chart.selectData", json!({"range": "D1:G2", "byRows": true})).unwrap();
     s.execute("chart.switchRowColumn", json!({})).unwrap();
     s.execute("chart.switchRowColumn", json!({})).unwrap();
     let c = s.doc().unwrap().wb.active().unwrap().charts[0].clone();
@@ -6442,6 +6442,7 @@ fn a_script_cannot_switch_windows() {
 }
 
 mod chart_location;
+mod chart_titles_layouts;
 mod controls;
 mod equation;
 mod format_cells;

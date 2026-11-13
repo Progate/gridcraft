@@ -13,7 +13,7 @@ use crate::widgets::{
 };
 
 mod automate;
-mod contextual;
+pub(crate) mod contextual;
 mod controls;
 mod data;
 mod formulas;

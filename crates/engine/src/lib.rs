@@ -473,13 +473,20 @@ impl Prefs {
     /// The title Excel gives a new chart with several series, in the interface language (or the
     /// regional format's, where there is no interface).
     pub fn chart_title(&self) -> &'static str {
-        let ja = |tag: &str| tag.eq_ignore_ascii_case("ja") || tag.to_ascii_lowercase().starts_with("ja-") || tag.to_ascii_lowercase().starts_with("ja_");
-        // The interface language, or a Japanese regional format (`run --locale ja-JP`).
-        if ja(&self.language) || ja(&self.region) {
-            "グラフ タイトル"
-        } else {
-            "Chart Title"
-        }
+        if self.japanese() { "グラフ タイトル" } else { "Chart Title" }
+    }
+
+    /// The text Excel gives a new axis title, in the interface language (軸ラベル in Japanese).
+    pub fn axis_title(&self) -> &'static str {
+        if self.japanese() { "軸ラベル" } else { "Axis Title" }
+    }
+
+    /// Whether Excel's own words go in Japanese: the interface language, or a Japanese regional
+    /// format where there is no interface (`run --locale ja-JP`).
+    fn japanese(&self) -> bool {
+        let ja =
+            |tag: &str| tag.eq_ignore_ascii_case("ja") || tag.to_ascii_lowercase().starts_with("ja-") || tag.to_ascii_lowercase().starts_with("ja_");
+        ja(&self.language) || ja(&self.region)
     }
 }
 

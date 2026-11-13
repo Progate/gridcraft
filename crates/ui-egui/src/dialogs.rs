@@ -1160,9 +1160,9 @@ impl Dialog {
                     let data = gridcraft_chart::resolve(&doc.wb, si, ch);
                     let names: Vec<String> = data.series.iter().map(|x| x.name.clone()).collect();
                     let cats = ch.series.first().and_then(|x| x.categories.clone()).unwrap_or_default();
-                    Some((ch.source.clone().unwrap_or_default(), cats, names))
+                    Some((ch.source.clone().unwrap_or_default(), cats, names, gridcraft_engine::cmd::insert::series_in_rows(ch)))
                 });
-                let Some((range, cats, names)) = found else {
+                let Some((range, cats, names, by_rows)) = found else {
                     app.message = Some(("Select Data".into(), "Select a chart first.".into()));
                     return None;
                 };
@@ -1170,7 +1170,7 @@ impl Dialog {
                 Dialog::custom(
                     "selectData",
                     "Select Data Source",
-                    json!({"chart": id, "range": eq(&range), "range0": eq(&range), "categories": eq(&cats), "categories0": eq(&cats), "names": names, "remove": []}),
+                    json!({"chart": id, "range": eq(&range), "range0": eq(&range), "categories": eq(&cats), "categories0": eq(&cats), "names": names, "remove": [], "byRows": by_rows, "byRows0": by_rows}),
                 )
             }
             "moveChart" => {

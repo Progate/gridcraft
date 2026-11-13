@@ -136,6 +136,22 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
             ],
         );
     });
+    let kind = app.session.active().and_then(|d| d.wb.active()?.charts.iter().find(|c| c.id == id).map(|c| c.kind));
+    let layouts = kind.map_or(&[][..], gridcraft_engine::cmd::extra::quick_layouts);
+    if !layouts.is_empty() {
+        let ql = big_button(ui, Icon::Chart, "Quick\nLayout", "Quick Layout", true);
+        control_keytip(app, ui, &ql, "chart.quickLayout");
+        egui::Popup::menu(&ql).show(|ui| {
+            let lang = app.ui.language;
+            for (i, layout) in layouts.iter().enumerate() {
+                let n = i + 1;
+                let label = lang.tr("Layout {n}").replace("{n}", &n.to_string());
+                if ui.button(label).on_hover_text(quick_layout_tip(lang, layout)).clicked() {
+                    act(app, "chart.quickLayout", json!({"chart": id, "layout": n}));
+                }
+            }
+        });
+    }
     let __k = big_button(ui, Icon::Redo, "Switch\nRow/Column", "Switch Row/Column", false);
     control_keytip(app, ui, &__k, "chart.switchRowColumn");
     if __k.clicked() {
@@ -199,4 +215,48 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
         act(app, "chart.delete", json!({"chart": id}));
         app.selected_object = None;
     }
+}
+
+/// A Quick Layout's tooltip: the chart elements it shows, in the interface language.
+pub(crate) fn quick_layout_tip(lang: crate::i18n::Language, l: &gridcraft_engine::cmd::extra::QuickLayout) -> String {
+    use gridcraft_engine::cmd::extra::LayoutLabels;
+    use gridcraft_engine::model::LegendPos;
+    let mut parts: Vec<String> = Vec::new();
+    if l.title {
+        parts.push(lang.tr("Chart Title").into());
+    }
+    parts.push(
+        lang.tr(match l.legend {
+            LegendPos::None => "Legend: None",
+            LegendPos::Top => "Legend: Top",
+            LegendPos::Bottom => "Legend: Bottom",
+            LegendPos::Left => "Legend: Left",
+            LegendPos::Right => "Legend: Right",
+        })
+        .into(),
+    );
+    let label_parts: &[&str] = match l.labels {
+        LayoutLabels::None => &[],
+        LayoutLabels::Value => &["Value"],
+        LayoutLabels::Percent => &["Percentage"],
+        LayoutLabels::CategoryPercent => &["Category Name", "Percentage"],
+        LayoutLabels::CategoryValue => &["Category Name", "Value"],
+    };
+    if !label_parts.is_empty() {
+        let shown: Vec<&str> = label_parts.iter().map(|p| lang.tr(p)).collect();
+        parts.push(format!("{} ({})", lang.tr("Data Labels"), shown.join(", ")));
+    }
+    if l.x_title {
+        parts.push(lang.tr("Horizontal Axis Title").into());
+    }
+    if l.y_title {
+        parts.push(lang.tr("Vertical Axis Title").into());
+    }
+    if l.gridlines {
+        parts.push(lang.tr("Gridlines").into());
+    }
+    if l.data_table {
+        parts.push(lang.tr("Data Table").into());
+    }
+    parts.join(", ")
 }

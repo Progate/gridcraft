@@ -134,6 +134,27 @@ pub(super) fn select_data(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
     };
     edit(ui, d, "range", "Chart data range:");
     ui.add_space(6.0);
+    let by_rows = |d: &Dialog, k: &str| d.values.get(k).and_then(Json::as_bool).unwrap_or(false);
+    // Excel's Switch Row/Column sits in this dialog: the series list shows the other way round
+    // at once, and the chart changes on OK. A new data range keeps the orientation.
+    if ui.button(crate::i18n::current(ui.ctx()).tr("Switch Row/Column")).clicked() {
+        let flipped = !by_rows(d, "byRows");
+        d.values.insert("byRows".into(), json!(flipped));
+        d.values.insert("remove".into(), json!([]));
+        let mut params = serde_json::Map::new();
+        params.insert("chart".into(), d.values.get("chart").cloned().unwrap_or(Json::Null));
+        params.insert("byRows".into(), json!(flipped));
+        if text(d, "range") != text(d, "range0") {
+            params.insert("range".into(), json!(text(d, "range")));
+        }
+        if let Ok((si, _, chart)) = gridcraft_engine::cmd::extra::select_data_preview(&app.session, &Json::Object(params))
+            && let Some(doc) = app.session.active()
+        {
+            let names: Vec<String> = gridcraft_chart::resolve(&doc.wb, si, &chart).series.into_iter().map(|x| x.name).collect();
+            d.values.insert("names".into(), json!(names));
+        }
+    }
+    ui.add_space(6.0);
     ui.strong(crate::i18n::current(ui.ctx()).tr("Legend Entries (Series)"));
     let names: Vec<String> =
         d.values.get("names").and_then(Json::as_array).map(|a| a.iter().map(|n| n.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
@@ -166,6 +187,10 @@ pub(super) fn select_data(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
         let mut params = serde_json::Map::new();
         params.insert("chart".into(), d.values.get("chart").cloned().unwrap_or(Json::Null));
         let range_changed = text(d, "range") != text(d, "range0");
+        let switched = by_rows(d, "byRows") != by_rows(d, "byRows0");
+        if range_changed || switched {
+            params.insert("byRows".into(), json!(by_rows(d, "byRows")));
+        }
         if range_changed {
             params.insert("range".into(), json!(text(d, "range")));
         } else if !remove.is_empty() {

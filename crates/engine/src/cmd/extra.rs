@@ -23,6 +23,7 @@ mod window;
 
 pub(crate) use cells::is_checkbox_cell;
 use cells::{background, checkbox, draw_border, new_cell_style, recently_used, theme_colors, theme_fonts, toggle_checkbox, use_in_formula};
+pub use chart::{LayoutLabels, QuickLayout, quick_layouts, select_data_preview};
 use chart::{add_element, change_colors, format_data_labels, format_series, move_chart, quick_layout, select_data, set_as_total};
 use data::{from_csv, from_table_range, queries, table_resize};
 use objects::{align, arrange, rotate, selection_pane, shape_fill, shape_outline};
@@ -43,7 +44,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             add_element
         ),
-        cmd!("chart.quickLayout", "Quick Layout", ["Chart Design", "Chart Layouts"], None, "{chart?, layout: 1..6}", has_doc, quick_layout),
+        cmd!(
+            "chart.quickLayout",
+            "Quick Layout",
+            ["Chart Design", "Chart Layouts"],
+            None,
+            "{chart?, layout: 1..11 (column, bar, line, area…; pie and doughnut 1..7): Excel's Quick Layouts}",
+            has_doc,
+            quick_layout
+        ),
         cmd!(
             "chart.changeColors",
             "Change Colors",
@@ -58,7 +67,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Select Data…",
             ["Chart Design", "Data"],
             None,
-            "{chart?, range?: \"Sheet1!A1:D7\", byRows?: bool, categories?: \"Sheet1!A2:A7\" (Horizontal (Category) Axis Labels for every series; \"\" clears), removeSeries?: [index…]}",
+            "{chart?, range?: \"Sheet1!A1:D7\", byRows?: bool (series in rows; a new range keeps the chart's current orientation unless given; alone, switches row/column on the current range), categories?: \"Sheet1!A2:A7\" (Horizontal (Category) Axis Labels for every series; \"\" clears), removeSeries?: [index…]}",
             has_doc,
             select_data
         ),

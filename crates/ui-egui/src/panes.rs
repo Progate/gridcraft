@@ -405,9 +405,11 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
                 }
             }
         });
-        ui.horizontal(|ui| {
-            for n in 1..=6 {
-                if ui.button(format!("Layout {n}")).clicked() {
+        ui.horizontal_wrapped(|ui| {
+            for (i, layout) in gridcraft_engine::cmd::extra::quick_layouts(chart.kind).iter().enumerate() {
+                let n = i + 1;
+                let tip = crate::ribbon::contextual::quick_layout_tip(lang, layout);
+                if ui.button(lang.tr("Layout {n}").replace("{n}", &n.to_string())).on_hover_text(tip).clicked() {
                     app.run_or_alert("chart.quickLayout", json!({"chart": id, "layout": n}));
                 }
             }

@@ -26,11 +26,26 @@ fn with_chart(s: &mut Session, p: &Json, f: impl FnOnce(&mut Chart) -> Result<()
 pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
     let el = str_param(p, "element").unwrap_or("title").to_string();
     let default_title = s.prefs.chart_title();
+    let axis_title = s.prefs.axis_title();
     let on = bool_param(p, "on").unwrap_or(true);
     let pos = str_param(p, "position").map(str::to_string);
     with_chart(s, p, |c| {
         match el.as_str() {
-            "title" => c.title = if on { c.title.clone().filter(|t| !t.is_empty()).or(Some(default_title.into())) } else { Some(String::new()) },
+            // Add Chart Element ▸ Chart Title ▸ Above Chart keeps a typed title and otherwise turns
+            // the automatic title back on; None removes it (`autoTitleDeleted`).
+            "title" => {
+                if !on {
+                    c.title = Some(String::new());
+                    c.auto_title = false;
+                } else if c.title.as_deref().is_none_or(str::is_empty) {
+                    if crate::cmd::insert::is_chartex_kind(c.kind) {
+                        c.title = Some(default_title.into());
+                    } else {
+                        c.title = None;
+                        c.auto_title = true;
+                    }
+                }
+            }
             "legend" => {
                 c.legend = if !on {
                     LegendPos::None
@@ -47,8 +62,8 @@ pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
             "dataTable" => crate::cmd::insert::update_data_table(c, p, Some(on))?,
             "gridlines" => c.gridlines = on,
             "axisTitles" => {
-                c.x_title = on.then(|| c.x_title.clone().unwrap_or_else(|| "Axis Title".into()));
-                c.y_title = on.then(|| c.y_title.clone().unwrap_or_else(|| "Axis Title".into()));
+                c.x_title = on.then(|| c.x_title.clone().unwrap_or_else(|| axis_title.into()));
+                c.y_title = on.then(|| c.y_title.clone().unwrap_or_else(|| axis_title.into()));
             }
             "smooth" => {
                 for s in &mut c.series {
@@ -117,27 +132,119 @@ fn trendline_param(p: &Json) -> Result<Trendline> {
     Ok(t)
 }
 
+/// Data labels a Quick Layout shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayoutLabels {
+    None,
+    /// The value (column, bar, line charts).
+    Value,
+    /// Pie: the percentage.
+    Percent,
+    /// Pie: the category name and the percentage.
+    CategoryPercent,
+    /// Pie: the category name and the value.
+    CategoryValue,
+}
+
+/// One of Excel's Quick Layouts (Chart Design ▸ Quick Layout): the chart elements it shows. A
+/// layout sets every element it covers, removing the others, as Excel does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuickLayout {
+    pub title: bool,
+    pub legend: LegendPos,
+    pub labels: LayoutLabels,
+    pub x_title: bool,
+    pub y_title: bool,
+    pub gridlines: bool,
+    /// A data table with legend keys.
+    pub data_table: bool,
+}
+
+const fn ql(title: bool, legend: LegendPos, labels: LayoutLabels, x_title: bool, y_title: bool, gridlines: bool, data_table: bool) -> QuickLayout {
+    QuickLayout { title, legend, labels, x_title, y_title, gridlines, data_table }
+}
+
+/// Quick Layouts 1–11 of column, bar, line and area charts (and the other charts with axes), from
+/// observing Excel's gallery. Excel's layout 2 also hides the value axis, 8 and 10 narrow the gap
+/// between columns, and line charts have a twelfth layout (high-low lines); those parts are not
+/// modelled, so 10 matches 1 here.
+const AXIS_LAYOUTS: [QuickLayout; 11] = {
+    use LayoutLabels::{None as NoLabels, Value};
+    use LegendPos::{Bottom, None as NoLegend, Right, Top};
+    [
+        ql(true, Right, NoLabels, false, false, true, false),
+        ql(true, Top, Value, false, false, false, false),
+        ql(true, Bottom, NoLabels, false, false, true, false),
+        ql(false, Bottom, Value, false, false, true, false),
+        ql(true, NoLegend, NoLabels, false, true, true, true),
+        ql(true, NoLegend, NoLabels, false, true, true, false),
+        ql(false, Right, NoLabels, true, true, true, false),
+        ql(true, NoLegend, NoLabels, true, true, true, false),
+        ql(true, Right, NoLabels, true, true, true, false),
+        ql(true, Right, NoLabels, false, false, true, false),
+        ql(false, Right, NoLabels, false, false, true, false),
+    ]
+};
+
+/// Quick Layouts 1–7 of pie and doughnut charts.
+const PIE_LAYOUTS: [QuickLayout; 7] = {
+    use LayoutLabels::{CategoryPercent, CategoryValue, None as NoLabels, Percent, Value};
+    use LegendPos::{Bottom, None as NoLegend, Right, Top};
+    [
+        ql(true, NoLegend, CategoryPercent, false, false, false, false),
+        ql(true, Top, Percent, false, false, false, false),
+        ql(false, Bottom, NoLabels, false, false, false, false),
+        ql(false, Bottom, Value, false, false, false, false),
+        ql(true, NoLegend, CategoryValue, false, false, false, false),
+        ql(true, Right, Percent, false, false, false, false),
+        ql(false, Right, NoLabels, false, false, false, false),
+    ]
+};
+
+/// The Quick Layouts Excel offers for a chart of this kind (layout `n` is entry `n - 1`).
+pub fn quick_layouts(kind: gridcraft_model::ChartKind) -> &'static [QuickLayout] {
+    use gridcraft_model::ChartKind as K;
+    match kind {
+        K::Pie | K::Doughnut => &PIE_LAYOUTS,
+        K::Histogram | K::BoxWhisker | K::Waterfall | K::Funnel | K::Treemap | K::Sunburst => &AXIS_LAYOUTS[..0],
+        _ => &AXIS_LAYOUTS,
+    }
+}
+
 pub(super) fn quick_layout(s: &mut Session, p: &Json) -> Result<Json> {
     let n = u32_param(p, "layout").unwrap_or(1);
+    let axis_title = s.prefs.axis_title();
+    let (si, ci) = find_chart(s, p)?;
+    let kind = s.doc()?.wb.sheet(si).and_then(|sh| sh.charts.get(ci)).map(|c| c.kind).ok_or_else(|| bad("chart", "no such chart"))?;
+    let layouts = quick_layouts(kind);
+    let Some(layout) = n.checked_sub(1).and_then(|i| layouts.get(i as usize)).copied() else {
+        return Err(bad("chart.quickLayout", format!("this chart has layouts 1 to {}", layouts.len())));
+    };
     with_chart(s, p, |c| {
-        let (legend, labels, grid, axes) = match n {
-            2 => (LegendPos::Top, true, false, false),
-            3 => (LegendPos::Bottom, false, true, false),
-            4 => (LegendPos::Bottom, true, false, false),
-            5 => (LegendPos::None, false, true, true),
-            6 => (LegendPos::Right, false, true, true),
-            _ => (LegendPos::Right, false, true, false),
-        };
-        c.legend = legend;
-        c.data_labels = labels;
-        c.gridlines = grid;
-        if axes {
-            c.x_title.get_or_insert_with(|| "Axis Title".into());
-            c.y_title.get_or_insert_with(|| "Axis Title".into());
-        } else {
-            c.x_title = None;
-            c.y_title = None;
+        if !layout.title {
+            c.title = Some(String::new());
+            c.auto_title = false;
+        } else if c.title.as_deref().is_none_or(str::is_empty) {
+            // A typed title stays; otherwise the automatic title (series name or Chart Title).
+            c.title = None;
+            c.auto_title = true;
         }
+        c.legend = layout.legend;
+        c.data_labels = layout.labels != LayoutLabels::None;
+        let parts = &mut c.label_parts;
+        match layout.labels {
+            LayoutLabels::None => {}
+            LayoutLabels::Value => *parts = gridcraft_model::LabelParts::default(),
+            LayoutLabels::Percent => *parts = gridcraft_model::LabelParts { value: false, percentage: true, ..Default::default() },
+            LayoutLabels::CategoryPercent => {
+                *parts = gridcraft_model::LabelParts { value: false, category_name: true, percentage: true, ..Default::default() }
+            }
+            LayoutLabels::CategoryValue => *parts = gridcraft_model::LabelParts { category_name: true, ..Default::default() },
+        }
+        c.gridlines = layout.gridlines;
+        c.x_title = if layout.x_title { c.x_title.clone().filter(|t| !t.is_empty()).or_else(|| Some(axis_title.into())) } else { None };
+        c.y_title = if layout.y_title { c.y_title.clone().filter(|t| !t.is_empty()).or_else(|| Some(axis_title.into())) } else { None };
+        c.data_table = (layout.data_table && c.supports_data_table()).then(Default::default);
         Ok(())
     })
 }
@@ -165,7 +272,23 @@ pub(super) fn change_colors(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 pub(super) fn select_data(s: &mut Session, p: &Json) -> Result<Json> {
+    let (si, ci, chart) = select_data_preview(s, p)?;
+    edit(s, |cx| {
+        let c = cx.sheet_mut(si)?.charts.get_mut(ci).ok_or_else(|| bad("chart", "no such chart"))?;
+        *c = chart;
+        Ok(json!({"chart": c.id}))
+    })
+}
+
+/// The chart as `chart.selectData` with these params would leave it, without changing it, and
+/// where it is (sheet, index): the Select Data Source dialog lists the series it would have.
+pub fn select_data_preview(s: &Session, p: &Json) -> Result<(usize, usize, Chart)> {
+    let (si, ci) = find_chart(s, p)?;
     let d = s.doc()?;
+    let mut c = d.wb.sheet(si).and_then(|sh| sh.charts.get(ci)).cloned().ok_or_else(|| bad("chart", "no such chart"))?;
+    // The series keep running the way they do (Switch Row/Column, in this dialog in Excel) when
+    // the data range changes; `byRows` sets it.
+    let current_by_rows = crate::cmd::insert::series_in_rows(&c);
     // A new data range rebuilds the series, as in Excel's Select Data › Chart data range.
     let rebuilt = match str_param(p, "range") {
         Some(range) => {
@@ -195,7 +318,7 @@ pub(super) fn select_data(s: &mut Session, p: &Json) -> Result<Json> {
             let source = areas.iter().map(|r| format!("{q}!{}", r.a1())).collect::<Vec<_>>().join(",");
             let (series, by_rows) = match (areas.as_slice(), bool_param(p, "byRows")) {
                 ([r], by_rows) => {
-                    let by_rows = by_rows.unwrap_or(r.width() > r.height() + 1);
+                    let by_rows = by_rows.unwrap_or(current_by_rows);
                     (crate::cmd::insert::series_from_range(&d.wb, src, *r, by_rows), by_rows)
                 }
                 _ => {
@@ -231,28 +354,41 @@ pub(super) fn select_data(s: &mut Session, p: &Json) -> Result<Json> {
         .unwrap_or_default();
     remove.sort_unstable();
     remove.dedup();
-    if rebuilt.is_none() && categories.is_none() && remove.is_empty() {
-        return Err(bad("chart.selectData", "missing `range`, `categories` or `removeSeries`"));
+    if rebuilt.is_none() && categories.is_none() && remove.is_empty() && p.get("byRows").is_none() {
+        return Err(bad("chart.selectData", "missing `range`, `byRows`, `categories` or `removeSeries`"));
     }
-    with_chart(s, p, move |c| {
-        if let Some((series, source, by_rows)) = rebuilt {
-            c.series = series;
-            crate::cmd::insert::scatter_x_from_first(c.kind, &mut c.series);
-            c.source = Some(source);
-            c.by_rows = by_rows;
+    if let Some((series, source, by_rows)) = rebuilt {
+        c.series = series;
+        crate::cmd::insert::scatter_x_from_first(c.kind, &mut c.series);
+        c.source = Some(source);
+        c.by_rows = by_rows;
+    } else if let Some(by_rows) = bool_param(p, "byRows").filter(|b| *b != current_by_rows) {
+        // Switch Row/Column on the chart's own data range.
+        let src = c.source.clone().or_else(|| crate::cmd::insert::series_block(&c.series).map(|(src, _)| src));
+        let Some(src) = src else { return Err(bad("chart.selectData", "the chart's data isn't one block of cells")) };
+        let (sheet_name, body) = split_sheet(&src);
+        let src_si = sheet_name.and_then(|n| d.wb.sheet_index(&n)).unwrap_or(si);
+        let r = RangeRef::parse(body).ok_or_else(|| bad("chart.selectData", "not a range"))?;
+        if r.count() > 1_000_000 {
+            return Err(bad("chart.selectData", "range too large for a chart"));
         }
-        for i in remove.iter().rev() {
-            if *i < c.series.len() && c.series.len() > 1 {
-                c.series.remove(*i);
-            }
+        let src_sheet = d.wb.sheet(src_si).ok_or(EngineError::NoDocument)?;
+        c.series = crate::cmd::insert::series_from_range(&d.wb, src_sheet, r, by_rows);
+        crate::cmd::insert::scatter_x_from_first(c.kind, &mut c.series);
+        c.source = Some(src);
+        c.by_rows = by_rows;
+    }
+    for i in remove.iter().rev() {
+        if *i < c.series.len() && c.series.len() > 1 {
+            c.series.remove(*i);
         }
-        if let Some(cats) = categories {
-            for se in &mut c.series {
-                se.categories = cats.clone();
-            }
+    }
+    if let Some(cats) = categories {
+        for se in &mut c.series {
+            se.categories = cats.clone();
         }
-        Ok(())
-    })
+    }
+    Ok((si, ci, c))
 }
 
 /// Size of a chart on a new chart sheet (Excel's default chart sheet, in pixels at 96 dpi); the
