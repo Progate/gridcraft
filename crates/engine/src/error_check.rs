@@ -58,9 +58,15 @@ pub fn breaks(wb: &Workbook, si: usize, sh: &Sheet, c: CellRef, rule: ErrorRule)
 
 /// The cell whose formula an inconsistent formula would copy, and its direction ("above",
 /// "left", "below", "right"): two neighbours that hold the same formula (relatively, as R1C1
-/// reads it) when the cell's own formula differs.
+/// reads it) when the cell's own formula differs. A cell that itself continues a pattern in
+/// another direction is consistent, as in Excel: the corner of a total row and a total column
+/// (`=SUM(E4:E9)` under row totals `=SUM(B9:D9)`) matches the column totals beside it.
 pub fn inconsistent_source(sh: &Sheet, c: CellRef) -> Option<(CellRef, &'static str)> {
     let mine = r1c1(sh, c)?;
+    let same = |o: Offset| offset(c, o).and_then(|n| r1c1(sh, n)).as_ref() == Some(&mine);
+    if PAIRS.iter().any(|(a, b, _)| same(*a) && same(*b)) {
+        return None;
+    }
     PAIRS.iter().find_map(|(a, b, dir)| {
         let a = offset(c, *a)?;
         let b = offset(c, *b)?;
@@ -335,6 +341,25 @@ mod tests {
         s.execute("formulas.errorFix", json!({"cell": "B3", "fix": "copyFromSource"})).unwrap();
         assert_eq!(text(&s, "B3"), "=A3*2");
         assert!(found(&mut s, &["formula"]).is_empty());
+    }
+
+    /// A budget's grand total sits under row totals and beside column totals: it follows the
+    /// column totals, so it isn't flagged although the row totals above it differ.
+    #[test]
+    fn a_grand_total_in_a_total_row_is_consistent() {
+        let mut cells: Vec<(String, String)> = Vec::new();
+        for row in 1..=3 {
+            for col in ["A", "B"] {
+                cells.push((format!("{col}{row}"), "1".into()));
+            }
+            cells.push((format!("C{row}"), format!("=SUM(A{row}:B{row})")));
+        }
+        for col in ["A", "B", "C"] {
+            cells.push((format!("{col}4"), format!("=SUM({col}1:{col}3)")));
+        }
+        let cells: Vec<(&str, &str)> = cells.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        let mut s = session(&cells);
+        assert!(found(&mut s, &["formula"]).is_empty(), "{:?}", found(&mut s, &["formula"]));
     }
 
     #[test]
