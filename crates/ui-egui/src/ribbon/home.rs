@@ -262,12 +262,12 @@ pub(super) fn home(app: &mut SheetApp, ui: &mut Ui) {
                     app,
                     ui,
                     &[
-                        ("Angle Counterclockwise", "home.orientation", json!({"angle": "counterclockwise"})),
-                        ("Angle Clockwise", "home.orientation", json!({"angle": "clockwise"})),
-                        ("Vertical Text", "home.orientation", json!({"angle": "vertical"})),
-                        ("Rotate Text Up", "home.orientation", json!({"angle": "up"})),
-                        ("Rotate Text Down", "home.orientation", json!({"angle": "down"})),
-                        ("Horizontal", "home.orientation", json!({"angle": 0})),
+                        // Excel's six items: choosing the checked angle again returns to horizontal.
+                        ("Angle Counterclockwise", "home.orientation", json!({"angle": "counterclockwise", "toggle": true})),
+                        ("Angle Clockwise", "home.orientation", json!({"angle": "clockwise", "toggle": true})),
+                        ("Vertical Text", "home.orientation", json!({"angle": "vertical", "toggle": true})),
+                        ("Rotate Text Up", "home.orientation", json!({"angle": "up", "toggle": true})),
+                        ("Rotate Text Down", "home.orientation", json!({"angle": "down", "toggle": true})),
                         ("-", "", json!(null)),
                         ("Format Cell Alignment…", "dialog:formatCells", json!({"tab": "Alignment"})),
                     ],
