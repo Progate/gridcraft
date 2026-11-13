@@ -6444,6 +6444,7 @@ fn a_script_cannot_switch_windows() {
 mod chart_location;
 mod controls;
 mod equation;
+mod format_cells;
 mod macros;
 mod objects;
 mod python_cells;

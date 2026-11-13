@@ -85,7 +85,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Format Cells…",
             ["Home", "Cells", "Format"],
             Some("Cmd+1"),
-            "{range?, style: {font?, fill?, borders?, align?: {reading_order?: Context|LeftToRight|RightToLeft|null, ...}, numFmt?, protection?}} (partial Style JSON merged in; null clears reading_order)",
+            "{range?, style?: {font?, fill?, borders?, align?: {reading_order?: Context|LeftToRight|RightToLeft|null, ...}, numFmt?, protection?}, edges?: {top?, bottom?, left?, right?, insideHorizontal?, insideVertical?, diagonalUp?, diagonalDown?: \"none\" | \"thin\" | {style, color?}}} (partial Style JSON merged in; null clears reading_order; edges set the Border tab's lines on the selection's outline and between its cells)",
             has_doc,
             format_cells
         ),
@@ -124,7 +124,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Orientation",
             ["Home", "Alignment"],
             None,
-            "{range?, angle: -90..90 | \"vertical\" | \"counterclockwise\" | \"clockwise\" | \"up\" | \"down\" | 0}",
+            "{range?, angle: -90..90 | \"vertical\" | \"counterclockwise\" | \"clockwise\" | \"up\" | \"down\" | 0, toggle?: bool (the active cell's angle again returns to 0)}",
             has_doc,
             orientation
         ),
@@ -275,7 +275,13 @@ pub(crate) fn apply_style(s: &mut Session, p: &Json, f: impl Fn(&mut Style)) -> 
     if s.doc()?.wb.sheet(sheet).is_some_and(|sh| sh.protection.as_ref().is_some_and(|pr| !pr.format_cells)) {
         return Err(EngineError::Other("The cell or chart you're trying to change is on a protected sheet.".into()));
     }
-    edit(s, |cx| {
+    edit(s, |cx| style_ranges(cx, sheet, &ranges, guarded, &f).map(|()| Json::Null))
+}
+
+/// [`apply_style`]'s edit: `f` applied to every cell of `ranges` on `sheet` (and to the line
+/// formats of whole rows and columns), inside an edit already open.
+fn style_ranges(cx: &mut super::Ctx, sheet: usize, ranges: &[RangeRef], guarded: bool, f: &impl Fn(&mut Style)) -> Result<()> {
+    {
         // Formatting on a protected sheet keeps the cell's permission flags: a format call
         // that flips `locked` from the format permission would authorize content edits that
         // the password should still gate, so those flags may not change (Excel keeps that
@@ -289,7 +295,7 @@ pub(crate) fn apply_style(s: &mut Session, p: &Json, f: impl Fn(&mut Style)) -> 
             };
         }
         let mut cache: std::collections::HashMap<StyleId, StyleId> = std::collections::HashMap::new();
-        for r in &ranges {
+        for r in ranges {
             let full_rows = r.is_full_rows();
             let full_cols = r.is_full_cols();
             if full_rows || full_cols {
@@ -301,7 +307,7 @@ pub(crate) fn apply_style(s: &mut Session, p: &Json, f: impl Fn(&mut Style)) -> 
                         let info = if full_rows && !full_cols { sh.and_then(|s| s.rows.get(&line)) } else { sh.and_then(|s| s.cols.get(&line)) };
                         info.and_then(|i| i.style).unwrap_or_default()
                     };
-                    let new = *cache.entry(cur).or_insert_with(|| cx.wb.styles.derive(cur, &f));
+                    let new = *cache.entry(cur).or_insert_with(|| cx.wb.styles.derive(cur, f));
                     guard_flags!(cur, new);
                     let sh = cx.sheet_mut(sheet)?;
                     let map = if full_rows && !full_cols { &mut sh.rows } else { &mut sh.cols };
@@ -311,7 +317,7 @@ pub(crate) fn apply_style(s: &mut Session, p: &Json, f: impl Fn(&mut Style)) -> 
                 let cells: Vec<(CellRef, StyleId)> =
                     cx.wb.sheet(sheet).map(|sh| sh.cells.iter_range(*r).map(|(c, x)| (c, x.style)).collect()).unwrap_or_default();
                 for (c, st) in &cells {
-                    let new = *cache.entry(*st).or_insert_with(|| cx.wb.styles.derive(*st, &f));
+                    let new = *cache.entry(*st).or_insert_with(|| cx.wb.styles.derive(*st, f));
                     guard_flags!(*st, new);
                     cx.sheet_mut(sheet)?.set_style(*c, new);
                 }
@@ -327,15 +333,15 @@ pub(crate) fn apply_style(s: &mut Session, p: &Json, f: impl Fn(&mut Style)) -> 
             }
             for c in r.iter() {
                 let st = cx.wb.sheet(sheet).map(|sh| sh.style_id(c)).unwrap_or_default();
-                let new = *cache.entry(st).or_insert_with(|| cx.wb.styles.derive(st, &f));
+                let new = *cache.entry(st).or_insert_with(|| cx.wb.styles.derive(st, f));
                 if new != st {
                     guard_flags!(st, new);
                     cx.sheet_mut(sheet)?.set_style(c, new);
                 }
             }
         }
-        Ok(Json::Null)
-    })
+        Ok(())
+    }
 }
 
 /// The style of the active cell (what toggles read).
@@ -434,6 +440,7 @@ fn border_style(name: &str) -> BorderStyle {
         "dashDot" => BorderStyle::DashDot,
         "mediumDashDot" => BorderStyle::MediumDashDot,
         "dashDotDot" => BorderStyle::DashDotDot,
+        "mediumDashDotDot" => BorderStyle::MediumDashDotDot,
         "slantDashDot" => BorderStyle::SlantDashDot,
         "none" => BorderStyle::None,
         _ => BorderStyle::Thin,
@@ -567,7 +574,8 @@ fn borders(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 fn format_cells(s: &mut Session, p: &Json) -> Result<Json> {
-    let Some(mut patch) = p.get("style").map(snake_case_keys) else {
+    let edges = p.get("edges").filter(|e| !e.is_null()).map(border_edges).transpose()?;
+    let Some(mut patch) = p.get("style").map(snake_case_keys).or_else(|| edges.is_some().then(|| json!({}))) else {
         // Menu invocation without params: the UI opens the dialog.
         s.ui_requests.push(crate::UiRequest::Dialog("formatCells".into(), json!({})));
         return ok();
@@ -580,13 +588,132 @@ fn format_cells(s: &mut Session, p: &Json) -> Result<Json> {
     let base = serde_json::to_value(active_style(s)?).map_err(|e| EngineError::Other(e.to_string()))?;
     let merged = merge_json(base, &patch);
     let _: Style = serde_json::from_value(merged).map_err(|e| bad("home.formatCells", e.to_string()))?;
-    apply_style(s, p, |st| {
-        if let Ok(cur) = serde_json::to_value(&*st)
-            && let Ok(new) = serde_json::from_value::<Style>(merge_json(cur, &patch))
-        {
-            *st = new;
+    let sheet = target_sheet(s, p)?;
+    let ranges = target_ranges(s, p)?;
+    let guarded = s.doc()?.wb.sheet(sheet).is_some_and(|sh| sh.protection.is_some());
+    if s.doc()?.wb.sheet(sheet).is_some_and(|sh| sh.protection.as_ref().is_some_and(|pr| !pr.format_cells)) {
+        return Err(EngineError::Other("The cell or chart you're trying to change is on a protected sheet.".into()));
+    }
+    let empty = patch.as_object().is_some_and(serde_json::Map::is_empty);
+    edit(s, |cx| {
+        if !empty {
+            style_ranges(cx, sheet, &ranges, guarded, &|st: &mut Style| {
+                if let Ok(cur) = serde_json::to_value(&*st)
+                    && let Ok(new) = serde_json::from_value::<Style>(merge_json(cur, &patch))
+                {
+                    *st = new;
+                }
+            })?;
         }
+        if let Some(edges) = &edges {
+            for r in &ranges {
+                set_edges(cx, sheet, r, edges)?;
+            }
+        }
+        Ok(Json::Null)
     })
+}
+
+/// The lines Format Cells' Border tab sets on a selection, by the position Excel's preview shows
+/// them: the outline, the lines between cells and the diagonals. `None` leaves a line as it is;
+/// `Some` of an empty line removes it.
+#[derive(Default)]
+struct Edges {
+    top: Option<BorderLine>,
+    bottom: Option<BorderLine>,
+    left: Option<BorderLine>,
+    right: Option<BorderLine>,
+    inside_h: Option<BorderLine>,
+    inside_v: Option<BorderLine>,
+    diag_up: Option<BorderLine>,
+    diag_down: Option<BorderLine>,
+}
+
+/// Reads `edges`: `{top?, bottom?, left?, right?, insideHorizontal?, insideVertical?, diagonalUp?,
+/// diagonalDown?}`, each `"none"`, a style name, or `{style, color?}`.
+fn border_edges(v: &Json) -> Result<Edges> {
+    let Some(m) = v.as_object() else { return Err(bad("home.formatCells", "`edges` must be an object")) };
+    let line = |key: &str| -> Result<Option<BorderLine>> {
+        let Some(v) = m.get(key) else { return Ok(None) };
+        let (style, color) = match v {
+            Json::Null => ("none", None),
+            Json::String(s) => (s.as_str(), None),
+            Json::Object(o) => (o.get("style").and_then(Json::as_str).unwrap_or("thin"), o.get("color")),
+            _ => return Err(bad("home.formatCells", format!("`edges.{key}` must be a style name or {{style, color}}"))),
+        };
+        let style = border_style(style);
+        let color = if style == BorderStyle::None { Color::Auto } else { color_param(color).unwrap_or(Color::Auto) };
+        Ok(Some(BorderLine { style, color }))
+    };
+    for k in m.keys() {
+        if !["top", "bottom", "left", "right", "insideHorizontal", "insideVertical", "diagonalUp", "diagonalDown"].contains(&k.as_str()) {
+            return Err(bad("home.formatCells", format!("unknown edge `{k}`")));
+        }
+    }
+    Ok(Edges {
+        top: line("top")?,
+        bottom: line("bottom")?,
+        left: line("left")?,
+        right: line("right")?,
+        inside_h: line("insideHorizontal")?,
+        inside_v: line("insideVertical")?,
+        diag_up: line("diagonalUp")?,
+        diag_down: line("diagonalDown")?,
+    })
+}
+
+/// Sets `edges` on the cells of `r`, as Excel's Border tab does: each cell gets the outline line
+/// on its sides along the selection's edge and the inside line on its other sides, so the line
+/// between two selected cells is on both of them. A removed outline line is also removed from the
+/// facing side of the cell outside the selection, where a file may have stored it.
+fn set_edges(cx: &mut super::Ctx, sheet: usize, r: &RangeRef, e: &Edges) -> Result<()> {
+    if r.count() > 2_000_000 {
+        return Err(bad("home.formatCells", "selection too large"));
+    }
+    for c in r.iter() {
+        let (top, bottom, left, right) = (c.row == r.start.row, c.row == r.end.row, c.col == r.start.col, c.col == r.end.col);
+        let pick = |outer: bool, out: Option<BorderLine>, inside: Option<BorderLine>| if outer { out } else { inside };
+        let sides =
+            [pick(top, e.top, e.inside_h), pick(bottom, e.bottom, e.inside_h), pick(left, e.left, e.inside_v), pick(right, e.right, e.inside_v)];
+        let st = cx.wb.sheet(sheet).map(|sh| sh.style_id(c)).unwrap_or_default();
+        let new = cx.wb.styles.derive(st, |s| {
+            let b = &mut s.borders;
+            for (slot, line) in [&mut b.top, &mut b.bottom, &mut b.left, &mut b.right].into_iter().zip(sides) {
+                if let Some(line) = line {
+                    *slot = line;
+                }
+            }
+            if let Some(line) = e.diag_up {
+                b.diag_up = line;
+            }
+            if let Some(line) = e.diag_down {
+                b.diag_down = line;
+            }
+        });
+        if new != st {
+            cx.sheet_mut(sheet)?.set_style(c, new);
+        }
+        for (outer, line, dr, dc) in [(top, e.top, -1, 0), (bottom, e.bottom, 1, 0), (left, e.left, 0, -1), (right, e.right, 0, 1)] {
+            if !outer || !line.is_some_and(|l| l.is_none()) {
+                continue;
+            }
+            let Some(neighbor) = c.offset(dr, dc) else { continue };
+            let st = cx.wb.sheet(sheet).map(|sh| sh.style_id(neighbor)).unwrap_or_default();
+            let new = cx.wb.styles.derive(st, |s| {
+                let edge = match (dr, dc) {
+                    (-1, _) => &mut s.borders.bottom,
+                    (1, _) => &mut s.borders.top,
+                    (_, -1) => &mut s.borders.right,
+                    _ => &mut s.borders.left,
+                };
+                *edge = BorderLine::default();
+            });
+            if new != st {
+                cx.sheet_mut(sheet)?.set_style(neighbor, new);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// The style patch with camelCase keys (`numFmt`, `diagDown`, as documented) renamed to the
@@ -615,10 +742,12 @@ fn snake_case_keys(v: &Json) -> Json {
     }
 }
 
-/// Deep-merges `patch` into `base` (objects merge, everything else replaces).
+/// Deep-merges `patch` into `base` (objects merge, everything else replaces). An enum value
+/// (`{"Rgb": …}`, `{"Theme": […]}`: a key starting with a capital) replaces too: merged into
+/// another variant it would hold two and no longer read as a style.
 pub(crate) fn merge_json(mut base: Json, patch: &Json) -> Json {
     match (&mut base, patch) {
-        (Json::Object(b), Json::Object(p)) => {
+        (Json::Object(b), Json::Object(p)) if !p.keys().any(|k| k.starts_with(|c: char| c.is_ascii_uppercase())) => {
             for (k, v) in p {
                 let cur = b.remove(k).unwrap_or(Json::Null);
                 b.insert(k.clone(), merge_json(cur, v));
@@ -662,6 +791,9 @@ fn orientation(s: &mut Session, p: &Json) -> Result<Json> {
         },
         _ => 0,
     };
+    // Home › Orientation's menu items are checked while the active cell has them: choosing the
+    // checked one again (`toggle`) returns the text to horizontal, as in Excel.
+    let angle = if bool_param(p, "toggle") == Some(true) && active_style(s)?.align.rotation == angle { 0 } else { angle };
     apply_style(s, p, |st| st.align.rotation = angle)
 }
 
