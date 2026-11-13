@@ -304,6 +304,28 @@ fn paint_checkbox(p: &egui::Painter, rect: Rect, z: f32, on: bool) {
     }
 }
 
+/// The layout of vertical text: each character on its own line, centred; each line of the text
+/// (from line breaks, with Wrap Text) a column of its own, the first on the right.
+fn stacked_text_job(text: &str, font: FontId, color: Color32) -> egui::text::LayoutJob {
+    let columns: Vec<Vec<char>> = text.split('\n').map(|l| l.chars().filter(|c| *c != '\r').collect()).collect();
+    let rows = columns.iter().map(Vec::len).max().unwrap_or(0);
+    let mut stacked = String::new();
+    for row in 0..rows {
+        if row > 0 {
+            stacked.push('\n');
+        }
+        for (i, col) in columns.iter().rev().enumerate() {
+            if i > 0 {
+                stacked.push('\u{3000}');
+            }
+            stacked.push(col.get(row).copied().unwrap_or('\u{3000}'));
+        }
+    }
+    let mut job = egui::text::LayoutJob::simple(stacked, font, color, f32::INFINITY);
+    job.halign = egui::Align::Center;
+    job
+}
+
 fn text_overflows_cell(numeric: bool, value: &Value, rotation: i16, width: f32, rect_width: f32, pad: f32) -> bool {
     !numeric && !matches!(value, Value::Number(_)) && rotation.abs() != 90 && width > rect_width - 2.0 * pad
 }
@@ -379,6 +401,25 @@ fn paint_cell(q: &QuadrantPaint<'_>, painted: &(CellRef, Rect, Look, Option<CfLo
     let indent = st.align.indent as f32 * 9.0 * z;
     let pad = 2.5 * z;
     let rotated = st.align.rotation != 0 && st.align.rotation != 255;
+    if st.align.rotation == 255 {
+        // Vertical text (縦書き, textRotation 255): one character per line, stacked from the top;
+        // a line break starts a new column to the left of the previous one, as Excel draws it.
+        let galley = p.layout_job(stacked_text_job(&text, font.clone(), color));
+        let x = match halign {
+            HAlign::Left => text_left + pad + indent,
+            HAlign::Right => rect.right() - pad - indent - galley.size().x,
+            _ => rect.center().x - galley.size().x / 2.0,
+        };
+        let y = match st.align.v {
+            VAlign::Top => rect.top() + pad,
+            VAlign::Center | VAlign::Justify | VAlign::Distributed => rect.center().y - galley.size().y / 2.0,
+            VAlign::Bottom => rect.bottom() - pad - galley.size().y,
+        };
+        // A centred layout sits around x = 0: move its own left edge to `x`.
+        let at = pos2(x - galley.rect.left(), y - galley.rect.top());
+        p.with_clip_rect(rect.intersect(p.clip_rect())).galley(at, galley, color);
+        return;
+    }
     // Rotated text wraps along its own direction (below), not across the column width.
     if !rotated && (st.align.wrap || st.align.h == HAlign::Justify) {
         let wrap_w = (rect.width() - 2.0 * pad - indent).max(4.0);
