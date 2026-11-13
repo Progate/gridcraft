@@ -640,18 +640,21 @@ impl Dialog {
             ),
             "comment" => {
                 let threaded = p("threaded").as_bool().unwrap_or(true);
-                let existing = app
-                    .session
-                    .active()
-                    .and_then(|d| d.wb.active().and_then(|s| s.comments.get(&d.selection.active).map(|c| c.text.clone())))
-                    .unwrap_or_default();
-                Dialog::form(
-                    if threaded { "comment" } else { "note" },
-                    if threaded { "New Comment" } else { "New Note" },
-                    if threaded { "review.newComment" } else { "review.newNote" },
-                    vec![Text { key: "text", label: if threaded { "Start a conversation:" } else { "Note:" } }],
-                    json!({"text": existing}),
-                )
+                let here = app.session.active().and_then(|d| d.wb.active().and_then(|s| s.comments.get(&d.selection.active).cloned()));
+                // New Comment on a cell that already has a thread opens Excel's reply box: the
+                // thread's first comment stays as its author wrote it.
+                if threaded && here.as_ref().is_some_and(|c| c.threaded) {
+                    Dialog::form("comment", "New Comment", "review.replyComment", vec![Text { key: "text", label: "Reply…" }], json!({"text": ""}))
+                } else {
+                    let existing = here.map(|c| c.text).unwrap_or_default();
+                    Dialog::form(
+                        if threaded { "comment" } else { "note" },
+                        if threaded { "New Comment" } else { "New Note" },
+                        if threaded { "review.newComment" } else { "review.newNote" },
+                        vec![Text { key: "text", label: if threaded { "Start a conversation:" } else { "Note:" } }],
+                        json!({"text": existing}),
+                    )
+                }
             }
             // Asks before a web or e-mail link leaves the workbook. OK opens it through
             // `Session::open_confirmed_link` (which refuses anything but http, https and mailto),

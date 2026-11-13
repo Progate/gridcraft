@@ -4462,7 +4462,7 @@ fn editing_a_note_or_a_comment_keeps_its_thread() {
     s.execute("review.newComment", json!({"cell": "B2", "text": "first", "author": "Ada"})).unwrap();
     s.execute("review.replyComment", json!({"cell": "B2", "text": "reply", "author": "Bob"})).unwrap();
     s.execute("review.resolveComment", json!({"cell": "B2", "resolved": true})).unwrap();
-    s.execute("review.newComment", json!({"cell": "B2", "text": "edited"})).unwrap();
+    s.execute("review.newComment", json!({"cell": "B2", "text": "edited", "edit": true})).unwrap();
     s.execute("review.newNote", json!({"cell": "A1", "text": "note", "author": "Ada"})).unwrap();
     s.execute("review.showNote", json!({"cell": "A1"})).unwrap();
     s.execute("review.newNote", json!({"cell": "A1", "text": "changed"})).unwrap();
@@ -6840,4 +6840,18 @@ fn split_toggles_at_the_active_cell_and_trades_places_with_freeze_panes() {
     assert_eq!(pane(&s), (Some((0, 3)), true));
     s.execute("view.unfreezePanes", json!({})).unwrap();
     assert_eq!(pane(&s), (None, false));
+}
+
+/// New Comment on a cell that already has a thread adds a reply, as Excel opens the thread's
+/// reply box: the first comment keeps its text and author.
+#[test]
+fn a_new_comment_on_a_thread_replies_to_it() {
+    let mut s = s();
+    s.execute("review.newComment", json!({"cell": "B5", "text": "first", "author": "Ada"})).unwrap();
+    let r = s.execute("review.newComment", json!({"cell": "B5", "text": "x", "author": "Bob"})).unwrap();
+    assert_eq!(r["reply"], json!(1));
+    let d = s.doc().unwrap();
+    let thread = &d.wb.active().unwrap().comments[&CellRef::parse("B5").unwrap()];
+    assert_eq!((thread.author.as_str(), thread.text.as_str()), ("Ada", "first"));
+    assert_eq!(thread.replies, vec![("Bob".to_string(), "x".to_string())]);
 }

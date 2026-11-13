@@ -207,9 +207,15 @@ pub fn specs() -> Vec<CommandSpec> {
             open_link
         ),
         cmd!("review.newNote", "New Note", ["Review", "Notes"], Some("Shift+F2"), "{cell?, text, author?}", has_doc, |s, p| comment(s, p, false)),
-        cmd!("review.newComment", "New Comment", ["Review", "Comments"], Some("Cmd+Shift+F2"), "{cell?, text, author?}", has_doc, |s, p| comment(
-            s, p, true
-        )),
+        cmd!(
+            "review.newComment",
+            "New Comment",
+            ["Review", "Comments"],
+            Some("Cmd+Shift+F2"),
+            "{cell?, text, author?} (on a cell that has a comment thread, adds a reply to it, as Excel does; `edit: true` instead rewrites the thread's first comment, Excel's Edit comment)",
+            has_doc,
+            |s, p| comment(s, p, true)
+        ),
         cmd!("review.replyComment", "Reply", [], None, "{cell?, text, author?}", has_doc, reply_comment),
         cmd!("review.resolveComment", "Resolve Thread", [], None, "{cell?, resolved?: true}", has_doc, resolve_comment),
         cmd!("review.deleteComment", "Delete Comment", ["Review", "Comments"], None, "{cell?}", has_doc, delete_comment),
@@ -1736,8 +1742,15 @@ fn comment(s: &mut Session, p: &Json, threaded: bool) -> Result<Json> {
     let text = str_param(p, "text").unwrap_or("").to_string();
     let named = str_param(p, "author").map(str::to_string);
     let author = named.clone().unwrap_or_else(|| s.prefs.user_name.clone());
+    let edit_first = bool_param(p, "edit").unwrap_or(false);
     edit(s, |cx| {
         let comments = &mut cx.sheet_mut(sheet)?.comments;
+        // New Comment on a cell that already has a thread adds a reply, as Excel opens the
+        // thread's reply box there: the first comment and its author stay.
+        if let Some(c) = comments.get_mut(&at).filter(|c| threaded && c.threaded && !edit_first) {
+            c.replies.push((author.clone(), text.clone()));
+            return Ok(json!({"cell": at.a1(), "reply": c.replies.len()}));
+        }
         // Writing a note on a cell that has one edits it, as Excel's Edit Note does: the box, the
         // replies, the dates and who wrote it stay. A note replaces a comment and vice versa.
         if let Some(c) = comments.get_mut(&at).filter(|c| c.threaded == threaded) {
