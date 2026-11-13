@@ -1,8 +1,9 @@
 //! Data ▸ Get Data ▸ From Text/CSV preview, laid out as Excel's: File Origin, Delimiter and Data
-//! Type Detection above a preview of what loads, then Load or Cancel. The preview comes from
-//! `data.textPreview` and follows every choice; each column's header chooses its data type as
-//! Power Query's header icon does (Auto, Text, Whole Number, … or Remove). Load runs
-//! `data.fromTextCsv`.
+//! Type Detection above a preview of what loads, then Load, Transform Data or Cancel. The preview
+//! comes from `data.textPreview` and follows every choice. Transform Data turns the window into a
+//! small Power Query Editor: each column's header icon chooses its data type (Auto, Text, Whole
+//! Number, … or Remove), asking Change Column Type first as Power Query does, and Close & Load
+//! loads. Load and Close & Load run `data.fromTextCsv`.
 
 use super::{Dialog, Json, SheetApp, json, vec2};
 
@@ -79,12 +80,30 @@ fn column_choices(d: &Dialog, n: usize) -> Vec<Json> {
     c
 }
 
-/// A preview column's header: Power Query's type icon (the type chosen, or detected for an
+/// Whether the dialog shows the Power Query Editor rather than the preview.
+fn in_editor(d: &Dialog) -> bool {
+    d.values.get("step").and_then(Json::as_str) == Some("editor")
+}
+
+/// Whether choosing a type for `col` asks Change Column Type first: Power Query asks when the
+/// column already has a type step, which detection gives every column and a choice gives one.
+fn asks_before_changing(d: &Dialog, col: usize) -> bool {
+    let detects = d.values.get("detect").and_then(Json::as_str).is_some_and(|x| x != "none");
+    detects || column_choices(d, col + 1)[col].as_str().is_some_and(|c| c != "auto")
+}
+
+/// Sets column `col`'s type choice.
+fn set_column_type(d: &mut Dialog, col: usize, val: &str) {
+    let mut columns = column_choices(d, col + 1);
+    columns[col] = json!(val);
+    d.set_value("columns", Json::Array(columns));
+}
+
+/// An editor column's header: Power Query's type icon (the type chosen, or detected for an
 /// automatic column) opening the data type menu, then the column name.
 fn column_header(ui: &mut egui::Ui, d: &mut Dialog, col: usize, name: &str, shown_type: &str) {
     let lang = crate::i18n::current(ui.ctx());
-    let mut columns = column_choices(d, col + 1);
-    let chosen = columns[col].as_str().unwrap_or("auto").to_string();
+    let chosen = column_choices(d, col + 1)[col].as_str().unwrap_or("auto").to_string();
     let (_, label, glyph) = COLUMN_TYPES.iter().find(|(v, ..)| *v == shown_type).copied().unwrap_or(COLUMN_TYPES[0]);
     let icon = if glyph.is_empty() { format!("{} ▾", lang.tr(label)) } else { format!("{glyph} {} ▾", lang.tr(label)) };
     ui.vertical(|ui| {
@@ -99,9 +118,14 @@ fn column_header(ui: &mut egui::Ui, d: &mut Dialog, col: usize, name: &str, show
         })
         .response
         .on_hover_text(lang.tr("Data Type"));
-        if let Some(val) = picked {
-            columns[col] = json!(val);
-            d.set_value("columns", Json::Array(columns));
+        if let Some(val) = picked
+            && val != chosen
+        {
+            if asks_before_changing(d, col) {
+                d.values.insert("pendingType".into(), json!([col, val]));
+            } else {
+                set_column_type(d, col, val);
+            }
         }
         let text: String = name.chars().take(60).collect();
         let text = egui::RichText::new(text).strong();
@@ -130,8 +154,56 @@ fn combo(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, options: &[(
     });
 }
 
+/// Change Column Type, over the editor: Replace current and Add new step both make the pending
+/// type the column's (the load has one type per column, so a new step ends the same); Cancel and
+/// Escape keep the old one.
+fn change_type_question(ui: &egui::Ui, d: &mut Dialog) {
+    let Some((col, val)) = d.values.get("pendingType").and_then(Json::as_array).and_then(|p| {
+        let col = usize::try_from(p.first()?.as_u64()?).ok()?;
+        Some((col, p.get(1)?.as_str()?.to_string()))
+    }) else {
+        return;
+    };
+    let lang = crate::i18n::current(ui.ctx());
+    let mut answer: Option<bool> = None;
+    let modal = egui::Modal::new(egui::Id::unique("gridcraft.change_column_type")).show(ui.ctx(), |ui| {
+        ui.set_max_width(420.0);
+        ui.heading(lang.tr("Change Column Type"));
+        ui.add_space(6.0);
+        ui.label(lang.tr("The selected column already has a type conversion. Do you want to replace the current conversion, or add a new step?"));
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            let t = crate::theme::Tokens::get(ui.ctx());
+            let replace = egui::Button::new(egui::RichText::new(lang.tr("Replace current")).color(t.on_accent)).fill(t.accent);
+            if ui.add(replace).clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                answer = Some(true);
+            }
+            if ui.button(lang.tr("Add new step")).clicked() {
+                answer = Some(true);
+            }
+            if ui.button(lang.tr("Cancel")).clicked() {
+                answer = Some(false);
+            }
+        });
+        // Escape answers the question, not the editor behind it.
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            answer = Some(false);
+        }
+    });
+    if modal.should_close() && answer.is_none() {
+        answer = Some(false);
+    }
+    if let Some(yes) = answer {
+        d.values.remove("pendingType");
+        if yes {
+            set_column_type(d, col, &val);
+        }
+    }
+}
+
 pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
     let lang = crate::i18n::current(ui.ctx());
+    let editor = in_editor(d);
     // The preview is asked for again only when a choice changed.
     let params = import_params(d);
     let key = preview_key(&params);
@@ -166,19 +238,21 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
             Err(e) => d.result = Some(json!({"error": crate::clean_error(&e)})),
         }
     }
-    ui.horizontal(|ui| {
-        combo(ui, d, "encoding", "File Origin", &ORIGINS, 230.0);
-        combo(ui, d, "delimiter", "Delimiter", &DELIMITERS, 130.0);
-        combo(ui, d, "detect", "Data Type Detection", &DETECTS, 200.0);
-    });
-    if d.values.get("delimiter").and_then(Json::as_str) == Some("custom") {
+    if !editor {
         ui.horizontal(|ui| {
-            let l = ui.label(lang.tr("Custom delimiter:"));
-            let mut t = d.values.get("customDelimiter").and_then(Json::as_str).unwrap_or_default().to_string();
-            if ui.add(egui::TextEdit::singleline(&mut t).desired_width(40.0).char_limit(1)).labelled_by(l.id).changed() {
-                d.values.insert("customDelimiter".into(), json!(t));
-            }
+            combo(ui, d, "encoding", "File Origin", &ORIGINS, 230.0);
+            combo(ui, d, "delimiter", "Delimiter", &DELIMITERS, 130.0);
+            combo(ui, d, "detect", "Data Type Detection", &DETECTS, 200.0);
         });
+        if d.values.get("delimiter").and_then(Json::as_str) == Some("custom") {
+            ui.horizontal(|ui| {
+                let l = ui.label(lang.tr("Custom delimiter:"));
+                let mut t = d.values.get("customDelimiter").and_then(Json::as_str).unwrap_or_default().to_string();
+                if ui.add(egui::TextEdit::singleline(&mut t).desired_width(40.0).char_limit(1)).labelled_by(l.id).changed() {
+                    d.values.insert("customDelimiter".into(), json!(t));
+                }
+            });
+        }
     }
     ui.add_space(6.0);
     let rows: Vec<Vec<String>> = d
@@ -210,7 +284,13 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
                 for (i, row) in rows.iter().enumerate() {
                     for (c, cell) in row.iter().enumerate() {
                         if i == 0 {
-                            column_header(ui, d, c, cell, types.get(c).map_or("text", String::as_str));
+                            if editor {
+                                column_header(ui, d, c, cell, types.get(c).map_or("text", String::as_str));
+                            } else {
+                                // The preview names the columns only: types are chosen in the editor, as in Excel.
+                                let text = egui::RichText::new(cell.chars().take(60).collect::<String>()).strong();
+                                ui.label(if skipped.get(c).copied().unwrap_or(false) { text.strikethrough().weak() } else { text });
+                            }
                             continue;
                         }
                         let text = egui::RichText::new(cell.chars().take(60).collect::<String>());
@@ -225,8 +305,19 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if editor {
+                let close = egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("Close & Load"))).color(t.on_accent)).fill(t.accent);
+                if ui.add(close).clicked() {
+                    *confirm = true;
+                }
+                return;
+            }
             if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
                 *open = false;
+            }
+            if ui.button(format!(" {} ", lang.tr("Transform Data"))).clicked() {
+                d.values.insert("step".into(), json!("editor"));
+                d.title = "Power Query Editor".into();
             }
             let load = ui.add(egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("Load"))).color(t.on_accent)).fill(t.accent));
             if load.clicked() {
@@ -234,4 +325,5 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
             }
         });
     });
+    change_type_question(ui, d);
 }

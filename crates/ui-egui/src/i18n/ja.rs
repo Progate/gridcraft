@@ -1998,6 +1998,16 @@ pub(super) const AUTOFILTER: &[(&str, &str)] = &[
     ("Based on entire dataset", "データセット全体に基づく"),
     ("Do not detect data types", "データ型を検出しない"),
     ("Load", "読み込み"),
+    ("Transform Data", "データの変換"),
+    ("Power Query Editor", "Power Query エディター"),
+    ("Close & Load", "閉じて読み込む"),
+    ("Change Column Type", "列タイプの変更"),
+    (
+        "The selected column already has a type conversion. Do you want to replace the current conversion, or add a new step?",
+        "選択した列には既に型の変換があります。現在の変換を置換しますか? それとも新しいステップを追加しますか?",
+    ),
+    ("Replace current", "現在のものを置換"),
+    ("Add new step", "新規手順の追加"),
     ("From Text/CSV", "テキストまたは CSV から"),
     // Its column headers' data type menu, in Power Query's wording
     ("Data Type", "データ型"),

@@ -99,7 +99,7 @@ fn from_text_csv_preview_loads_into_this_workbook() {
 }
 
 #[test]
-fn from_text_csv_preview_chooses_a_columns_type_from_its_header() {
+fn from_text_csv_transform_data_chooses_a_columns_type_in_the_power_query_editor() {
     let mut h = harness();
     let csv = "date,code,qty\n2025/04/01,0101,3\n2025/04/02,0102,4\n";
     control(
@@ -114,19 +114,30 @@ fn from_text_csv_preview_chooses_a_columns_type_from_its_header() {
         assert_eq!(r["types"], json!(["date", "integer", "skip"]), "{r}");
         assert_eq!(d.values["columns"], json!(["auto", "auto", "skip"]), "named types become the headers' choices");
     }
+    // The plain preview names its columns only; types are chosen in the Power Query Editor.
+    assert!(h.query_by_label("1²3 Whole Number ▾").is_none(), "the preview has no type buttons");
+    h.get_by_label(" Transform Data ").click();
+    h.run_steps(3);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.title.as_str()), Some("Power Query Editor"));
     // The code column's header icon (1²3 Whole Number, detected) opens the data type menu.
     h.get_by_label("1²3 Whole Number ▾").click();
     h.run_steps(2);
     h.get_by_label("Text").click();
     h.run_steps(3);
+    // The column has a detected type, so Power Query asks first; the type waits for the answer.
+    assert_eq!(h.state().dialog.as_ref().unwrap().values["columns"][1], "auto");
+    h.get_by_label("Change Column Type");
+    h.get_by_label("Replace current").click();
+    h.run_steps(3);
     {
-        let d = h.state().dialog.as_ref().expect("the preview is up");
+        let d = h.state().dialog.as_ref().expect("the editor is up");
         let r = d.result.as_ref().expect("a preview");
         assert_eq!(r["types"][1], "text", "{r}");
         assert_eq!(r["rows"][1][1], "0101", "the preview follows the choice");
     }
-    let r = control(&mut h, "ui.dialog.confirm", json!({}));
-    assert_eq!(r["ok"], json!(true), "{r}");
+    h.get_by_label("   Close & Load   ").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "{:?}", h.state().message);
     let d = h.state().session.active().unwrap();
     let sh = d.wb.active().unwrap();
     let cell = |a: &str| sh.value(gridcraft_engine::core::CellRef::parse(a).unwrap());
@@ -134,4 +145,25 @@ fn from_text_csv_preview_chooses_a_columns_type_from_its_header() {
     assert!(matches!(cell("A2"), gridcraft_engine::core::Value::Number(_)), "the date still converts");
     assert_eq!(cell("C1").display(), "", "the removed column isn't loaded");
     assert_eq!(sh.tables[0].range.a1(), "A1:B3");
+}
+
+#[test]
+fn change_column_type_escape_keeps_the_type() {
+    let mut h = harness();
+    let csv = "name,code\nPens,0101\nInk,0102\n";
+    control(&mut h, "ui.dialog", json!({"name": "textImport", "text": csv, "encoding": "auto", "delimiter": "auto", "detect": "first200"}));
+    h.run_steps(3);
+    h.get_by_label(" Transform Data ").click();
+    h.run_steps(3);
+    h.get_by_label("1²3 Whole Number ▾").click();
+    h.run_steps(2);
+    h.get_by_label("Text").click();
+    h.run_steps(3);
+    // Escape answers Change Column Type (as its Cancel does) and leaves the editor open.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(3);
+    let d = h.state().dialog.as_ref().expect("the editor stays");
+    assert_ne!(d.values.get("columns").and_then(|c| c.get(1)), Some(&json!("text")));
+    assert!(d.values.get("pendingType").is_none());
+    assert_eq!(d.result.as_ref().unwrap()["types"][1], "integer");
 }
