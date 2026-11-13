@@ -400,7 +400,8 @@ pub fn begin(app: &mut SheetApp, sheet: usize, sh: &Sheet, page: (usize, usize),
         Some((_, pg)) => page_kind(sh, pg, page),
         None => sh.print.hf_page(page == (0, 0), 1),
     };
-    let texts = print::split_header_footer(sh.print.hf(kind, zone.footer)).map(|s| print::codes_to_fields(&s));
+    let lang = app.ui.language;
+    let texts = print::split_header_footer(sh.print.hf(kind, zone.footer)).map(|s| localize_fields(&print::codes_to_fields(&s), lang));
     let caret = texts.get(zone.section).map_or(0, |t| t.chars().count());
     let prev_tab = if app.ui.ribbon_tab == TAB { "Home".to_string() } else { app.ui.ribbon_tab.clone() };
     app.grid.hf_edit = Some(HfEdit {
@@ -429,7 +430,8 @@ pub fn commit(app: &mut SheetApp) {
     if e.texts == e.original {
         return;
     }
-    let spec = print::join_header_footer(&e.texts.clone().map(|s| print::fields_to_codes(&s)));
+    let lang = app.ui.language;
+    let spec = print::join_header_footer(&e.texts.clone().map(|s| print::fields_to_codes(&delocalize_fields(&s, lang))));
     let key = hf_key(e.kind, e.footer);
     app.run_or_alert("pageLayout.headerFooter", json!({"sheet": e.sheet, key: spec}));
 }
@@ -443,8 +445,30 @@ pub fn cancel(app: &mut SheetApp) {
     }
 }
 
+/// Field names in the interface language, as Excel shows them while editing: `&[Page]` reads
+/// `&[ページ番号]` in Japanese. The file keeps the codes (`&P`).
+///
+/// @param text a section with English field names
+/// @return the section with the language's field names
+fn localize_fields(text: &str, lang: crate::i18n::Language) -> String {
+    print::HF_FIELDS.iter().fold(text.to_string(), |t, (_, field)| match lang.tr(field) {
+        name if name != *field => t.replace(field, name),
+        _ => t,
+    })
+}
+
+/// The inverse of [`localize_fields`]: the language's field names become English ones again,
+/// which `fields_to_codes` turns into codes; English names typed in another language still work.
+fn delocalize_fields(text: &str, lang: crate::i18n::Language) -> String {
+    print::HF_FIELDS.iter().fold(text.to_string(), |t, (_, field)| match lang.tr(field) {
+        name if name != *field => t.replace(name, field),
+        _ => t,
+    })
+}
+
 /// Inserts a field (`&[Page]`…) at the caret of the section being edited.
 pub fn insert_field(app: &mut SheetApp, field: &str) {
+    let field = &localize_fields(field, app.ui.language);
     let Some(e) = app.grid.hf_edit.as_mut() else { return };
     let Some(text) = e.texts.get_mut(e.section) else { return };
     let at = text.char_indices().nth(e.caret).map_or(text.len(), |(b, _)| b);
@@ -959,6 +983,19 @@ mod tests {
     use super::*;
 
     const A4: (f32, f32) = (595.0, 842.0);
+
+    /// The Japanese editor shows Excel's Japanese field names; the file keeps the codes.
+    #[test]
+    fn header_fields_read_in_japanese_and_save_as_codes() {
+        use crate::i18n::Language;
+        let raw = "&P / &N &D &T &Z&F &A &G";
+        let shown = localize_fields(&print::codes_to_fields(raw), Language::Ja);
+        assert_eq!(shown, "&[ページ番号] / &[総ページ数] &[日付] &[時刻] &[パス]&[ファイル名] &[シート名] &[図]");
+        assert_eq!(print::fields_to_codes(&delocalize_fields(&shown, Language::Ja)), raw);
+        // English names typed in Japanese still become codes; English shows English names.
+        assert_eq!(print::fields_to_codes(&delocalize_fields("&[Page]", Language::Ja)), "&P");
+        assert_eq!(localize_fields("&[Page]", Language::En), "&[Page]");
+    }
 
     #[test]
     fn drag_maps_to_margins_and_clamps_inside_the_page() {
