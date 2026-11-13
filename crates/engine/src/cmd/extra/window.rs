@@ -126,7 +126,9 @@ pub(super) fn custom_views(s: &mut Session, p: &Json) -> Result<Json> {
             };
             edit(s, |cx| {
                 let si = cx.sheet_index();
-                cx.sheet_mut(si)?.freeze = freeze;
+                let sh = cx.sheet_mut(si)?;
+                sh.freeze = freeze;
+                sh.split = false;
                 Ok(())
             })?;
         }
@@ -141,11 +143,6 @@ pub(super) fn custom_views(s: &mut Session, p: &Json) -> Result<Json> {
         })?;
     }
     Ok(stash_get(&s.doc()?.wb, VIEWS_NAME))
-}
-
-pub(super) fn split(s: &mut Session, _: &Json) -> Result<Json> {
-    let has = s.doc()?.wb.active().is_some_and(|sh| sh.freeze.is_some());
-    if has { s.execute("view.unfreezePanes", json!({})) } else { s.execute("view.freezePanes", json!({})) }
 }
 
 pub(super) fn new_window(s: &mut Session, _: &Json) -> Result<Json> {

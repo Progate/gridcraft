@@ -241,6 +241,7 @@ pub(super) const CORE: &[(&str, &str)] = &[
     ("Freeze Top Row", "先頭行の固定"),
     ("Freeze First Column", "先頭列の固定"),
     ("Unfreeze Panes", "ウィンドウ枠固定の解除"),
+    ("Split", "分割"),
     ("Dark Mode", "ダーク モード"),
     ("Display theme", "表示テーマ"),
     ("Animations", "アニメーション"),

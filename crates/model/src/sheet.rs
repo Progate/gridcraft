@@ -113,6 +113,10 @@ pub struct Sheet {
     pub merges: Vec<RangeRef>,
     /// Frozen rows and columns (top/left).
     pub freeze: Option<(u32, u32)>,
+    /// `freeze` is a split (View ▸ Split: panes divided at that cell, saved as Excel's split
+    /// `<pane>` in twips) rather than frozen panes; shown like frozen panes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub split: bool,
     pub tab_color: Option<Color>,
     pub visibility: Visibility,
     pub show_gridlines: bool,
@@ -224,6 +228,7 @@ impl Sheet {
             default_row_height: DEFAULT_ROW_HEIGHT,
             merges: vec![],
             freeze: None,
+            split: false,
             tab_color: None,
             visibility: Visibility::Visible,
             show_gridlines: true,

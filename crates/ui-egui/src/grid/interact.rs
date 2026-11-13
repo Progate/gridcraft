@@ -785,8 +785,10 @@ fn handle_release(app: &mut SheetApp, input: &InteractionInput<'_>) {
                 let (rows_now, cols_now) = (geo.fr, geo.fc);
                 let (rows, cols) = if cols { (rows_now, to) } else { (to, cols_now) };
                 if (rows, cols) != (rows_now, cols_now) {
-                    // A1 (nothing left frozen) unfreezes.
-                    app.run_or_alert("view.freezePanes", json!({"cell": CellRef::new(rows, cols).a1()}));
+                    // A1 (nothing left frozen) unfreezes; dragged split bars stay a split.
+                    let split = app.session.active().and_then(|d| d.wb.active().map(|s| s.split)).unwrap_or(false);
+                    let cmd = if split { "view.split" } else { "view.freezePanes" };
+                    app.run_or_alert(cmd, json!({"cell": CellRef::new(rows, cols).a1()}));
                 }
             }
             Drag::Move { to: Some(to), .. } => {

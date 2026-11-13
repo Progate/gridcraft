@@ -480,6 +480,17 @@ fn paint_panes(input: PanesInput<'_>, cf: &mut CfCache) -> Vec<PaneQuad> {
         });
         paint_selection(SelectionPaintInput { painter: &p, geo, sheet: sh, selection: sel, outline, tokens: t, app, rows: *rows, cols: *cols });
     }
+    // Split bars: Excel draws a split (View ▸ Split) as thick grey bars across the window, where
+    // frozen panes get a thin line; the panes themselves behave like frozen panes here.
+    if sh.split {
+        let bar = Color32::from_gray(200);
+        if geo.fr > 0 {
+            painter.rect_filled(Rect::from_min_max(pos2(geo.cells.left(), split.y - 2.0), pos2(geo.cells.right(), split.y + 2.0)), 0.0, bar);
+        }
+        if geo.fc > 0 {
+            painter.rect_filled(Rect::from_min_max(pos2(split.x - 2.0, geo.cells.top()), pos2(split.x + 2.0, geo.cells.bottom())), 0.0, bar);
+        }
+    }
     // Freeze lines.
     if geo.fr > 0 {
         painter.line_segment([pos2(geo.cells.left(), split.y), pos2(geo.cells.right(), split.y)], Stroke::new(1.0, Color32::from_gray(150)));

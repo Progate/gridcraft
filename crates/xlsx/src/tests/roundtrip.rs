@@ -2028,3 +2028,73 @@ fn remove_personal_information_is_kept_and_honoured() {
     assert_eq!(book.child("workbookPr").and_then(|p| p.attr("filterPrivacy")), None);
     assert!(String::from_utf8(pkg.read("docProps/core.xml").unwrap().unwrap()).unwrap().contains("Jane Example"));
 }
+
+/// View ▸ Split is saved as Excel saves it: bars in twips from the window's corner (headings
+/// included), no `state`, a selection per pane; it reads back as a split at the same cell.
+#[test]
+fn split_panes_round_trip_as_excel_split_panes() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.freeze = Some((1, 1));
+    s.split = true;
+    s.view_active = at("B2");
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    let x = 465 + 64 * 15;
+    let y = 390 + 20 * 15;
+    let pane = format!(r#"<pane xSplit="{x}" ySplit="{y}" topLeftCell="B2" activePane="bottomRight"/>"#);
+    assert!(xml.contains(&pane), "{xml}");
+    assert!(!xml.contains("frozen"), "{xml}");
+    assert!(
+        xml.contains(r#"<selection pane="topRight"/><selection pane="bottomLeft"/><selection pane="bottomRight" activeCell="B2" sqref="B2"/>"#),
+        "{xml}"
+    );
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let sh = back.sheet(0).unwrap();
+    assert_eq!((sh.freeze, sh.split), (Some((1, 1)), true));
+
+    // Frozen panes stay frozen panes.
+    wb.sheet_mut(0).unwrap().split = false;
+    let (back, _) = read_xlsx(&write_xlsx(&wb).unwrap()).unwrap();
+    assert_eq!((back.sheet(0).unwrap().freeze, back.sheet(0).unwrap().split), (Some((1, 1)), false));
+}
+
+/// Excel may leave a split bar inside a column; it reads back at the nearest boundary, measured
+/// with the sheet's own column widths (which follow the sheet view in the file).
+#[test]
+fn a_split_bar_inside_a_column_reads_at_the_nearest_boundary() {
+    let mut wb = Workbook::new();
+    let s = wb.sheet_mut(0).unwrap();
+    s.cols.insert(0, LineInfo { size: Some(200.0), ..Default::default() });
+    s.freeze = Some((0, 2));
+    s.split = true;
+    let bytes = write_xlsx(&wb).unwrap();
+    let (xml, _) = sheet1_xml(&bytes);
+    let x = 465 + (200 + 64) * 15;
+    assert!(xml.contains(&format!(r#"<pane xSplit="{x}" topLeftCell="C1" activePane="topRight"/>"#)), "{xml}");
+    // A bar a third of the way into column C still splits before C, two thirds in before D.
+    for (twips, cols) in [(x + 300, 2), (x + 700, 3)] {
+        let moved = bytes_with_sheet1(&bytes, |xml| xml.replace(&format!(r#"xSplit="{x}""#), &format!(r#"xSplit="{twips}""#)));
+        let (back, _) = read_xlsx(&moved).unwrap();
+        let sh = back.sheet(0).unwrap();
+        assert_eq!((sh.freeze, sh.split), (Some((0, cols)), true), "xSplit {twips}");
+    }
+}
+
+/// `bytes` with xl/worksheets/sheet1.xml rewritten by `edit`.
+fn bytes_with_sheet1(bytes: &[u8], edit: impl Fn(&str) -> String) -> Vec<u8> {
+    use std::io::Write;
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).unwrap();
+        let mut b = Vec::new();
+        f.read_to_end(&mut b).unwrap();
+        if f.name() == "xl/worksheets/sheet1.xml" {
+            b = edit(std::str::from_utf8(&b).unwrap()).into_bytes();
+        }
+        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).unwrap();
+        out.write_all(&b).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}

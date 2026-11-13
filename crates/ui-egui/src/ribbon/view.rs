@@ -98,6 +98,15 @@ pub(super) fn view(app: &mut SheetApp, ui: &mut Ui) {
             ],
         );
     });
+    // Split sits beside Freeze Panes as in Excel's Window group, lit while the sheet is split.
+    let split_on = app.session.active().and_then(|d| d.wb.active().map(|s| s.split && s.freeze.is_some())).unwrap_or(false);
+    ui.vertical(|ui| {
+        let __k = super::small_toggle_button(ui, Icon::Freeze, "Split", "Split", split_on);
+        control_keytip(app, ui, &__k, "view.split");
+        if __k.clicked() || invoke(app, "view.split") {
+            act(app, "view.split", json!({}));
+        }
+    });
     switch_windows(app, ui);
     ui.vertical(|ui| {
         let label_response = ui.label(lang.tr("Display theme"));

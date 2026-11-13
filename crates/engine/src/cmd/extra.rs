@@ -29,7 +29,7 @@ use data::{from_csv, from_table_range, queries, table_resize};
 use objects::{align, arrange, rotate, selection_pane, shape_fill, shape_outline};
 pub(crate) use scripts::has_scripts;
 use scripts::{all_scripts, delete_script, new_script, record, run_script, stop_action, trust_scripts};
-use window::{arrange_all, custom_views, hide_window, new_window, ruler, set_view, split, switch_windows, unhide_window, watch_window};
+use window::{arrange_all, custom_views, hide_window, new_window, ruler, set_view, switch_windows, unhide_window, watch_window};
 pub(crate) use window::{keep_view_modes, keep_watch_list, migrate_watch_name, window_param};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -198,7 +198,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| set_view(s, p, SheetViewMode::PageBreakPreview)
         ),
         cmd!(noundo "view.customViews", "Custom Views…", ["View", "Workbook Views"], None, "{save?: name, show?: name, delete?: name} → list", has_doc, custom_views),
-        cmd!(noundo "view.split", "Split", ["View", "Window"], None, "{} (toggles a split at the active cell; shown as frozen panes in this version)", has_doc, split),
+        cmd!(noundo "view.split", "Split", ["View", "Window"], None, "{cell?} → {split: [rows, cols] | null}: toggles a split above and left of the active cell; frozen panes become a split, Freeze Panes ends it; `cell` moves the split bars there (A1 removes them); saved as Excel's split pane", has_doc, super::view::split),
         cmd!(noundo "view.newWindow", "New Window", ["View", "Window"], None, "{} → {window, doc, title}: opens another window on the active workbook (the same workbook: saving from either window saves it)", has_doc, new_window),
         cmd!(
             noundo "view.arrangeAll",

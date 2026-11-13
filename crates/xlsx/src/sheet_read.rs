@@ -209,6 +209,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
     drop(bytes);
 
     let mut fit_to_page = false;
+    let mut pending_split = None;
     let mut link_budget = LinkBudget::default();
     let mut cf_kept_cells = 0u64;
     let mut column_assignments_left = MAX_COLUMN_ASSIGNMENTS;
@@ -225,7 +226,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
                 }
                 fit_to_page = e.child("pageSetUpPr").is_some_and(|p| p.flag("fitToPage", false));
             }
-            "sheetViews" => read_views(e, &mut sheet),
+            "sheetViews" => pending_split = read_views(e, &mut sheet),
             "sheetFormatPr" => read_sheet_format(e, &mut sheet),
             "cols" => read_cols(cx, e, &mut sheet, &mut column_assignments_left)?,
             "mergeCells" => {
@@ -348,6 +349,9 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
             "scenarios" => read_scenarios(e, &mut sheet),
             _ => {}
         }
+    }
+    if let Some(p) = pending_split {
+        apply_split(p, &mut sheet);
     }
     own_table_shorthand(&mut sheet);
     read_sheet_slicers(cx, &rels, &mut sheet)?;
@@ -529,8 +533,42 @@ fn read_scenarios(e: &El, sheet: &mut Sheet) {
     });
 }
 
-fn read_views(e: &El, sheet: &mut Sheet) {
-    let Some(v) = e.child("sheetView") else { return };
+/// A split `<pane>` waiting for the column widths (`<cols>` follows `<sheetViews>`).
+struct PendingSplit {
+    x: f64,
+    y: f64,
+    top_left: Option<CellRef>,
+}
+
+/// Turns a split pane's bars, in twips from the corner of the window that shows the sheetView's
+/// topLeftCell, into the model's split at the nearest cell boundaries.
+fn apply_split(p: PendingSplit, sheet: &mut Sheet) {
+    use crate::sheet_write::{SPLIT_COL_HEADER_TWIPS, SPLIT_ROW_HEADER_TWIPS, split_cell};
+    let origin = sheet.view_top_left;
+    let cols = if p.x > 0.0 {
+        origin.col + split_cell(p.x, SPLIT_ROW_HEADER_TWIPS, MAX_COLS - 1 - origin.col, |c| sheet.col_width(origin.col + c))
+    } else {
+        0
+    };
+    let rows = if p.y > 0.0 {
+        origin.row + split_cell(p.y, SPLIT_COL_HEADER_TWIPS, MAX_ROWS - 1 - origin.row, |r| sheet.row_height(origin.row + r))
+    } else {
+        0
+    };
+    if rows == 0 && cols == 0 {
+        return;
+    }
+    sheet.freeze = Some((rows, cols));
+    sheet.split = true;
+    // Shown like frozen panes, the scroll position is the bottom-right pane's first cell.
+    if let Some(c) = p.top_left {
+        sheet.view_top_left = c;
+    }
+}
+
+fn read_views(e: &El, sheet: &mut Sheet) -> Option<PendingSplit> {
+    let v = e.child("sheetView")?;
+    let mut split = None;
     sheet.tab_selected = v.flag("tabSelected", false);
     sheet.show_gridlines = v.flag("showGridLines", true);
     sheet.show_headings = v.flag("showRowColHeaders", true);
@@ -558,12 +596,20 @@ fn read_views(e: &El, sheet: &mut Sheet) {
                 }
             }
         }
+        if matches!(p.attr("state"), None | Some("split")) {
+            split = Some(PendingSplit {
+                x: p.attr_f64("xSplit").unwrap_or(0.0),
+                y: p.attr_f64("ySplit").unwrap_or(0.0),
+                top_left: p.attr("topLeftCell").and_then(CellRef::parse),
+            });
+        }
         active_pane = p.attr("activePane");
     }
     let sel = v.kids("selection").find(|s| s.attr("pane") == active_pane).or_else(|| v.kids("selection").last());
     if let Some(c) = sel.and_then(|s| s.attr("activeCell")).and_then(CellRef::parse) {
         sheet.view_active = c;
     }
+    split
 }
 
 fn read_cols(cx: &Ctx<'_>, e: &El, sheet: &mut Sheet, remaining: &mut u64) -> Result<(), IoError> {

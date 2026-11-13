@@ -848,6 +848,7 @@ fn write_sheet_views(s: &mut String, sheet: &Sheet, selected: bool) {
     s.push_str(" workbookViewId=\"0\">");
     let active = sheet.view_active.a1();
     match sheet.freeze {
+        Some((rows, cols)) if sheet.split && (rows > 0 || cols > 0) => write_split_pane(s, sheet, rows, cols, &active),
         Some((rows, cols)) if rows > 0 || cols > 0 => {
             let pane = match (rows > 0, cols > 0) {
                 (true, true) => "bottomRight",
@@ -877,6 +878,70 @@ fn write_sheet_views(s: &mut String, sheet: &Sheet, selected: bool) {
         }
     }
     s.push_str("</sheetView></sheetViews>");
+}
+
+/// Width of the row headings and height of the column headings in twips (1/20 pt), which
+/// Excel counts into a split pane's `xSplit`/`ySplit`: they measure from the window's corner.
+pub(crate) const SPLIT_ROW_HEADER_TWIPS: f64 = 465.0;
+pub(crate) const SPLIT_COL_HEADER_TWIPS: f64 = 390.0;
+
+/// Twips per pixel at 96 dpi (a pixel is 3/4 pt).
+const TWIPS_PER_PX: f64 = 15.0;
+
+/// Where a split bar before column (or row) `n` sits, in twips from the window's corner, as
+/// Excel's split `<pane>` stores it.
+///
+/// @param n the first column (row) right of (below) the bar
+/// @param size the width (height) of a column (row) in pixels
+/// @return xSplit (ySplit)
+pub(crate) fn split_twips(n: u32, header: f64, size: impl Fn(u32) -> f32) -> f64 {
+    header + (0..n).map(|i| size(i) as f64 * TWIPS_PER_PX).sum::<f64>()
+}
+
+/// The column (row) boundary nearest to a split position Excel stored in twips: Excel lets a
+/// split bar sit inside a column, the model splits between columns.
+///
+/// @param twips xSplit (ySplit)
+/// @param size the width (height) of a column (row) in pixels
+/// @return the first column (row) after the bar; 0 when the bar is before the first one
+pub(crate) fn split_cell(twips: f64, header: f64, max: u32, size: impl Fn(u32) -> f32) -> u32 {
+    let target = twips - header;
+    let mut edge = 0.0;
+    for i in 0..max {
+        let next = edge + size(i) as f64 * TWIPS_PER_PX;
+        if target < (edge + next) / 2.0 {
+            return i;
+        }
+        edge = next;
+    }
+    max
+}
+
+/// Excel's split `<pane>`: positions in twips, no `state` (it defaults to "split"), and a
+/// selection for every pane.
+fn write_split_pane(s: &mut String, sheet: &Sheet, rows: u32, cols: u32, active: &str) {
+    let pane = match (rows > 0, cols > 0) {
+        (true, true) => "bottomRight",
+        (true, false) => "bottomLeft",
+        _ => "topRight",
+    };
+    s.push_str("<pane");
+    if cols > 0 {
+        let _ = write!(s, " xSplit=\"{}\"", num(split_twips(cols, SPLIT_ROW_HEADER_TWIPS, |c| sheet.col_width(c)).round()));
+    }
+    if rows > 0 {
+        let _ = write!(s, " ySplit=\"{}\"", num(split_twips(rows, SPLIT_COL_HEADER_TWIPS, |r| sheet.row_height(r)).round()));
+    }
+    let top_left = CellRef::new(rows.max(sheet.view_top_left.row).min(MAX_ROWS - 1), cols.max(sheet.view_top_left.col).min(MAX_COLS - 1));
+    let _ = write!(s, " topLeftCell=\"{}\" activePane=\"{pane}\"/>", top_left.a1());
+    let others: &[&str] = match pane {
+        "bottomRight" => &["topRight", "bottomLeft"],
+        _ => &[],
+    };
+    for p in others {
+        let _ = write!(s, "<selection pane=\"{p}\"/>");
+    }
+    let _ = write!(s, "<selection pane=\"{pane}\" activeCell=\"{active}\" sqref=\"{active}\"/>");
 }
 
 fn write_cell(s: &mut String, input: CellWriteInput<'_>, sid: &dyn Fn(gridcraft_model::StyleId) -> u32, out: &mut Out) {

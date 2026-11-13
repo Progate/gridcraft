@@ -169,7 +169,8 @@ fn freeze_panes(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
     let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
     if sh.freeze.is_some() && p.get("cell").is_none() {
-        return set_freeze(s, si, None);
+        // Over a split, Excel's Freeze Panes freezes at the split bars instead of unfreezing.
+        return set_freeze(s, si, if sh.split { sh.freeze } else { None });
     }
     let at = match cell_param_on(s, p, "cell", si)? {
         Some(c) => c,
@@ -187,10 +188,49 @@ fn freeze_panes(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn set_freeze(s: &mut Session, si: usize, f: Option<(u32, u32)>) -> Result<Json> {
     edit(s, |cx| {
-        cx.sheet_mut(si)?.freeze = f;
+        let sh = cx.sheet_mut(si)?;
+        // Freeze Panes and Split are exclusive in Excel: freezing (or unfreezing) ends a split.
+        sh.freeze = f;
+        sh.split = false;
         Ok(json!({"freeze": f}))
     })
 }
+
+/// View ▸ Split: removes a split; otherwise turns frozen panes into a split at the same place, or
+/// splits above and left of the active cell (at A1, as Excel does, near the middle of the window).
+/// With `cell` (a split bar dragged to a new place) it splits above and left of that cell.
+///
+/// @return `{split: [rows, cols] | null}`
+pub(super) fn split(s: &mut Session, p: &Json) -> Result<Json> {
+    let si = s.doc()?.wb.active_sheet();
+    let cell = cell_param_on(s, p, "cell", si)?;
+    let d = s.doc()?;
+    let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
+    let at = match (sh.freeze, sh.split) {
+        // Dragging both bars to the corner removes the split, as dragging a freeze line there unfreezes.
+        _ if cell.is_some() => cell.filter(|c| c.row > 0 || c.col > 0).map(|c| (c.row, c.col)),
+        (Some(_), true) => None,
+        (Some(f), false) => Some(f),
+        (None, _) => {
+            let c = d.selection.active;
+            Some(if c.row == 0 && c.col == 0 {
+                (SPLIT_MIDDLE.0 + sh.view_top_left.row, SPLIT_MIDDLE.1 + sh.view_top_left.col)
+            } else {
+                (c.row, c.col)
+            })
+        }
+    };
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(si)?;
+        sh.freeze = at;
+        sh.split = at.is_some();
+        Ok(json!({"split": at}))
+    })
+}
+
+/// Where Split puts the bars when the active cell is A1: Excel splits the window in the middle,
+/// which on a default sheet in a typical window is about 13 rows down and 5 columns across.
+const SPLIT_MIDDLE: (u32, u32) = (13, 5);
 
 fn sheet_flag(s: &mut Session, p: &Json, which: &str) -> Result<Json> {
     edit(s, |cx| {

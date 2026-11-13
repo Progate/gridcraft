@@ -46,6 +46,7 @@ fn inspect(s: &mut Session, _: &Json) -> Result<Json> {
                 "usedRange": sh.used_range().map(|r| r.a1()),
                 "cells": sh.cells.len(),
                 "freeze": sh.freeze,
+                "split": sh.split,
                 "merges": sh.merges.iter().map(|m| m.a1()).collect::<Vec<_>>(),
                 "tables": sh.tables.iter().map(|t| json!({"name": t.name, "range": t.range.a1(), "style": t.style, "totals": t.totals_row, "columns": t.columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>()})).collect::<Vec<_>>(),
                 "charts": sh.charts.iter().map(|c| json!({"id": c.id, "kind": format!("{:?}", c.kind), "title": c.title, "autoTitle": c.auto_title, "shownTitle": crate::cmd::insert::shown_chart_title(wb, si, c, s.prefs.chart_title()), "at": c.anchor.cell.a1(), "series": c.series.len(), "dataTable": c.data_table.as_ref().map(|t| json!({"showKeys": t.show_keys, "horizontalBorder": t.horizontal_border, "verticalBorder": t.vertical_border, "outline": t.outline})), "trendlines": c.series.iter().flat_map(|s| s.trendlines.iter().map(|t| format!("{:?}", t.kind))).collect::<Vec<_>>()})).collect::<Vec<_>>(),

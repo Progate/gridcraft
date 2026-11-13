@@ -6808,3 +6808,36 @@ fn comparison_operators_follow_the_japanese_order() {
     assert_eq!(v(&s, "A2"), Value::Bool(true));
     assert_eq!(v(&s, "A3"), Value::Bool(true));
 }
+
+/// View ▸ Split splits above and left of the active cell and toggles off; it and Freeze Panes
+/// replace each other at the same place, as in Excel.
+#[test]
+fn split_toggles_at_the_active_cell_and_trades_places_with_freeze_panes() {
+    let mut s = s();
+    let pane = |s: &Session| {
+        let sh = s.doc().unwrap().wb.active().unwrap().clone();
+        (sh.freeze, sh.split)
+    };
+    s.execute("selection.set", json!({"range": "C4"})).unwrap();
+    assert_eq!(s.execute("view.split", json!({})).unwrap()["split"], json!([3, 2]));
+    assert_eq!(pane(&s), (Some((3, 2)), true));
+    s.execute("view.freezePanes", json!({})).unwrap();
+    assert_eq!(pane(&s), (Some((3, 2)), false), "Freeze Panes freezes at the split");
+    s.execute("view.split", json!({})).unwrap();
+    assert_eq!(pane(&s), (Some((3, 2)), true), "Split turns frozen panes into a split");
+    s.execute("view.split", json!({"cell": "B5"})).unwrap();
+    assert_eq!(pane(&s), (Some((4, 1)), true), "dragged bars move the split");
+    s.execute("view.split", json!({})).unwrap();
+    assert_eq!(pane(&s), (None, false));
+
+    // At A1 Excel splits the window in the middle; in row 1 only a vertical bar.
+    s.execute("selection.set", json!({"range": "A1"})).unwrap();
+    s.execute("view.split", json!({})).unwrap();
+    assert!(matches!(pane(&s), (Some((r, c)), true) if r > 0 && c > 0));
+    s.execute("view.split", json!({})).unwrap();
+    s.execute("selection.set", json!({"range": "D1"})).unwrap();
+    s.execute("view.split", json!({})).unwrap();
+    assert_eq!(pane(&s), (Some((0, 3)), true));
+    s.execute("view.unfreezePanes", json!({})).unwrap();
+    assert_eq!(pane(&s), (None, false));
+}
