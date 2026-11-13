@@ -1215,6 +1215,10 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
         "この値は、このセルに定義されているデータ入力規則の制限を満たしていません。",
     ),
     ("You can't change part of an array.", "配列の一部を変更することはできません。"),
+    (
+        "Links can't be created to source data on the same sheet as the consolidated data.",
+        "統合先と同じシートにある統合元データとはリンクできません。",
+    ),
     ("To do this, all the merged cells need to be the same size.", "この操作を行うには、結合セルのサイズをすべて同じにする必要があります。"),
     (
         "This operation isn't allowed: it would shift cells in a table on your worksheet.",

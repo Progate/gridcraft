@@ -392,6 +392,57 @@ fn consolidate_by_position_and_label() {
     assert!(s.execute("data.consolidate", json!({"sources": ["A1"], "function": "median"})).is_err());
 }
 
+/// Create links to source data: each label gets a detail row per source that has it, linking to
+/// the source cell, and a summary row over them; the detail rows are a collapsed outline group.
+#[test]
+fn consolidate_with_links_writes_a_collapsed_outline_of_linked_detail_rows() {
+    let mut s = s();
+    s.execute("home.insertSheet", json!({})).unwrap();
+    s.execute("sheet.rename", json!({"name": "East"})).unwrap();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["", "Q1", "Q2"], ["Apples", 10, 20], ["Pears", 5, 6]]})).unwrap();
+    s.execute("home.insertSheet", json!({})).unwrap();
+    s.execute("sheet.rename", json!({"name": "West 2"})).unwrap();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["", "Q2"], ["Pears", 1]]})).unwrap();
+    s.execute("sheet.activate", json!({"sheet": "Sheet1"})).unwrap();
+    let r = s
+        .execute(
+            "data.consolidate",
+            json!({"sources": ["East!A1:C3", "'West 2'!A1:B2"], "destination": "A1", "topRow": true, "leftColumn": true, "links": true}),
+        )
+        .unwrap();
+    // Header, Apples (1 detail + summary), Pears (2 details + summary).
+    assert_eq!(r["range"], "A1:D6");
+    assert_eq!(v(&s, "Sheet1!C1"), Value::from("Q1"));
+    let f = |a: &str| {
+        let d = s.doc().unwrap();
+        d.wb.sheet(0).unwrap().cell(CellRef::parse(a).unwrap()).and_then(|c| c.formula.as_ref().map(|f| f.text.clone()))
+    };
+    assert_eq!(f("C2").as_deref(), Some("East!$B$2"));
+    assert_eq!(v(&s, "Sheet1!A3"), Value::from("Apples"));
+    assert_eq!(f("C3").as_deref(), Some("SUM(C2:C2)"));
+    assert_eq!(n(&s, "Sheet1!D3"), 20.0);
+    assert_eq!(f("D5").as_deref(), Some("'West 2'!$B$2"));
+    assert_eq!(f("C5"), None, "West 2 has no Q1 column");
+    assert_eq!(v(&s, "Sheet1!B4"), v(&s, "Sheet1!B5"), "each detail row names the workbook");
+    assert_ne!(v(&s, "Sheet1!B4"), Value::Empty);
+    assert_eq!(v(&s, "Sheet1!A6"), Value::from("Pears"));
+    assert_eq!(n(&s, "Sheet1!D6"), 7.0);
+    let d = s.doc().unwrap();
+    let sh = d.wb.sheet(0).unwrap();
+    for row in [1, 3, 4] {
+        assert!(sh.rows.get(&row).is_some_and(|e| e.outline == 1 && e.hidden), "detail row {}", row + 1);
+    }
+    for row in [2, 5] {
+        assert!(sh.rows.get(&row).is_some_and(|e| e.outline == 0 && !e.hidden && e.collapsed), "summary row {}", row + 1);
+    }
+    // The links follow the sources.
+    s.execute("cell.set", json!({"cell": "East!C3", "input": "100"})).unwrap();
+    assert_eq!(n(&s, "Sheet1!D6"), 101.0);
+    // A source on the destination sheet can't be linked.
+    let e = s.execute("data.consolidate", json!({"sources": ["Sheet1!A1:B2"], "destination": "H1", "links": true})).unwrap_err();
+    assert!(e.to_string().contains("same sheet"), "{e}");
+}
+
 #[test]
 fn advanced_filter_refuses_a_list_times_criteria_product_over_the_work_limit() {
     let mut s = s();

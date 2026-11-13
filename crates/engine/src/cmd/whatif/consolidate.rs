@@ -87,6 +87,7 @@ pub(super) fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let top = bool_param(p, "topRow").unwrap_or(false);
     let left = bool_param(p, "leftColumn").unwrap_or(false);
+    let links = bool_param(p, "links").unwrap_or(false);
     let d = s.doc()?;
     let srcs: Vec<String> = p
         .get("sources")
@@ -115,6 +116,8 @@ pub(super) fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
     let mut row_label: HashMap<Key, String> = HashMap::new();
     let mut col_label: HashMap<Key, String> = HashMap::new();
     let mut aggs: HashMap<(usize, usize), Agg> = HashMap::new();
+    // With links: what each source puts in each row key, as (column key, sheet, cell).
+    let mut linked: HashMap<(usize, usize), Vec<(usize, usize, CellRef)>> = HashMap::new();
     let mut total: u64 = 0;
     let index_of = |keys: &mut Vec<Key>, index: &mut HashMap<Key, usize>, k: Key| -> usize {
         *index.entry(k).or_insert_with_key(|k| {
@@ -122,8 +125,12 @@ pub(super) fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
             keys.len() - 1
         })
     };
-    for t in &srcs {
+    for (src, t) in srcs.iter().enumerate() {
         let (si, r) = parse_range(&d.wb, t, CMD)?;
+        // Excel's rule: a linked formula on the destination sheet would read the table it is in.
+        if links && si == dsi {
+            return Err(EngineError::Other(SAME_SHEET_LINKS.into()));
+        }
         total = total.saturating_add(r.count());
         if total > MAX_CONSOLIDATE_CELLS {
             return Err(bad(CMD, "the sources are too large"));
@@ -166,8 +173,18 @@ pub(super) fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
             let ri = index_of(&mut row_keys, &mut row_index, k);
             for (col, ci) in &cols {
                 aggs.entry((ri, *ci)).or_default().add(&sh.value(CellRef::new(row, *col)));
+                if links {
+                    linked.entry((ri, src)).or_default().push((*ci, si, CellRef::new(row, *col)));
+                }
             }
         }
+    }
+    if links {
+        let book = d.display_title();
+        let book = book.rsplit_once('.').map_or(book.as_str(), |(stem, _)| stem).to_string();
+        let names: Vec<String> = d.wb.sheets.iter().map(|sh| gridcraft_core::quote_sheet(&sh.name)).collect();
+        let plan = LinkPlan { dsi, dest, top, left, func: &func, book, names };
+        return write_links(s, plan, &row_keys, &col_keys, &row_label, &col_label, srcs.len(), &linked);
     }
     let (out_r0, out_c0) = (dest.row + top as u32, dest.col + left as u32);
     if out_r0 as u64 + row_keys.len() as u64 > gridcraft_core::MAX_ROWS as u64
@@ -213,4 +230,125 @@ pub(super) fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
         Ok(())
     })?;
     Ok(json!({"range": RangeRef::new(dest, end).a1(), "rows": row_keys.len(), "columns": col_keys.len()}))
+}
+
+/// Why Create links to source data refuses a source on the destination sheet.
+pub(crate) const SAME_SHEET_LINKS: &str = "Links can't be created to source data on the same sheet as the consolidated data.";
+
+/// Where and how a linked consolidation is written.
+struct LinkPlan<'a> {
+    dsi: usize,
+    dest: CellRef,
+    top: bool,
+    left: bool,
+    func: &'a str,
+    /// The workbook's name, written beside each source's detail row as Excel does.
+    book: String,
+    /// Each sheet's name as a reference writes it.
+    names: Vec<String>,
+}
+
+/// Create links to source data, as Excel writes it: under each row key, one detail row per source
+/// that has the key, each cell a link (`=East!$B$2`) to the source cell, then the key's summary
+/// row with the function over those detail rows (`=SUM(C2:C3)`). The detail rows are an outline
+/// group, collapsed so only the summaries show. With labels in the left column, the column after
+/// them holds the workbook's name on each detail row and the values start one column further on.
+#[allow(clippy::too_many_arguments)]
+fn write_links(
+    s: &mut Session,
+    plan: LinkPlan,
+    row_keys: &[Key],
+    col_keys: &[Key],
+    row_label: &HashMap<Key, String>,
+    col_label: &HashMap<Key, String>,
+    sources: usize,
+    linked: &HashMap<(usize, usize), Vec<(usize, usize, CellRef)>>,
+) -> Result<Json> {
+    const CMD: &str = "data.consolidate";
+    let LinkPlan { dsi, dest, top, left, func, book, names } = plan;
+    let name = match func {
+        "count" => "COUNTA",
+        "countNums" | "countnums" => "COUNT",
+        "average" => "AVERAGE",
+        "max" => "MAX",
+        "min" => "MIN",
+        "product" => "PRODUCT",
+        _ => "SUM",
+    };
+    let out_c0 = dest.col + if left { 2 } else { 0 };
+    let first_row = dest.row + top as u32;
+    let details: Vec<Vec<usize>> = (0..row_keys.len()).map(|ri| (0..sources).filter(|src| linked.contains_key(&(ri, *src))).collect()).collect();
+    let rows: u64 = details.iter().map(|d| d.len() as u64 + 1).sum();
+    if first_row as u64 + rows > gridcraft_core::MAX_ROWS as u64 || out_c0 as u64 + col_keys.len() as u64 > gridcraft_core::MAX_COLS as u64 {
+        return Err(EngineError::Other("The consolidated data doesn't fit below and right of the destination.".into()));
+    }
+    if rows.saturating_mul(col_keys.len() as u64 + 2) > MAX_CONSOLIDATE_CELLS {
+        return Err(bad(CMD, "the consolidated table would be too large"));
+    }
+    // The summary rows sit below their detail, so the outline must read summaries below.
+    if !s.doc()?.wb.sheet(dsi).ok_or(EngineError::NoDocument)?.summary_below {
+        s.execute("data.outlineSettings", json!({"sheet": dsi, "summaryBelow": true}))?;
+    }
+    let formula = |text: String| Cell {
+        value: Value::Empty,
+        formula: Some(std::sync::Arc::new(gridcraft_model::Formula::new(&text))),
+        style: StyleId::DEFAULT,
+        py: None,
+    };
+    let mut cells: Vec<(CellRef, Cell)> = Vec::new();
+    let mut groups: Vec<(u32, u32)> = Vec::new();
+    if top {
+        for (ci, k) in col_keys.iter().enumerate() {
+            let text = Value::text(col_label.get(k).cloned().unwrap_or_default());
+            cells.push((CellRef::new(dest.row, out_c0 + ci as u32), Cell { value: text, ..Cell::default() }));
+        }
+    }
+    let mut row = first_row;
+    for (ri, srcs) in details.iter().enumerate() {
+        let start = row;
+        for src in srcs {
+            if left {
+                cells.push((CellRef::new(row, dest.col + 1), Cell { value: Value::text(book.clone()), ..Cell::default() }));
+            }
+            for (ci, si, at) in &linked[&(ri, *src)] {
+                let target = format!("={}!${}${}", names[*si], gridcraft_core::col_to_letters(at.col), at.row + 1);
+                cells.push((CellRef::new(row, out_c0 + *ci as u32), formula(target)));
+            }
+            row += 1;
+        }
+        if left {
+            let text = Value::text(row_label.get(&row_keys[ri]).cloned().unwrap_or_default());
+            cells.push((CellRef::new(row, dest.col), Cell { value: text, ..Cell::default() }));
+        }
+        if row > start {
+            for ci in 0..col_keys.len() {
+                let col = gridcraft_core::col_to_letters(out_c0 + ci as u32);
+                cells.push((CellRef::new(row, out_c0 + ci as u32), formula(format!("={name}({col}{}:{col}{})", start + 1, row))));
+            }
+            groups.push((start, row - 1));
+        }
+        row += 1;
+    }
+    let end = CellRef::new(row.saturating_sub(1).max(dest.row), (out_c0 + col_keys.len() as u32).saturating_sub(1).max(dest.col));
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(dsi)?;
+        for (c, mut cell) in cells.iter().cloned() {
+            cell.style = sh.style_id(c);
+            sh.set_cell(c, cell);
+        }
+        for (a, b) in &groups {
+            for i in *a..=*b {
+                let e = sh.rows.entry(i).or_default();
+                e.outline = (e.outline + 1).min(crate::outline::MAX_LEVEL);
+                e.hidden = true;
+            }
+            sh.rows.entry(b + 1).or_default().collapsed = true;
+        }
+        for (c, _) in &cells {
+            cx.touch(dsi, *c);
+        }
+        cx.structural = true;
+        Ok(())
+    })?;
+    Ok(json!({"range": RangeRef::new(dest, end).a1(), "rows": row_keys.len(), "columns": col_keys.len(), "links": true}))
 }
