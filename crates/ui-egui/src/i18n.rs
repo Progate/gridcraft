@@ -513,6 +513,22 @@ mod tests {
         assert_eq!(Language::Ja.function_description_of("BESSELJ", "Bessel function Jn(x)."), None);
     }
 
+    /// A Japanese hint shows all its arguments in Japanese or none (`formula_locale::signature`),
+    /// so a function the Japanese help lists must name every argument of its catalog signature.
+    #[test]
+    fn japanese_function_help_names_every_argument() {
+        use gridcraft_engine::formula::FormulaLocale::En;
+        let untranslated: Vec<String> = ja_functions::FUNCTIONS
+            .iter()
+            .filter(|(_, _, arguments)| !arguments.is_empty())
+            .filter_map(|(name, _, _)| {
+                crate::formula_locale::signature(name, En, Language::Ja)
+                    .filter(|hint| Some(hint) == crate::formula_locale::signature(name, En, Language::En).as_ref())
+            })
+            .collect();
+        assert!(untranslated.is_empty(), "Japanese help misses arguments of {untranslated:#?}");
+    }
+
     #[test]
     fn untranslated_text_falls_back_to_english() {
         let label = |key: &'static str| key.rsplit_once('|').map_or(key, |(_, label)| label);

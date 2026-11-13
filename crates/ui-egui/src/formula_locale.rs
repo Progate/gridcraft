@@ -104,18 +104,134 @@ type Choices = &'static [(&'static str, &'static str)];
 /// The values an argument takes, listed under the hint while it is typed as Excel lists them:
 /// (function, argument, [(value, label)]). Labels are catalog keys in Excel's English wording.
 const ARGUMENT_CHOICES: &[(&str, &str, Choices)] = &[
+    ("AGGREGATE", "function_num", AGGREGATE_FUNCTIONS),
+    ("AGGREGATE", "options", AGGREGATE_OPTIONS),
     ("HLOOKUP", "range_lookup", &[("TRUE", "TRUE - Approximate match"), ("FALSE", "FALSE - Exact match")]),
     ("MATCH", "match_type", &[("1", "1 - Less than"), ("0", "0 - Exact match"), ("-1", "-1 - Greater than")]),
     ("RANK", "order", &[("0", "0 - Descending"), ("1", "1 - Ascending")]),
     ("RANK.EQ", "order", &[("0", "0 - Descending"), ("1", "1 - Ascending")]),
     ("SORT", "sort_order", &[("1", "1 - Ascending"), ("-1", "-1 - Descending")]),
     ("SORT", "by_col", &[("FALSE", "FALSE - Sort by row"), ("TRUE", "TRUE - Sort by column")]),
+    ("SUBTOTAL", "function_num", SUBTOTAL_FUNCTIONS),
+    ("UNIQUE", "by_col", &[("FALSE", "FALSE - Return unique rows"), ("TRUE", "TRUE - Return unique columns")]),
+    ("UNIQUE", "exactly_once", &[("FALSE", "FALSE - Return every distinct item"), ("TRUE", "TRUE - Return items that occur exactly once")]),
     ("VLOOKUP", "range_lookup", &[("TRUE", "TRUE - Approximate match"), ("FALSE", "FALSE - Exact match")]),
     ("XLOOKUP", "match_mode", XMATCH_MODES),
     ("XLOOKUP", "search_mode", XSEARCH_MODES),
     ("XMATCH", "match_mode", XMATCH_MODES),
     ("XMATCH", "search_mode", XSEARCH_MODES),
+    ("WEEKDAY", "return_type", WEEKDAY_TYPES),
+    ("WEEKNUM", "return_type", WEEKNUM_TYPES),
+    ("WORKDAY.INTL", "weekend", WEEKENDS),
+    ("NETWORKDAYS.INTL", "weekend", WEEKENDS),
+    ("YEARFRAC", "basis", DAY_COUNT_BASES),
 ];
+
+/// SUBTOTAL's function_num: 1-11 count hidden rows, 101-111 skip them.
+const SUBTOTAL_FUNCTIONS: &[(&str, &str)] = &[
+    ("1", "1 - AVERAGE"),
+    ("2", "2 - COUNT"),
+    ("3", "3 - COUNTA"),
+    ("4", "4 - MAX"),
+    ("5", "5 - MIN"),
+    ("6", "6 - PRODUCT"),
+    ("7", "7 - STDEV"),
+    ("8", "8 - STDEVP"),
+    ("9", "9 - SUM"),
+    ("10", "10 - VAR"),
+    ("11", "11 - VARP"),
+    ("101", "101 - AVERAGE"),
+    ("102", "102 - COUNT"),
+    ("103", "103 - COUNTA"),
+    ("104", "104 - MAX"),
+    ("105", "105 - MIN"),
+    ("106", "106 - PRODUCT"),
+    ("107", "107 - STDEV"),
+    ("108", "108 - STDEVP"),
+    ("109", "109 - SUM"),
+    ("110", "110 - VAR"),
+    ("111", "111 - VARP"),
+];
+
+const AGGREGATE_FUNCTIONS: &[(&str, &str)] = &[
+    ("1", "1 - AVERAGE"),
+    ("2", "2 - COUNT"),
+    ("3", "3 - COUNTA"),
+    ("4", "4 - MAX"),
+    ("5", "5 - MIN"),
+    ("6", "6 - PRODUCT"),
+    ("7", "7 - STDEV.S"),
+    ("8", "8 - STDEV.P"),
+    ("9", "9 - SUM"),
+    ("10", "10 - VAR.S"),
+    ("11", "11 - VAR.P"),
+    ("12", "12 - MEDIAN"),
+    ("13", "13 - MODE.SNGL"),
+    ("14", "14 - LARGE"),
+    ("15", "15 - SMALL"),
+    ("16", "16 - PERCENTILE.INC"),
+    ("17", "17 - QUARTILE.INC"),
+    ("18", "18 - PERCENTILE.EXC"),
+    ("19", "19 - QUARTILE.EXC"),
+];
+
+const AGGREGATE_OPTIONS: &[(&str, &str)] = &[
+    ("0", "0 - Ignore nested SUBTOTAL and AGGREGATE functions"),
+    ("1", "1 - Ignore hidden rows, nested SUBTOTAL and AGGREGATE functions"),
+    ("2", "2 - Ignore error values, nested SUBTOTAL and AGGREGATE functions"),
+    ("3", "3 - Ignore hidden rows, error values, nested SUBTOTAL and AGGREGATE functions"),
+    ("4", "4 - Ignore nothing"),
+    ("5", "5 - Ignore hidden rows"),
+    ("6", "6 - Ignore error values"),
+    ("7", "7 - Ignore hidden rows and error values"),
+];
+
+const WEEKDAY_TYPES: &[(&str, &str)] = &[
+    ("1", "1 - Numbers 1 (Sunday) through 7 (Saturday)"),
+    ("2", "2 - Numbers 1 (Monday) through 7 (Sunday)"),
+    ("3", "3 - Numbers 0 (Monday) through 6 (Sunday)"),
+    ("11", "11 - Numbers 1 (Monday) through 7 (Sunday)"),
+    ("12", "12 - Numbers 1 (Tuesday) through 7 (Monday)"),
+    ("13", "13 - Numbers 1 (Wednesday) through 7 (Tuesday)"),
+    ("14", "14 - Numbers 1 (Thursday) through 7 (Wednesday)"),
+    ("15", "15 - Numbers 1 (Friday) through 7 (Thursday)"),
+    ("16", "16 - Numbers 1 (Saturday) through 7 (Friday)"),
+    ("17", "17 - Numbers 1 (Sunday) through 7 (Saturday)"),
+];
+
+const WEEKNUM_TYPES: &[(&str, &str)] = &[
+    ("1", "1 - Sunday"),
+    ("2", "2 - Monday"),
+    ("11", "11 - Monday"),
+    ("12", "12 - Tuesday"),
+    ("13", "13 - Wednesday"),
+    ("14", "14 - Thursday"),
+    ("15", "15 - Friday"),
+    ("16", "16 - Saturday"),
+    ("17", "17 - Sunday"),
+    ("21", "21 - Monday (System 2)"),
+];
+
+/// WORKDAY.INTL's and NETWORKDAYS.INTL's weekend numbers.
+const WEEKENDS: &[(&str, &str)] = &[
+    ("1", "1 - Saturday, Sunday"),
+    ("2", "2 - Sunday, Monday"),
+    ("3", "3 - Monday, Tuesday"),
+    ("4", "4 - Tuesday, Wednesday"),
+    ("5", "5 - Wednesday, Thursday"),
+    ("6", "6 - Thursday, Friday"),
+    ("7", "7 - Friday, Saturday"),
+    ("11", "11 - Sunday only"),
+    ("12", "12 - Monday only"),
+    ("13", "13 - Tuesday only"),
+    ("14", "14 - Wednesday only"),
+    ("15", "15 - Thursday only"),
+    ("16", "16 - Friday only"),
+    ("17", "17 - Saturday only"),
+];
+
+const DAY_COUNT_BASES: &[(&str, &str)] =
+    &[("0", "0 - US (NASD) 30/360"), ("1", "1 - Actual/actual"), ("2", "2 - Actual/360"), ("3", "3 - Actual/365"), ("4", "4 - European 30/360")];
 
 const XMATCH_MODES: &[(&str, &str)] = &[
     ("0", "0 - Exact match"),
@@ -148,10 +264,14 @@ fn split_signature(signature: &str) -> Option<(&str, Vec<&str>)> {
 }
 
 /// `[number2]` -> `number`. A bracket can open or close on its own (SWITCH's
-/// `[default_or_value2, result2]`, LAMBDA's `[parameter1, ...]`).
+/// `[default_or_value2, result2]`, LAMBDA's `[parameter1, ...]`). INDIRECT's `a1` (A1 or R1C1
+/// style) ends in a digit that is part of its name, not an index.
 fn argument_name(arg: &str) -> &str {
     let arg = arg.strip_prefix('[').unwrap_or(arg);
     let arg = arg.strip_suffix(']').unwrap_or(arg);
+    if arg == "a1" {
+        return arg;
+    }
     arg.trim_end_matches(|c: char| c.is_ascii_digit())
 }
 
@@ -223,6 +343,10 @@ mod tests {
         assert_eq!(sig("IF", En, ja), "IF(論理式, [値が真の場合], [値が偽の場合])");
         assert_eq!(sig("SUMIFS", En, ja), "SUMIFS(合計対象範囲, 条件範囲1, 条件1, ...)");
         assert_eq!(sig("sum", En, ja), "SUM(数値1, [数値2], ...)");
+        assert_eq!(sig("IFNA", En, ja), "IFNA(値, NA の場合の値)");
+        assert_eq!(sig("NPER", En, ja), "NPER(利率, 定期支払額, 現在価値, [将来価値], [支払期日])");
+        assert_eq!(sig("INDIRECT", En, ja), "INDIRECT(参照文字列, [参照形式])");
+        assert_eq!(sig("TEXTJOIN", En, ja), "TEXTJOIN(区切り文字, 空のセルは無視, テキスト1, [テキスト2], ...)");
         assert_eq!(description("COUNTIF", En, ja).as_deref(), Some("指定された範囲に含まれるセルのうち、検索条件に一致するセルの個数を返します。"));
         // A function the Japanese help doesn't cover keeps its English help, whole.
         let english = sig("BESSELJ", En, Language::En);
@@ -239,5 +363,27 @@ mod tests {
         assert_eq!(lookup.iter().map(|(_, l)| Language::Ja.tr(l)).collect::<Vec<_>>(), ["TRUE - 近似一致", "FALSE - 完全一致"]);
         assert!(argument_choices("VLOOKUP", 0, En).is_none());
         assert!(argument_choices("SUM", 7, En).is_none());
+        let subtotal = argument_choices("SUBTOTAL", 0, En).unwrap_or_default();
+        assert_eq!((subtotal.len(), subtotal[8].0, subtotal[19].1), (22, "9", "109 - SUM"));
+        let weekday = argument_choices("WEEKDAY", 1, En).unwrap_or_default();
+        assert_eq!(Language::Ja.tr(weekday[1].1), "2 - 1 (月曜) ～ 7 (日曜) の数値");
+        let unique = argument_choices("UNIQUE", 2, En).unwrap_or_default();
+        assert_eq!(Language::Ja.tr(unique[1].1), "TRUE - 1 回だけ出現する項目を返す");
+        assert!(argument_choices("NETWORKDAYS.INTL", 2, En).is_some_and(|w| w.len() == 14));
+    }
+
+    /// Every choice label has its Japanese wording, except the ones that are only a function
+    /// name (SUBTOTAL's `9 - SUM`), which Excel keeps in English.
+    #[test]
+    fn japanese_choice_labels_are_translated() {
+        for (function, argument, choices) in ARGUMENT_CHOICES {
+            for (value, label) in *choices {
+                let function_name = label.strip_prefix(value).and_then(|l| l.strip_prefix(" - ")).unwrap_or_default();
+                if function_name.chars().all(|c| c.is_ascii_uppercase() || c == '.') {
+                    continue;
+                }
+                assert_ne!(Language::Ja.tr(label), *label, "{function} {argument}: {label}");
+            }
+        }
     }
 }
