@@ -68,6 +68,32 @@ const BUILTIN_FORMATS_JA: [(u32, &str); 19] = [
     (54, "[$-411]ggge\"年\"m\"月\"d\"日\""),
 ];
 
+/// Japanese Excel's own currency (5–8) and accounting (41–44) built-ins, in yen. Japanese Excel
+/// writes them under these ids with a `numFmt` element holding the code, since a reader in
+/// another locale has its own codes for the ids.
+const BUILTIN_CURRENCY_JA: [(u32, &str); 8] = [
+    (5, "\"¥\"#,##0;\"¥\"\\-#,##0"),
+    (6, "\"¥\"#,##0;[Red]\"¥\"\\-#,##0"),
+    (7, "\"¥\"#,##0.00;\"¥\"\\-#,##0.00"),
+    (8, "\"¥\"#,##0.00;[Red]\"¥\"\\-#,##0.00"),
+    (41, "_ * #,##0_ ;_ * \\-#,##0_ ;_ * \"-\"_ ;_ @_ "),
+    (42, "_ \"¥\"* #,##0_ ;_ \"¥\"* \\-#,##0_ ;_ \"¥\"* \"-\"_ ;_ @_ "),
+    (43, "_ * #,##0.00_ ;_ * \\-#,##0.00_ ;_ * \"-\"??_ ;_ @_ "),
+    (44, "_ \"¥\"* #,##0.00_ ;_ \"¥\"* \\-#,##0.00_ ;_ \"¥\"* \"-\"??_ ;_ @_ "),
+];
+
+/// Id Japanese Excel writes (with its `numFmt` element) for one of its yen currency or
+/// accounting built-ins.
+pub fn builtin_currency_id_ja(code: &str) -> Option<u32> {
+    BUILTIN_CURRENCY_JA.iter().find(|(_, c)| *c == code).map(|(i, _)| *i)
+}
+
+/// Whether `code` is one of Excel's built-in number formats (en-US or Japanese), which Format
+/// Cells' Custom list always offers and can't delete.
+pub fn is_builtin_number_format(code: &str) -> bool {
+    BUILTIN_FORMATS.iter().chain(&BUILTIN_FORMATS_JA).chain(&BUILTIN_CURRENCY_JA).any(|(_, c)| *c == code)
+}
+
 pub fn builtin_format(id: u32) -> Option<&'static str> {
     BUILTIN_FORMATS.iter().find(|(i, _)| *i == id).map(|(_, c)| *c)
 }

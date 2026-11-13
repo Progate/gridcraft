@@ -10,7 +10,7 @@ use gridcraft_model::{
     VAlign, VertAlign, Workbook, builtin_cell_style_id, builtin_cell_style_name,
 };
 
-use crate::tables::{INDEXED, builtin_format_read, builtin_id, builtin_id_ja};
+use crate::tables::{INDEXED, builtin_currency_id_ja, builtin_format_read, builtin_id, builtin_id_ja};
 use crate::xml::{El, esc_attr, num};
 
 // ---------------------------------------------------------------- reading
@@ -683,7 +683,16 @@ impl NumFmts {
         if let Some(&id) = self.map.get(code) {
             return id;
         }
-        let id = 164 + self.custom.len() as u32;
+        // Japanese Excel's yen currency and accounting formats keep their built-in ids, written
+        // with their codes.
+        if self.ja
+            && let Some(id) = builtin_currency_id_ja(code)
+        {
+            self.custom.push((id, code.to_string()));
+            self.map.insert(code.to_string(), id);
+            return id;
+        }
+        let id = 164 + self.custom.iter().filter(|(i, _)| *i >= 164).count() as u32;
         self.custom.push((id, code.to_string()));
         self.map.insert(code.to_string(), id);
         id

@@ -55,6 +55,7 @@ pub use final_mark::{is_marked_final, set_marked_final};
 pub use ods::read_ods;
 pub use package::MAX_PART;
 pub use passthrough::rebase_links;
+pub use tables::is_builtin_number_format;
 pub use text_encoding::{TextEncoding, decode_with, detect as detect_encoding, encode_with};
 pub use xls::{read_xls, read_xls_with};
 pub use xlsb::read_xlsb;

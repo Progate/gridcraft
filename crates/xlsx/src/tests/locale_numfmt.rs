@@ -107,3 +107,26 @@ fn japanese_date_formats_are_written_as_japanese_excel_writes_them() {
         }
     }
 }
+
+#[test]
+fn japanese_yen_currency_and_accounting_keep_japanese_excels_ids_with_their_code() {
+    for (code, builtin) in [
+        ("\"¥\"#,##0;\"¥\"\\-#,##0", 5),
+        ("\"¥\"#,##0;[Red]\"¥\"\\-#,##0", 6),
+        ("\"¥\"#,##0.00;[Red]\"¥\"\\-#,##0.00", 8),
+        ("_ \"¥\"* #,##0_ ;_ \"¥\"* \\-#,##0_ ;_ \"¥\"* \"-\"_ ;_ @_ ", 42),
+        ("_ * #,##0.00_ ;_ * \\-#,##0.00_ ;_ * \"-\"??_ ;_ @_ ", 43),
+    ] {
+        let (id, xml, back) = round_trip_in(code, "ja-JP");
+        assert_eq!(id, builtin, "{code}");
+        assert!(xml.contains(&format!("<numFmt numFmtId=\"{builtin}\" formatCode=")), "{code}: {xml}");
+        assert_eq!(back, code);
+        // Elsewhere the same code is a custom format.
+        let (id, _, back) = round_trip_in(code, "en-US");
+        assert!(id >= 164, "{code}");
+        assert_eq!(back, code);
+    }
+    assert!(crate::is_builtin_number_format("\"¥\"#,##0;[Red]\"¥\"\\-#,##0"));
+    assert!(crate::is_builtin_number_format("General"));
+    assert!(!crate::is_builtin_number_format("0.000"));
+}
