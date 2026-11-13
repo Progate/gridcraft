@@ -79,3 +79,25 @@ fn orientation_menu_angles_and_the_checked_item_returns_to_horizontal() {
     s.execute("home.orientation", json!({"range": "A1", "angle": "down", "toggle": true})).unwrap();
     assert_eq!(rotation(&s, "A1"), 0);
 }
+
+#[test]
+fn vertical_text_grows_the_row_to_its_characters() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["縦書き"]]})).unwrap();
+    s.execute("home.orientation", json!({"range": "A1", "angle": "vertical"})).unwrap();
+    let h = s.doc().unwrap().wb.active().unwrap().rows.get(&0).and_then(|r| r.size).unwrap();
+    assert!(h > 50.0, "three characters stacked: {h}");
+    s.execute("home.orientation", json!({"range": "A1", "angle": 0})).unwrap();
+    assert!(s.doc().unwrap().wb.active().unwrap().rows.get(&0).and_then(|r| r.size).is_none());
+}
+
+#[test]
+fn deleting_a_custom_format_returns_its_cells_to_general() {
+    let mut s = s();
+    s.execute("home.formatCells", json!({"range": "A1:B1", "style": {"num_fmt": "0.000\"kg\""}})).unwrap();
+    let r = s.execute("home.deleteNumberFormat", json!({"code": "0.000\"kg\""})).unwrap();
+    assert_eq!(r["cells"], 2);
+    let d = s.doc().unwrap();
+    assert_eq!(d.wb.styles.get(d.wb.active().unwrap().style_id(CellRef::new(0, 1))).num_fmt.as_str(), "General");
+    assert!(s.execute("home.deleteNumberFormat", json!({"code": "0.00"})).is_err());
+}

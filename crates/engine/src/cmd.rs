@@ -944,7 +944,7 @@ pub(crate) fn fit_row_height(wb: &mut Workbook, si: usize, row: u32, sweep: &mut
     // Fast path: rows of default-size, unwrapped content keep the default height.
     let plain = sh.cells.row(row, 0, gridcraft_core::MAX_COLS - 1).all(|(_, cell)| {
         let st = wb.styles.get(cell.style);
-        st.font.size <= gridcraft_model::DEFAULT_FONT_SIZE && !st.align.wrap
+        st.font.size <= gridcraft_model::DEFAULT_FONT_SIZE && !st.align.wrap && st.align.rotation != 255
     });
     if plain {
         if sh.rows.get(&row).is_some_and(|i| i.size.is_some())
@@ -986,7 +986,11 @@ pub(crate) fn fit_row_height(wb: &mut Workbook, si: usize, row: u32, sweep: &mut
         if !cell.value.is_empty() || cell.formula.is_some() {
             // Only a wrapping cell is laid out over several lines: each explicit line break
             // starts one, and each line folds at the column width.
-            if st.align.wrap {
+            if st.align.rotation == 255 {
+                // Vertical text stacks its characters: the row grows to the longest line's count.
+                let text = crate::display::cell_text(wb, sh, CellRef::new(row, c));
+                lines = text.lines().map(|l| l.chars().count()).max().unwrap_or(1).max(1) as f32;
+            } else if st.align.wrap {
                 let text = crate::display::cell_text(wb, sh, CellRef::new(row, c));
                 let w = sh.col_width(c).max(1.0) - 6.0;
                 lines = text.lines().map(|l| wrapped_line_count(l, w.max(1.0), size, st.font.bold)).sum::<f32>().max(1.0);

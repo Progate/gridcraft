@@ -164,6 +164,15 @@ pub fn specs() -> Vec<CommandSpec> {
                 set_fmt(s, p, code)
             }
         ),
+        cmd!(
+            "home.deleteNumberFormat",
+            "Delete Number Format",
+            [],
+            None,
+            "{code: \"0.000\"} (Format Cells › Custom › Delete: cells in that format return to General)",
+            has_doc,
+            delete_number_format
+        ),
         cmd!("home.increaseDecimal", "Increase Decimal", ["Home", "Number"], None, "{range?}", has_doc, |s, p| decimals(s, p, 1)),
         cmd!("home.decreaseDecimal", "Decrease Decimal", ["Home", "Number"], None, "{range?}", has_doc, |s, p| decimals(s, p, -1)),
         // Styles
@@ -917,6 +926,49 @@ fn number_format(s: &mut Session, p: &Json) -> Result<Json> {
 fn set_fmt(s: &mut Session, p: &Json, code: &str) -> Result<Json> {
     let nf = NumFmt::new(&gridcraft_numfmt::canonical_code(code));
     apply_style(s, p, |st| st.num_fmt = nf.clone())
+}
+
+/// Format Cells › Custom › Delete: the workbook no longer uses the custom format `code`; its
+/// cells, rows and columns return to General, as in Excel. A built-in code can't be deleted.
+fn delete_number_format(s: &mut Session, p: &Json) -> Result<Json> {
+    let code = gridcraft_numfmt::canonical_code(str_param(p, "code").ok_or_else(|| bad("home.deleteNumberFormat", "missing `code`"))?);
+    if gridcraft_xlsx::is_builtin_number_format(&code) {
+        return Err(bad("home.deleteNumberFormat", "a built-in format can't be deleted"));
+    }
+    edit(s, |cx| {
+        let mut n = 0;
+        for sheet in 0..cx.wb.sheets.len() {
+            let general = |cx: &mut super::Ctx, id: StyleId| {
+                if cx.wb.styles.get(id).num_fmt.as_str() == code {
+                    Some(cx.wb.styles.derive(id, |st| st.num_fmt = NumFmt::new("General")))
+                } else {
+                    None
+                }
+            };
+            let cells: Vec<(CellRef, StyleId)> = cx.wb.sheets[sheet].cells.iter().map(|(c, x)| (c, x.style)).collect();
+            for (c, id) in cells {
+                if let Some(new) = general(cx, id) {
+                    cx.sheet_mut(sheet)?.set_style(c, new);
+                    n += 1;
+                }
+            }
+            for rows in [true, false] {
+                let lines: Vec<(u32, StyleId)> = {
+                    let sh = &cx.wb.sheets[sheet];
+                    let map = if rows { &sh.rows } else { &sh.cols };
+                    map.iter().filter_map(|(i, info)| info.style.map(|st| (*i, st))).collect()
+                };
+                for (i, id) in lines {
+                    if let Some(new) = general(cx, id) {
+                        let sh = cx.sheet_mut(sheet)?;
+                        let map = if rows { &mut sh.rows } else { &mut sh.cols };
+                        map.entry(i).or_default().style = Some(new);
+                    }
+                }
+            }
+        }
+        Ok(json!({"cells": n}))
+    })
 }
 
 /// Adds or removes one decimal place in the number format (Increase/Decrease Decimal).
