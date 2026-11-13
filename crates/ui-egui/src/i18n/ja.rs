@@ -1989,6 +1989,17 @@ pub(super) const AUTOFILTER: &[(&str, &str)] = &[
     ("Do not detect data types", "データ型を検出しない"),
     ("Load", "読み込み"),
     ("From Text/CSV", "テキストまたは CSV から"),
+    // Its column headers' data type menu, in Power Query's wording
+    ("Data Type", "データ型"),
+    ("Column type|Auto", "自動"),
+    ("Column type|Text", "テキスト"),
+    ("Column type|Whole Number", "整数"),
+    ("Column type|Decimal Number", "10 進数"),
+    ("Column type|Date", "日付"),
+    ("Column type|Date/Time", "日付/時刻"),
+    ("Column type|Time", "時刻"),
+    ("Column type|True/False", "True/False"),
+    ("Column type|Remove", "削除"),
     ("CSV (Comma delimited) (*.csv)", "CSV (コンマ区切り) (*.csv)"),
     // Data ▸ Text to Columns wizard (区切り位置指定ウィザード)
     ("Convert Text to Columns Wizard - Step 1 of 3", "区切り位置指定ウィザード - 1 / 3"),

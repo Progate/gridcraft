@@ -1,6 +1,8 @@
 //! Data ▸ Get Data ▸ From Text/CSV preview, laid out as Excel's: File Origin, Delimiter and Data
 //! Type Detection above a preview of what loads, then Load or Cancel. The preview comes from
-//! `data.textPreview` and follows every choice; Load runs `data.fromTextCsv`.
+//! `data.textPreview` and follows every choice; each column's header chooses its data type as
+//! Power Query's header icon does (Auto, Text, Whole Number, … or Remove). Load runs
+//! `data.fromTextCsv`.
 
 use super::{Dialog, Json, SheetApp, json, vec2};
 
@@ -15,6 +17,21 @@ const DELIMITERS: [(&str, &str); 5] = [("comma", "Comma"), ("tab", "Tab"), ("sem
 const DETECTS: [(&str, &str); 3] =
     [("first200", "Based on first 200 rows"), ("all", "Based on entire dataset"), ("none", "Do not detect data types")];
 
+/// Column data types (データ型) a preview header offers, as Power Query's header menu names them,
+/// with the short glyph its icon shows; `auto` is From Text/CSV's own detection and `skip`
+/// removes the column.
+const COLUMN_TYPES: [(&str, &str, &str); 9] = [
+    ("auto", "Column type|Auto", ""),
+    ("text", "Column type|Text", "ABC"),
+    ("integer", "Column type|Whole Number", "1²3"),
+    ("decimal", "Column type|Decimal Number", "1.2"),
+    ("date", "Column type|Date", ""),
+    ("datetime", "Column type|Date/Time", ""),
+    ("time", "Column type|Time", ""),
+    ("boolean", "Column type|True/False", ""),
+    ("skip", "Column type|Remove", ""),
+];
+
 /// The params of `data.textPreview` / `data.fromTextCsv` for the dialog's choices.
 pub(super) fn import_params(d: &Dialog) -> Json {
     let v = |k: &str| d.values.get(k).cloned().unwrap_or(Json::Null);
@@ -23,12 +40,73 @@ pub(super) fn import_params(d: &Dialog) -> Json {
         _ => v("delimiter"),
     };
     let mut p = json!({"encoding": v("encoding"), "delimiter": delimiter, "detect": v("detect")});
-    for k in ["path", "name", "base64", "text", "sheet"] {
+    for k in ["path", "name", "base64", "text", "sheet", "columns", "types"] {
         if let Some(x) = d.values.get(k) {
             p[k] = x.clone();
         }
     }
     p
+}
+
+/// What the preview depends on: it is asked for again when this changes.
+fn preview_key(p: &Json) -> String {
+    json!([p["encoding"], p["delimiter"], p["detect"], p["columns"], p["types"]]).to_string()
+}
+
+/// Types the dialog was opened with by header name (`types`) become per-column choices once the
+/// preview shows the header, so a header's menu can change them again.
+fn fold_named_types(d: &mut Dialog, preview: &Json) {
+    let Some(types) = d.values.get("types").and_then(Json::as_object).cloned() else { return };
+    let header: Vec<&str> =
+        preview.pointer("/rows/0").and_then(Json::as_array).map(|h| h.iter().filter_map(Json::as_str).collect()).unwrap_or_default();
+    let mut columns = column_choices(d, header.len());
+    for (name, t) in &types {
+        if let Some(c) = header.iter().position(|h| h == name) {
+            columns[c] = t.clone();
+        }
+    }
+    d.values.remove("types");
+    d.values.insert("columns".into(), Json::Array(columns));
+    d.values.insert("previewKey".into(), json!(preview_key(&import_params(d))));
+}
+
+/// The chosen type of each of `n` columns (`auto` where none was chosen).
+fn column_choices(d: &Dialog, n: usize) -> Vec<Json> {
+    let mut c: Vec<Json> = d.values.get("columns").and_then(Json::as_array).cloned().unwrap_or_default();
+    if c.len() < n {
+        c.resize(n, json!("auto"));
+    }
+    c
+}
+
+/// A preview column's header: Power Query's type icon (the type chosen, or detected for an
+/// automatic column) opening the data type menu, then the column name.
+fn column_header(ui: &mut egui::Ui, d: &mut Dialog, col: usize, name: &str, shown_type: &str) {
+    let lang = crate::i18n::current(ui.ctx());
+    let mut columns = column_choices(d, col + 1);
+    let chosen = columns[col].as_str().unwrap_or("auto").to_string();
+    let (_, label, glyph) = COLUMN_TYPES.iter().find(|(v, ..)| *v == shown_type).copied().unwrap_or(COLUMN_TYPES[0]);
+    let icon = if glyph.is_empty() { format!("{} ▾", lang.tr(label)) } else { format!("{glyph} {} ▾", lang.tr(label)) };
+    ui.vertical(|ui| {
+        let mut picked = None;
+        ui.menu_button(egui::RichText::new(icon).small(), |ui| {
+            for (val, text, _) in COLUMN_TYPES {
+                if ui.selectable_label(chosen == val, lang.tr(text)).clicked() {
+                    picked = Some(val);
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_hover_text(lang.tr("Data Type"));
+        if let Some(val) = picked {
+            columns[col] = json!(val);
+            d.set_value("columns", Json::Array(columns));
+        }
+        let text: String = name.chars().take(60).collect();
+        let text = egui::RichText::new(text).strong();
+        ui.label(if chosen == "skip" { text.strikethrough().weak() } else { text });
+    });
 }
 
 fn combo(ui: &mut egui::Ui, d: &mut Dialog, key: &str, label: &str, options: &[(&str, &str)], width: f32) {
@@ -56,7 +134,7 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
     let lang = crate::i18n::current(ui.ctx());
     // The preview is asked for again only when a choice changed.
     let params = import_params(d);
-    let key = json!([params["encoding"], params["delimiter"], params["detect"]]).to_string();
+    let key = preview_key(&params);
     if d.values.get("previewKey").and_then(Json::as_str) != Some(key.as_str()) {
         let preview = app.session.run("data.textPreview", params);
         d.values.insert("previewKey".into(), json!(key));
@@ -80,8 +158,9 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
                 }
                 if detected {
                     let p = import_params(d);
-                    d.values.insert("previewKey".into(), json!(json!([p["encoding"], p["delimiter"], p["detect"]]).to_string()));
+                    d.values.insert("previewKey".into(), json!(preview_key(&p)));
                 }
+                fold_named_types(d, &r);
                 d.result = Some(r);
             }
             Err(e) => d.result = Some(json!({"error": crate::clean_error(&e)})),
@@ -113,6 +192,13 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
                 .collect()
         })
         .unwrap_or_default();
+    let types: Vec<String> = d
+        .result
+        .as_ref()
+        .and_then(|r| r.get("types"))
+        .and_then(Json::as_array)
+        .map(|t| t.iter().map(|x| x.as_str().unwrap_or("text").to_string()).collect())
+        .unwrap_or_default();
     if let Some(e) = d.result.as_ref().and_then(|r| r.get("error")).and_then(Json::as_str) {
         ui.colored_label(ui.visuals().error_fg_color, e);
     }
@@ -120,14 +206,16 @@ pub(super) fn text_import(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog,
     egui::Frame::new().stroke(egui::Stroke::new(1.0, t.input_border)).inner_margin(4.0).show(ui, |ui| {
         egui::ScrollArea::both().max_height(320.0).max_width(760.0).auto_shrink([false, true]).show(ui, |ui| {
             egui::Grid::new("text_import_preview").striped(true).spacing(vec2(14.0, 3.0)).show(ui, |ui| {
+                let skipped: Vec<bool> = types.iter().map(|t| t == "skip").collect();
                 for (i, row) in rows.iter().enumerate() {
-                    for cell in row {
-                        let text: String = cell.chars().take(60).collect();
+                    for (c, cell) in row.iter().enumerate() {
                         if i == 0 {
-                            ui.label(egui::RichText::new(text).strong())
-                        } else {
-                            ui.label(text)
-                        };
+                            column_header(ui, d, c, cell, types.get(c).map_or("text", String::as_str));
+                            continue;
+                        }
+                        let text = egui::RichText::new(cell.chars().take(60).collect::<String>());
+                        // A removed column stays in the preview, dimmed, so its menu can bring it back.
+                        ui.label(if skipped.get(c).copied().unwrap_or(false) { text.weak() } else { text });
                     }
                     ui.end_row();
                 }

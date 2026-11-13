@@ -1,5 +1,6 @@
 //! `ui.dialog.confirm` runs a dialog's command with the parameters its OK button sends (#1459).
 
+use egui_kittest::kittest::Queryable;
 use gridcraft_engine::model::CfRule;
 use gridcraft_ui_egui::SheetApp;
 use gridcraft_ui_egui::control::{Outcome, handle};
@@ -95,4 +96,42 @@ fn from_text_csv_preview_loads_into_this_workbook() {
     let sh = d.wb.active().unwrap();
     assert_eq!(sh.value(gridcraft_engine::core::CellRef::parse("A2").unwrap()).display(), "0101");
     assert_eq!(sh.tables.len(), 1);
+}
+
+#[test]
+fn from_text_csv_preview_chooses_a_columns_type_from_its_header() {
+    let mut h = harness();
+    let csv = "date,code,qty\n2025/04/01,0101,3\n2025/04/02,0102,4\n";
+    control(
+        &mut h,
+        "ui.dialog",
+        json!({"name": "textImport", "text": csv, "encoding": "auto", "delimiter": "auto", "detect": "first200", "types": {"qty": "skip"}}),
+    );
+    h.run_steps(3);
+    {
+        let d = h.state().dialog.as_ref().expect("the preview is up");
+        let r = d.result.as_ref().expect("a preview");
+        assert_eq!(r["types"], json!(["date", "integer", "skip"]), "{r}");
+        assert_eq!(d.values["columns"], json!(["auto", "auto", "skip"]), "named types become the headers' choices");
+    }
+    // The code column's header icon (1²3 Whole Number, detected) opens the data type menu.
+    h.get_by_label("1²3 Whole Number ▾").click();
+    h.run_steps(2);
+    h.get_by_label("Text").click();
+    h.run_steps(3);
+    {
+        let d = h.state().dialog.as_ref().expect("the preview is up");
+        let r = d.result.as_ref().expect("a preview");
+        assert_eq!(r["types"][1], "text", "{r}");
+        assert_eq!(r["rows"][1][1], "0101", "the preview follows the choice");
+    }
+    let r = control(&mut h, "ui.dialog.confirm", json!({}));
+    assert_eq!(r["ok"], json!(true), "{r}");
+    let d = h.state().session.active().unwrap();
+    let sh = d.wb.active().unwrap();
+    let cell = |a: &str| sh.value(gridcraft_engine::core::CellRef::parse(a).unwrap());
+    assert_eq!(cell("B2").display(), "0101");
+    assert!(matches!(cell("A2"), gridcraft_engine::core::Value::Number(_)), "the date still converts");
+    assert_eq!(cell("C1").display(), "", "the removed column isn't loaded");
+    assert_eq!(sh.tables[0].range.a1(), "A1:B3");
 }
