@@ -87,24 +87,7 @@ pub fn build_params(d: &Dialog) -> Json {
                 }
             }
         }
-        "dataValidation" => {
-            let kind = d.values.get("type").and_then(Json::as_str).unwrap_or("any");
-            let operator = d.values.get("operator").and_then(Json::as_str).unwrap_or("between");
-            if let Some(m) = v.as_object_mut() {
-                if !matches!(operator, "between" | "notBetween") || matches!(kind, "any" | "list" | "custom") {
-                    m.remove("formula2");
-                }
-                if matches!(kind, "any" | "list" | "custom") {
-                    m.remove("operator");
-                }
-                if kind == "any" {
-                    m.remove("formula1");
-                }
-                if kind != "list" {
-                    m.remove("dropdown");
-                }
-            }
-        }
+        "dataValidation" => super::data::data_validation_params(d, &mut v),
         "textToColumns" => return super::text_to_columns::params(d),
         "removeDuplicates" => {
             // The unticked columns go out as the ticked ones (`columns`); all ticked compares every column.
@@ -182,6 +165,7 @@ pub fn build_params(d: &Dialog) -> Json {
             }
         }
         "pageSetup" => super::page_setup::params(d, &mut v),
+        "createNames" => super::names::create_names_params(&mut v),
         _ => {}
     }
     v
@@ -270,6 +254,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "sort" => sort(app, ui, &mut d, &mut confirm),
                 "nameManager" => name_manager(app, ui, &mut d, &mut open),
                 "pasteName" => paste_name(app, ui, &mut d, &mut confirm, &mut open),
+                "createNames" => super::names::create_names(app, ui, &mut d, &mut confirm, &mut open),
                 "manageRules" => manage_rules(app, ui, &mut d, &mut confirm, &mut open),
                 "newFormattingRule" => super::cf_rule::editor(app, ui, &mut d, &mut confirm, &mut open),
                 "recommendedCharts" => recommended_charts(app, ui, &mut d, &mut confirm, &mut open),

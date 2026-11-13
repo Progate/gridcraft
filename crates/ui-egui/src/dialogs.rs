@@ -39,7 +39,7 @@ mod zoom;
 
 use analysis::toolpak_defaults;
 use charts::select_chart;
-use data::{abs, data_validation_fields, remove_duplicates_header, remove_duplicates_range, validation_defaults};
+use data::{abs, remove_duplicates_header, remove_duplicates_range};
 use find::go_to_entries;
 pub(crate) use names::insert_name;
 use names::pasteable_names;
@@ -945,13 +945,7 @@ impl Dialog {
                     json!({"table": table, "range": range}),
                 )
             }
-            "dataValidation" => Dialog::form(
-                "dataValidation",
-                "Data Validation",
-                "data.validation",
-                data_validation_fields("any", "between"),
-                validation_defaults(app),
-            ),
+            "dataValidation" => data::data_validation_open(app, p("tab").as_str()),
             "cfQuick" => cf_rule::quick(app, &params),
             "newFormattingRule" => cf_rule::open(app, &params),
             "formatCells" => {
@@ -1111,6 +1105,7 @@ impl Dialog {
                 Dialog::custom("sort", "Sort", json!({"header": true, "levels": [{"column": col, "order": "asc"}]}))
             }
             "nameManager" => Dialog::custom("nameManager", "Name Manager", json!({})),
+            "createNames" => names::create_names_open(app),
             "pasteName" => {
                 // F3 opens it only when the workbook has names to paste, as in Excel.
                 let names = pasteable_names(app);

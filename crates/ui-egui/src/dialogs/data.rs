@@ -198,10 +198,50 @@ pub(super) fn abs(r: &gridcraft_engine::core::RangeRef) -> String {
     if r.is_single() { a(r.start) } else { format!("{}:{}", a(r.start), a(r.end)) }
 }
 
+/// The Data Validation dialog's tabs, in Excel's order: the English name `open_dialog`'s `tab` and
+/// `ui.dialog.set` use, and the label drawn.
+pub(super) const DV_TABS: [(&str, &str); 3] =
+    [("Settings", "Data Validation|Settings"), ("Input Message", "Data Validation|Input Message"), ("Error Alert", "Data Validation|Error Alert")];
+
+/// Every field of the Data Validation dialog, tab by tab (Settings, Input Message, Error Alert).
 /// The criterion controls in Excel's Settings tab depend on both Allow and Data.
 /// `formula1` is the sole source for a list or custom rule; `formula2` is a
 /// second bound only for Between and Not between.
 pub(super) fn data_validation_fields(kind: &str, operator: &str) -> Vec<Field> {
+    DV_TABS.iter().flat_map(|(tab, _)| data_validation_tab_fields(tab, kind, operator)).collect()
+}
+
+/// The fields of one tab of the Data Validation dialog.
+pub(super) fn data_validation_tab_fields(tab: &str, kind: &str, operator: &str) -> Vec<Field> {
+    use Field::*;
+    match tab {
+        "Settings" => settings_fields(kind, operator),
+        "Input Message" => vec![
+            Check { key: "showInputMessage", label: "Show input message when cell is selected" },
+            Note("When cell is selected, show this input message:".into()),
+            Text { key: "inputTitle", label: "Data Validation|Title:" },
+            Text { key: "inputMessage", label: "Data Validation|Input message:" },
+        ],
+        "Error Alert" => vec![
+            Check { key: "showErrorMessage", label: "Show error alert after invalid data is entered" },
+            Note("When user enters invalid data, show this error alert:".into()),
+            Choice {
+                key: "errorStyle",
+                label: "Data Validation|Style:",
+                options: vec![
+                    ("stop", "Data Validation|Stop"),
+                    ("warning", "Data Validation|Warning"),
+                    ("information", "Data Validation|Information"),
+                ],
+            },
+            Text { key: "errorTitle", label: "Data Validation|Title:" },
+            Text { key: "errorMessage", label: "Data Validation|Error message:" },
+        ],
+        _ => vec![],
+    }
+}
+
+fn settings_fields(kind: &str, operator: &str) -> Vec<Field> {
     use Field::*;
     let mut fields = vec![Choice {
         key: "type",
@@ -222,7 +262,7 @@ pub(super) fn data_validation_fields(kind: &str, operator: &str) -> Vec<Field> {
         "list" => {
             fields.push(Text { key: "formula1", label: "Source:" });
             fields.push(Check { key: "ignoreBlank", label: "Ignore blank" });
-            fields.push(Check { key: "dropdown", label: "In-cell dropdown" });
+            fields.push(Check { key: "dropdown", label: "Data Validation|In-cell dropdown" });
         }
         "custom" => {
             fields.push(Text { key: "formula1", label: "Formula:" });
@@ -284,27 +324,137 @@ pub(super) fn data_validation_fields(kind: &str, operator: &str) -> Vec<Field> {
         }
         _ => {}
     }
-    // Excel's Input Message tab, then its Error Alert tab, in their order.
-    fields.push(Check { key: "showInputMessage", label: "Show input message when cell is selected" });
-    fields.push(Text { key: "inputTitle", label: "Input message title:" });
-    fields.push(Text { key: "inputMessage", label: "Input message:" });
-    fields.push(Check { key: "showErrorMessage", label: "Show error alert after invalid data is entered" });
-    fields.push(Choice {
-        key: "errorStyle",
-        label: "Error style",
-        options: vec![("stop", "Stop"), ("warning", "Warning"), ("information", "Information")],
-    });
-    fields.push(Text { key: "errorTitle", label: "Error alert title:" });
-    fields.push(Text { key: "errorMessage", label: "Error message:" });
     fields
 }
 
+/// Opens Data Validation on `tab` (Settings when it names none of Settings, Input Message, Error
+/// Alert), on the active cell's rule.
+pub(super) fn data_validation_open(app: &SheetApp, tab: Option<&str>) -> Dialog {
+    let mut d =
+        Dialog::form("dataValidation", "Data Validation", "data.validation", data_validation_fields("any", "between"), validation_defaults(app));
+    d.tab = DV_TABS.iter().map(|(t, _)| *t).find(|t| Some(*t) == tab).unwrap_or("Settings").to_string();
+    d
+}
+
+/// The cells that share the active cell's rule, as `A1:A5,C1:C5`: what Excel's "Apply these
+/// changes to all other cells with the same settings" extends the change to. None when the active
+/// cell has no rule.
+fn same_rule_ranges(app: &SheetApp) -> Option<String> {
+    let doc = app.session.active()?;
+    let dv = doc.wb.active()?.validations.iter().find(|d| d.ranges.iter().any(|r| r.contains(doc.selection.active)))?;
+    Some(dv.ranges.iter().map(|r| r.a1()).collect::<Vec<_>>().join(","))
+}
+
+/// The values "Clear All" leaves: Excel's empty rule (Any value, no messages, the boxes on), which
+/// OK turns into removing the rule.
+fn cleared_values() -> Json {
+    json!({
+        "type": "any",
+        "operator": "between",
+        "ignoreBlank": true,
+        "dropdown": true,
+        "showInputMessage": true,
+        "showErrorMessage": true,
+        "errorStyle": "stop",
+        "inputTitle": "", "inputMessage": "", "errorTitle": "", "errorMessage": ""
+    })
+}
+
+/// Excel's three-tab Data Validation dialog: the tab strip, the shown tab's fields (on Settings
+/// also "Apply these changes to all other cells with the same settings" when the active cell has a
+/// rule), then Clear All at the left and OK and Cancel at the right.
 pub(super) fn data_validation_form(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let lang = crate::i18n::current(ui.ctx());
+    if !DV_TABS.iter().any(|(t, _)| *t == d.tab) {
+        d.tab = "Settings".into();
+    }
+    ui.horizontal(|ui| {
+        for (tab, label) in DV_TABS {
+            if ui.selectable_label(d.tab == tab, lang.tr(label)).clicked() {
+                d.tab = tab.to_string();
+            }
+        }
+    });
+    ui.separator();
+    let kind = d.values.get("type").and_then(Json::as_str).unwrap_or("any").to_string();
+    let operator = d.values.get("operator").and_then(Json::as_str).unwrap_or("between").to_string();
+    if d.tab == "Settings" {
+        ui.label(egui::RichText::new(lang.tr("Validation criteria")).strong());
+    }
+    d.fields = data_validation_tab_fields(&d.tab, &kind, &operator);
+    form_fields(app, ui, d);
+    if d.tab == "Settings" {
+        let same = same_rule_ranges(app);
+        let mut on = d.values.get("applyToAll").and_then(Json::as_bool).unwrap_or(false);
+        ui.add_space(4.0);
+        if ui
+            .add_enabled(same.is_some(), egui::Checkbox::new(&mut on, lang.tr("Apply these changes to all other cells with the same settings")))
+            .changed()
+        {
+            d.values.insert("applyToAll".into(), json!(on));
+            match same.filter(|_| on) {
+                Some(ranges) => {
+                    d.values.insert("sameRanges".into(), json!(ranges));
+                }
+                None => {
+                    d.values.remove("sameRanges");
+                }
+            }
+        }
+    }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        if ui.button(lang.tr("Clear All")).clicked() {
+            let keep: Vec<(String, Json)> =
+                ["applyToAll", "sameRanges", "range"].iter().filter_map(|k| d.values.get(*k).map(|v| (k.to_string(), v.clone()))).collect();
+            d.values = cleared_values().as_object().cloned().unwrap_or_default();
+            d.values.extend(keep);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let t = crate::theme::Tokens::get(ui.ctx());
+            let ok = ui.add(egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("OK"))).color(t.on_accent)).fill(t.accent));
+            if ok.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                *confirm = true;
+            }
+            if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
+                *open = false;
+            }
+        });
+    });
+}
+
+/// Reshapes the Data Validation form into `data.validation` params: only what the chosen Allow and
+/// Data use; the cells sharing the rule when "Apply these changes…" is ticked; and an empty rule
+/// (Any value without messages, what Clear All leaves) as removing the rule, as Excel does.
+pub(super) fn data_validation_params(d: &Dialog, v: &mut Json) {
     let kind = d.values.get("type").and_then(Json::as_str).unwrap_or("any");
     let operator = d.values.get("operator").and_then(Json::as_str).unwrap_or("between");
-    d.fields = data_validation_fields(kind, operator);
-    form_fields(app, ui, d);
-    ok_cancel(ui, confirm, open);
+    let Some(m) = v.as_object_mut() else { return };
+    if !matches!(operator, "between" | "notBetween") || matches!(kind, "any" | "list" | "custom") {
+        m.remove("formula2");
+    }
+    if matches!(kind, "any" | "list" | "custom") {
+        m.remove("operator");
+    }
+    if kind == "any" {
+        m.remove("formula1");
+    }
+    if kind != "list" {
+        m.remove("dropdown");
+    }
+    m.remove("applyToAll");
+    if let Some(ranges) = m.remove("sameRanges").filter(|_| d.values.get("applyToAll").and_then(Json::as_bool) == Some(true)) {
+        m.insert("range".into(), ranges);
+    }
+    let blank = |k: &str| m.get(k).and_then(Json::as_str).is_none_or(|t| t.is_empty());
+    if kind == "any" && ["inputTitle", "inputMessage", "errorTitle", "errorMessage"].iter().all(|k| blank(k)) {
+        let range = m.remove("range");
+        m.clear();
+        if let Some(range) = range {
+            m.insert("range".into(), range);
+        }
+        m.insert("clear".into(), json!(true));
+    }
 }
 
 pub(super) fn advanced_filter_form(app: &SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
@@ -519,5 +669,89 @@ mod data_validation_tests {
         for key in ["inputTitle", "inputMessage", "errorTitle", "errorMessage", "showInputMessage", "showErrorMessage"] {
             assert_eq!(params[key], dialog.values[key], "{key}");
         }
+    }
+
+    #[test]
+    fn three_tabs_in_excel_order_open_on_settings_or_the_named_tab() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        let app = SheetApp::new(session, Default::default());
+        assert_eq!(DV_TABS.map(|(t, _)| t), ["Settings", "Input Message", "Error Alert"]);
+        assert_eq!(data_validation_open(&app, None).tab, "Settings");
+        assert_eq!(data_validation_open(&app, Some("Error Alert")).tab, "Error Alert");
+        let keys = |tab| -> Vec<&str> {
+            data_validation_tab_fields(tab, "list", "between")
+                .iter()
+                .filter_map(|f| match f {
+                    Field::Text { key, .. } | Field::Check { key, .. } | Field::Choice { key, .. } => Some(*key),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(keys("Settings"), ["type", "formula1", "ignoreBlank", "dropdown"]);
+        assert_eq!(keys("Input Message"), ["showInputMessage", "inputTitle", "inputMessage"]);
+        assert_eq!(keys("Error Alert"), ["showErrorMessage", "errorStyle", "errorTitle", "errorMessage"]);
+    }
+
+    #[test]
+    fn excel_wording_in_japanese() {
+        let ja = crate::i18n::Language::Ja;
+        let label = |tab, key: &str| {
+            data_validation_tab_fields(tab, "list", "between")
+                .into_iter()
+                .find_map(|f| match f {
+                    Field::Text { key: k, label } | Field::Check { key: k, label } if k == key => Some(label),
+                    _ => None,
+                })
+                .unwrap()
+        };
+        assert_eq!(DV_TABS.map(|(_, l)| ja.tr(l)), ["設定", "入力時メッセージ", "エラー メッセージ"]);
+        assert_eq!(ja.tr(label("Settings", "dropdown")), "ドロップダウン リストから選択する");
+        assert_eq!(ja.tr(label("Input Message", "inputTitle")), "タイトル:");
+        assert_eq!(ja.tr(label("Input Message", "inputMessage")), "入力時メッセージ:");
+        let Some(Field::Choice { label, options, .. }) = data_validation_tab_fields("Error Alert", "any", "between").into_iter().nth(2) else {
+            panic!()
+        };
+        assert_eq!(ja.tr(label), "スタイル:");
+        assert_eq!(options.iter().map(|(_, t)| ja.tr(t)).collect::<Vec<_>>(), ["停止", "注意", "情報"]);
+        assert_eq!(crate::i18n::Language::En.tr(options[1].1), "Warning");
+    }
+
+    #[test]
+    fn clear_all_then_ok_removes_the_rule() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        session
+            .execute("data.validation", json!({"range": "A1:A3", "type": "whole", "operator": "greater", "formula1": "0", "inputTitle": "Qty"}))
+            .unwrap();
+        session.execute("selection.set", json!({"range": "A1:A3"})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        let mut d = data_validation_open(&app, None);
+        d.values = cleared_values().as_object().cloned().unwrap();
+        let params = build_params(&d);
+        assert_eq!(params, json!({"clear": true}));
+        app.run("data.validation", params).unwrap();
+        assert!(app.session.active().unwrap().wb.active().unwrap().validations.is_empty());
+    }
+
+    #[test]
+    fn apply_to_all_cells_with_the_same_settings_sends_every_range_of_the_rule() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        session.execute("data.validation", json!({"range": "A1:A3,C1:C3", "type": "whole", "operator": "greater", "formula1": "0"})).unwrap();
+        session.execute("selection.set", json!({"range": "A1"})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        assert_eq!(same_rule_ranges(&app).as_deref(), Some("A1:A3,C1:C3"));
+        let mut d = data_validation_open(&app, None);
+        d.values.insert("formula1".into(), json!("10"));
+        d.values.insert("applyToAll".into(), json!(true));
+        d.values.insert("sameRanges".into(), json!("A1:A3,C1:C3"));
+        let params = build_params(&d);
+        assert_eq!(params["range"], "A1:A3,C1:C3");
+        assert!(params.get("applyToAll").is_none() && params.get("sameRanges").is_none());
+        app.run("data.validation", params).unwrap();
+        let rules = app.session.active().unwrap().wb.active().unwrap().validations.clone();
+        assert_eq!(rules.len(), 1);
+        assert_eq!((rules[0].f1.as_str(), rules[0].ranges.len()), ("10", 2));
     }
 }
