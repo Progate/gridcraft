@@ -760,14 +760,8 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
         more_rules(app, ui, json!({"ruleType": "values", "formatStyle": "dataBar"}));
     });
     ui.menu_button(lang.tr("Color Scales"), |ui| {
-        for (label, cols) in [
-            ("Green - Yellow - Red", vec!["#63BE7B", "#FFEB84", "#F8696B"]),
-            ("Red - Yellow - Green", vec!["#F8696B", "#FFEB84", "#63BE7B"]),
-            ("Green - White - Red", vec!["#63BE7B", "#FCFCFF", "#F8696B"]),
-            ("Blue - White - Red", vec!["#5A8AC6", "#FCFCFF", "#F8696B"]),
-            ("White - Green", vec!["#FCFCFF", "#63BE7B"]),
-            ("White - Red", vec!["#FCFCFF", "#F8696B"]),
-        ] {
+        // Excel names a scale from the highest value's colour down; the rule lists stops lowest first.
+        for (label, cols) in COLOR_SCALES {
             if ui.button(lang.tr(label)).clicked() {
                 act(app, "home.conditionalFormat", json!({"rule": {"type": "colorScale", "colors": cols}}));
             }
@@ -775,16 +769,13 @@ fn cf_menu(app: &mut SheetApp, ui: &mut Ui) {
         more_rules(app, ui, json!({"ruleType": "values", "formatStyle": "3color"}));
     });
     ui.menu_button(lang.tr("Icon Sets"), |ui| {
-        for (label, set) in [
-            ("3 Arrows", "3Arrows"),
-            ("3 Traffic Lights", "3TrafficLights1"),
-            ("3 Symbols", "3Symbols"),
-            ("4 Ratings", "4Rating"),
-            ("5 Arrows", "5Arrows"),
-            ("5 Quarters", "5Quarters"),
-        ] {
-            if ui.button(lang.tr(label)).clicked() {
-                act(app, "home.conditionalFormat", json!({"rule": {"type": "iconSet", "set": set}}));
+        for (group, sets) in ICON_SET_GROUPS {
+            ui.label(egui::RichText::new(lang.tr(group)).strong());
+            for set in sets {
+                let label = crate::dialogs::ICON_SET_NAMES.iter().find(|(k, _)| k == set).map_or(set, |(_, name)| name);
+                if ui.button(lang.tr(label)).clicked() {
+                    act(app, "home.conditionalFormat", json!({"rule": {"type": "iconSet", "set": set}}));
+                }
             }
         }
         more_rules(app, ui, json!({"ruleType": "values", "formatStyle": "iconSet"}));
@@ -832,6 +823,70 @@ mod accounting_symbol_tests {
             assert_eq!(out.text.trim(), shown, "{label}");
             let symbol = tag.trim_start_matches("[$").split('-').next().unwrap_or_default();
             assert_eq!(out.fill.map(|(c, at)| (c, out.text[..at].trim_start())), Some((' ', symbol)), "{label}");
+        }
+    }
+}
+
+/// Conditional Formatting ▸ Color Scales, in Excel's gallery order: Excel's name (the highest
+/// value's colour first) and the stops from the lowest value up, as Excel writes them.
+const COLOR_SCALES: [(&str, &[&str]); 12] = [
+    ("Green - Yellow - Red Color Scale", &["#F8696B", "#FFEB84", "#63BE7B"]),
+    ("Red - Yellow - Green Color Scale", &["#63BE7B", "#FFEB84", "#F8696B"]),
+    ("Green - White - Red Color Scale", &["#F8696B", "#FCFCFF", "#63BE7B"]),
+    ("Red - White - Green Color Scale", &["#63BE7B", "#FCFCFF", "#F8696B"]),
+    ("Blue - White - Red Color Scale", &["#F8696B", "#FCFCFF", "#5A8AC6"]),
+    ("Red - White - Blue Color Scale", &["#5A8AC6", "#FCFCFF", "#F8696B"]),
+    ("White - Red Color Scale", &["#F8696B", "#FCFCFF"]),
+    ("Red - White Color Scale", &["#FCFCFF", "#F8696B"]),
+    ("Green - White Color Scale", &["#FCFCFF", "#63BE7B"]),
+    ("White - Green Color Scale", &["#63BE7B", "#FCFCFF"]),
+    ("Green - Yellow Color Scale", &["#FFEF9C", "#63BE7B"]),
+    ("Yellow - Green Color Scale", &["#63BE7B", "#FFEF9C"]),
+];
+
+/// Conditional Formatting ▸ Icon Sets, grouped and ordered as Excel's gallery.
+const ICON_SET_GROUPS: [(&str, &[&str]); 4] = [
+    ("Directional", &["3Arrows", "3ArrowsGray", "3Triangles", "4ArrowsGray", "4Arrows", "5ArrowsGray", "5Arrows"]),
+    ("Shapes", &["3TrafficLights1", "3TrafficLights2", "3Signs", "4TrafficLights", "4RedToBlack"]),
+    ("Indicators", &["3Symbols", "3Symbols2", "3Flags"]),
+    ("Ratings", &["3Stars", "4Rating", "5Quarters", "5Rating", "5Boxes"]),
+];
+
+#[cfg(test)]
+mod color_scale_tests {
+    use super::{COLOR_SCALES, ICON_SET_GROUPS};
+
+    /// Excel names a scale from the top: its first colour is the highest value's (the last stop),
+    /// its last colour the lowest value's (the first stop).
+    #[test]
+    fn color_scale_names_start_with_the_highest_values_colour() {
+        let hex = |name: &str| match name {
+            "Green" => "#63BE7B",
+            "Red" => "#F8696B",
+            "Blue" => "#5A8AC6",
+            "White" => "#FCFCFF",
+            _ => unreachable!("{name}"),
+        };
+        for (label, stops) in COLOR_SCALES {
+            let names: Vec<&str> = label.trim_end_matches(" Color Scale").split(" - ").collect();
+            assert_eq!(names.len(), stops.len(), "{label}");
+            for (name, stop) in names.iter().rev().zip(stops.iter()) {
+                // Yellow is FFEB84 in the middle of a 3-colour scale and FFEF9C at an end.
+                if *name == "Yellow" {
+                    assert!(*stop == "#FFEB84" || *stop == "#FFEF9C", "{label}");
+                } else {
+                    assert_eq!(*stop, hex(name), "{label}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_icon_set_in_the_gallery_has_its_rule_editor_name() {
+        let sets: Vec<&str> = ICON_SET_GROUPS.iter().flat_map(|(_, s)| s.iter().copied()).collect();
+        assert_eq!(sets.len(), crate::dialogs::ICON_SET_NAMES.len());
+        for set in sets {
+            assert!(crate::dialogs::ICON_SET_NAMES.iter().any(|(k, _)| *k == set), "{set}");
         }
     }
 }

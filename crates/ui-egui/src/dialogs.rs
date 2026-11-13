@@ -17,6 +17,7 @@ mod about;
 mod analysis;
 mod autofilter;
 mod cf_rule;
+pub(crate) use cf_rule::ICON_SET_NAMES;
 mod charts;
 mod command_search;
 mod cond_format_rules;

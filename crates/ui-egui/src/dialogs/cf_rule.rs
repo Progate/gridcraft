@@ -87,7 +87,7 @@ const AVERAGES: [(&str, &str); 10] = [
 ];
 
 /// Icon Style names, by the set's file name.
-const ICON_SET_NAMES: [(&str, &str); 20] = [
+pub(crate) const ICON_SET_NAMES: [(&str, &str); 20] = [
     ("3Arrows", "3 Arrows (Colored)"),
     ("3ArrowsGray", "3 Arrows (Gray)"),
     ("3Flags", "3 Flags"),
