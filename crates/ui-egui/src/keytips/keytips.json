@@ -1823,8 +1823,8 @@
   },
   {
    "seq": "AD",
-   "kind": "command",
-   "target": "data.consolidate",
+   "kind": "dialog",
+   "target": "consolidate",
    "excel": "Consolidate",
    "note": ""
   },

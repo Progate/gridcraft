@@ -1928,7 +1928,7 @@ fn keytip_ac_() {
 fn keytip_ad_() {
     let mut h = harness(blank());
     sequence(&mut h, "AD", false);
-    assert!(h.state().message.is_some() || h.state().toast.is_some(), "AD must invoke data.consolidate and surface its missing-params error");
+    assert!(h.state().dialog.is_some(), "AD must open the consolidate dialog");
 }
 
 #[test]
@@ -2349,7 +2349,7 @@ fn keytip_awg_() {
 fn keytip_aws_() {
     let mut h = harness(blank());
     sequence(&mut h, "AWS", false);
-    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AWS must run data.scenarioManager cleanly");
+    assert!(h.state().dialog.is_some(), "AWS must open the scenarioManager dialog");
 }
 
 #[test]

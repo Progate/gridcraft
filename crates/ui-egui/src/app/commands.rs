@@ -133,6 +133,11 @@ impl SheetApp {
         if id == "insert.recommendedCharts" && params.get("type").is_none() {
             return self.open_dialog("recommendedCharts", json!({}));
         }
+        // Consolidate with no sources (command search, a menu) opens its dialog, as Excel's
+        // Data ▸ Consolidate does; programmatic callers of `run` still get the missing-sources error.
+        if id == "data.consolidate" && params.get("sources").is_none_or(Json::is_null) {
+            return self.open_dialog("consolidate", params);
+        }
         // Switch Windows with no window named (key tip, command search) opens the View tab's
         // list to choose from; programmatic callers of `run` get the list back.
         if id == "view.switchWindows" && ["window", "doc"].iter().all(|k| params.get(*k).is_none_or(Json::is_null)) {

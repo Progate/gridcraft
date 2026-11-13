@@ -12,6 +12,10 @@ struct Agg {
     product: f64,
     min: f64,
     max: f64,
+    /// Running mean and sum of squared deviations of the numbers (Welford), for the deviations
+    /// and variances: summing squares instead loses every digit on large, close values.
+    mean: f64,
+    m2: f64,
 }
 
 impl Agg {
@@ -31,12 +35,15 @@ impl Agg {
             self.product *= n;
             self.min = self.min.min(*n);
             self.max = self.max.max(*n);
+            let d = n - self.mean;
+            self.mean += d / self.nums as f64;
+            self.m2 += d * (n - self.mean);
         }
     }
     fn result(&self, func: &str) -> Value {
         match func {
             "count" => Value::number(self.count as f64),
-            "countNums" | "countnums" => Value::number(self.nums as f64),
+            "countNums" => Value::number(self.nums as f64),
             "average" => {
                 if self.nums == 0 {
                     Value::Error(gridcraft_core::CellError::Div0)
@@ -47,6 +54,14 @@ impl Agg {
             "max" => Value::number(if self.nums == 0 { 0.0 } else { self.max }),
             "min" => Value::number(if self.nums == 0 { 0.0 } else { self.min }),
             "product" => Value::number(if self.nums == 0 { 0.0 } else { self.product }),
+            // The sample statistics need two numbers and the population ones one, as STDEV and
+            // STDEVP do; fewer is #DIV/0!.
+            "stdDev" | "var" if self.nums < 2 => Value::Error(gridcraft_core::CellError::Div0),
+            "stdDevP" | "varP" if self.nums == 0 => Value::Error(gridcraft_core::CellError::Div0),
+            "stdDev" => Value::number((self.m2 / (self.nums - 1) as f64).sqrt()),
+            "stdDevP" => Value::number((self.m2 / self.nums as f64).sqrt()),
+            "var" => Value::number(self.m2 / (self.nums - 1) as f64),
+            "varP" => Value::number(self.m2 / self.nums as f64),
             _ => Value::number(self.sum),
         }
     }
@@ -58,6 +73,10 @@ enum Key {
     Pos(u32),
     Label(String),
 }
+
+/// The functions Consolidate summarizes with, in the order of Excel's Function list: `function`
+/// takes one of these names.
+const FUNCTIONS: [&str; 11] = ["sum", "count", "average", "max", "min", "product", "countNums", "stdDev", "stdDevP", "var", "varP"];
 
 const MAX_CONSOLIDATE_CELLS: u64 = 5_000_000;
 
@@ -81,10 +100,11 @@ fn the_output_limit_counts_label_cells() {
 
 pub(super) fn consolidate(s: &mut Session, p: &Json) -> Result<Json> {
     const CMD: &str = "data.consolidate";
-    let func = str_param(p, "function").unwrap_or("sum").to_string();
-    if !["sum", "count", "countNums", "countnums", "average", "max", "min", "product"].contains(&func.as_str()) {
-        return Err(bad(CMD, format!("unknown function `{func}`")));
-    }
+    let given = str_param(p, "function").unwrap_or("sum");
+    // Names match in any case (`countnums`, `StdDev`), as Excel's own function names do.
+    let Some(func) = FUNCTIONS.iter().find(|f| f.eq_ignore_ascii_case(given)).map(|f| f.to_string()) else {
+        return Err(bad(CMD, format!("unknown function `{given}`")));
+    };
     let top = bool_param(p, "topRow").unwrap_or(false);
     let left = bool_param(p, "leftColumn").unwrap_or(false);
     let links = bool_param(p, "links").unwrap_or(false);
@@ -268,7 +288,11 @@ fn write_links(
     let LinkPlan { dsi, dest, top, left, func, book, names } = plan;
     let name = match func {
         "count" => "COUNTA",
-        "countNums" | "countnums" => "COUNT",
+        "countNums" => "COUNT",
+        "stdDev" => "STDEV",
+        "stdDevP" => "STDEVP",
+        "var" => "VAR",
+        "varP" => "VARP",
         "average" => "AVERAGE",
         "max" => "MAX",
         "min" => "MIN",

@@ -21,6 +21,7 @@ pub(crate) use cf_rule::ICON_SET_NAMES;
 mod charts;
 mod command_search;
 mod cond_format_rules;
+mod consolidate;
 mod data;
 mod error_checking;
 mod evaluate_formula;
@@ -755,6 +756,7 @@ impl Dialog {
                 d
             }
             "equation" => return crate::equation::open_editor(app, &params),
+            "consolidate" => consolidate::open(&params),
             "goalSeek" => Dialog::custom("goalSeek", "Goal Seek", json!({"set": active, "to": "0", "changing": ""})),
             "scenarioManager" => scenarios::open(app),
             // Insert ▸ Table (Ctrl+T, Ctrl+L): `insert.table` with `prompt` fills in the current

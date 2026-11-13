@@ -91,7 +91,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Consolidate…",
             ["Data", "Data Tools"],
             None,
-            "{sources: [\"Sheet2!A1:C10\", ..], destination?: \"A1\" (default active cell), function?: sum|count|countNums|average|max|min|product, topRow?: bool, leftColumn?: bool (consolidate by labels; else by position), links?: bool (Create links to source data: a collapsed outline of linked detail rows under each summary formula; sources must be on other sheets)}",
+            "{sources: [\"Sheet2!A1:C10\", ..], destination?: \"A1\" (default active cell), function?: sum|count|average|max|min|product|countNums|stdDev|stdDevP|var|varP (any case), topRow?: bool, leftColumn?: bool (consolidate by labels; else by position), links?: bool (Create links to source data: a collapsed outline of linked detail rows under each summary formula; sources must be on other sheets)}",
             has_doc,
             consolidate
         ),

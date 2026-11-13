@@ -79,6 +79,11 @@ pub(super) fn data(app: &mut SheetApp, ui: &mut Ui) {
             ],
         );
     });
+    let __k = big_button(ui, Icon::Merge, "Data Tools|Consolidate", "Data Tools|Consolidate", false);
+    control_keytip(app, ui, &__k, "dialog:consolidate");
+    if __k.clicked() {
+        app.open_dialog("consolidate", json!({}));
+    }
     sep(ui);
     let wi = big_button(ui, Icon::Calc, "What-If\nAnalysis", "What-If Analysis", true);
     for sequence in

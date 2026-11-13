@@ -392,6 +392,51 @@ fn consolidate_by_position_and_label() {
     assert!(s.execute("data.consolidate", json!({"sources": ["A1"], "function": "median"})).is_err());
 }
 
+/// The deviations and variances of Excel's Function list: sample ones over n-1, population ones
+/// over n, #DIV/0! with too few numbers; names match in any case.
+#[test]
+fn consolidate_deviations_and_variances() {
+    let mut s = s();
+    s.execute("range.setValues", json!({"range": "B1", "values": [[1]]})).unwrap();
+    // Eight one-cell sources by position share one key, so J1 summarizes all eight numbers.
+    s.execute("range.setValues", json!({"range": "A10", "values": [[2, 4, 4, 4, 5, 5, 7, 9]]})).unwrap();
+    let sources: Vec<String> = ["A", "B", "C", "D", "E", "F", "G", "H"].iter().map(|c| format!("Sheet1!{c}10")).collect();
+    for (func, want) in [("stdDev", (32.0f64 / 7.0).sqrt()), ("stdDevP", 2.0), ("var", 32.0 / 7.0), ("VARP", 4.0), ("countnums", 8.0)] {
+        s.execute("data.consolidate", json!({"sources": sources, "destination": "J1", "function": func})).unwrap();
+        assert!((n(&s, "Sheet1!J1") - want).abs() < 1e-12, "{func}: {}", n(&s, "Sheet1!J1"));
+    }
+    s.execute("data.consolidate", json!({"sources": ["Sheet1!B1"], "destination": "J2", "function": "stdDev"})).unwrap();
+    assert_eq!(v(&s, "Sheet1!J2"), Value::Error(gridcraft_core::CellError::Div0));
+    s.execute("data.consolidate", json!({"sources": ["Sheet1!B1"], "destination": "J3", "function": "varP"})).unwrap();
+    assert_eq!(n(&s, "Sheet1!J3"), 0.0);
+}
+
+/// What the Consolidate dialog sends (labels from both sides, a function, the sources as the
+/// reference boxes write them, no destination) lands at the active cell.
+#[test]
+fn consolidate_takes_the_dialogs_params() {
+    let mut s = s();
+    s.execute("home.insertSheet", json!({})).unwrap();
+    s.execute("sheet.rename", json!({"name": "Tokyo"})).unwrap();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["", "Sales"], ["Pens", 10], ["Ink", 4]]})).unwrap();
+    s.execute("home.insertSheet", json!({})).unwrap();
+    s.execute("sheet.rename", json!({"name": "Osaka"})).unwrap();
+    s.execute("range.setValues", json!({"range": "A1", "values": [["", "Sales"], ["Ink", 6], ["Pens", 2]]})).unwrap();
+    s.execute("sheet.activate", json!({"sheet": "Sheet1"})).unwrap();
+    s.execute("selection.set", json!({"range": "C3"})).unwrap();
+    let r = s
+        .execute(
+            "data.consolidate",
+            json!({"function": "max", "sources": ["Tokyo!$A$1:$B$3", "Osaka!$A$1:$B$3"], "topRow": true, "leftColumn": true, "links": false}),
+        )
+        .unwrap();
+    assert_eq!(r["range"], "C3:D5");
+    assert_eq!(v(&s, "Sheet1!D3"), Value::from("Sales"));
+    assert_eq!(v(&s, "Sheet1!C4"), Value::from("Pens"));
+    assert_eq!(n(&s, "Sheet1!D4"), 10.0);
+    assert_eq!(n(&s, "Sheet1!D5"), 6.0);
+}
+
 /// Create links to source data: each label gets a detail row per source that has it, linking to
 /// the source cell, and a summary row over them; the detail rows are a collapsed outline group.
 #[test]

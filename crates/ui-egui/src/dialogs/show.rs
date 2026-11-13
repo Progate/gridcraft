@@ -30,6 +30,7 @@ pub fn build_params(d: &Dialog) -> Json {
             }
         }
         "textImport" => return super::text_import::import_params(d),
+        "consolidate" => return super::consolidate::params(d),
         "createTable" => {
             // The reference box reads `=$A$1:$D$9`, as Excel's; the command takes it without `=`.
             if let Some(r) = d.values.get("range").and_then(Json::as_str).map(|r| r.trim().trim_start_matches('=').to_string()) {
@@ -207,6 +208,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "analysisToolPak" => 420.0,
         "solver" => 460.0,
         "scenarioManager" => 420.0,
+        "consolidate" => 440.0,
         "customAutoFilter" => 440.0,
         "top10AutoFilter" => 320.0,
         "assignAction" => 440.0,
@@ -262,6 +264,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "comboChart" => combo_chart(app, ui, &mut d, &mut confirm, &mut open),
                 "moveChart" => move_chart(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
+                "consolidate" => super::consolidate::consolidate(app, ui, &mut d, &mut confirm, &mut open),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm, &mut open),
                 "scenarioManager" => super::scenarios::scenario_manager(app, ui, &mut d, &mut confirm, &mut open),
                 "convertToRange" => {

@@ -265,7 +265,7 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("MXP", Entry::Finish(Action::Command("formulas.calculationOptions"))), // Excel: Partial Calculation; Calculation options: Partial
     ("AB", Entry::Finish(Action::Dialog("subtotal"))),         // Excel: Subtotal
     ("AC", Entry::Finish(Action::Command("data.clearFilter"))), // Excel: Clear Filter
-    ("AD", Entry::Finish(Action::Command("data.consolidate"))), // Excel: Consolidate
+    ("AD", Entry::Finish(Action::Dialog("consolidate"))),      // Excel: Consolidate
     ("AE", Entry::Finish(Action::Dialog("textToColumns"))),    // Excel: Text to Columns
     ("AF1", Entry::Continue), // Excel: Data from Picture Menu; group level: feature gap; reserved until the command lands
     ("AF1C", Entry::Finish(Action::Command("insert.picture"))), // Excel: Picture from Clipboard (source TBD)

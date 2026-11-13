@@ -1234,7 +1234,6 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Multi-cell array formulas aren't allowed in tables.", "複数セル配列数式はテーブル内では使用できません。"),
     ("The name that you entered is not valid.", "入力した名前は正しくありません。"),
     ("The name entered already exists. Enter a unique name.", "入力された名前は既に存在します。一意の名前を入力してください。"),
-    ("Reference isn't valid.", "参照が正しくありません。"),
     ("Nothing to paste.", "貼り付けるものがありません。"),
     ("This action won't work on multiple selections.", "この操作は複数の選択範囲に対して実行できません。"),
     ("A workbook must contain at least one visible worksheet.", "ブックには、少なくとも 1 つの表示されたワークシートが含まれている必要があります。"),
@@ -2296,6 +2295,33 @@ const FORMAT_CELLS: &[(&str, &str)] = &[
     ),
 ];
 
+/// Data ▸ Consolidate as Japanese Excel words it (統合の設定).
+const CONSOLIDATE: &[(&str, &str)] = &[
+    ("Consolidate", "統合の設定"),
+    ("Data Tools|Consolidate", "統合"),
+    ("Consolidate|Function:", "集計の方法:"),
+    ("Consolidate|Sum", "合計"),
+    ("Consolidate|Count", "個数"),
+    ("Consolidate|Average", "平均"),
+    ("Consolidate|Max", "最大"),
+    ("Consolidate|Min", "最小"),
+    ("Consolidate|Product", "積"),
+    ("Consolidate|Count Numbers", "数値の個数"),
+    ("Consolidate|StdDev", "標本標準偏差"),
+    ("Consolidate|StdDevp", "標準偏差"),
+    ("Consolidate|Var", "標本分散"),
+    ("Consolidate|Varp", "分散"),
+    ("Consolidate|Reference:", "統合元範囲:"),
+    ("Consolidate|All references:", "統合元:"),
+    ("Consolidate|Add", "追加"),
+    ("Consolidate|Delete", "削除"),
+    ("Consolidate|Use labels in", "統合の基準"),
+    ("Consolidate|Top row", "上端行"),
+    ("Consolidate|Left column", "左端列"),
+    ("Consolidate|Create links to source data", "統合元データとリンクする"),
+    ("Add the ranges to consolidate to All references.", "統合する範囲を [統合元] に追加してください。"),
+];
+
 /// Engine messages with one varying part, `{}`: the part is translated by the catalog when it
 /// knows it, else kept.
 const MESSAGE_TEMPLATES: &[(&str, &str)] = &[
@@ -2333,6 +2359,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         .chain(AUTOFILTER)
         .chain(CONDITIONAL_FORMATTING)
         .chain(FORMAT_CELLS)
+        .chain(CONSOLIDATE)
         .find(|(english, _)| *english == text)
         .map(|(_, translated)| *translated)
 }
@@ -2413,6 +2440,20 @@ mod tests {
             catalog_keys().chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).map(|(english, _)| *english)).collect();
         let mut seen = HashSet::new();
         for (english, japanese) in FORMAT_CELLS {
+            assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
+            assert!(!others.contains(english), "{english:?} is already in another list");
+            assert!(seen.insert(*english), "duplicate key: {english:?}");
+            assert_eq!(translate(english), Some(*japanese));
+        }
+    }
+
+    #[test]
+    fn consolidate_labels_are_their_own() {
+        let others: HashSet<&str> = catalog_keys()
+            .chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).chain(FORMAT_CELLS).map(|(english, _)| *english))
+            .collect();
+        let mut seen = HashSet::new();
+        for (english, japanese) in CONSOLIDATE {
             assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
             assert!(!others.contains(english), "{english:?} is already in another list");
             assert!(seen.insert(*english), "duplicate key: {english:?}");

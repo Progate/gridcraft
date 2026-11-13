@@ -67,10 +67,10 @@ struct Home {
     selection: Option<(String, String)>,
 }
 
-/// Whether the dialog has reference boxes: Goal Seek, Solver, Data Analysis, and any form with a
-/// [`Field::Ref`].
+/// Whether the dialog has reference boxes: Goal Seek, Solver, Data Analysis, Scenario Manager,
+/// Consolidate, and any form with a [`Field::Ref`].
 fn has_reference_boxes(d: &Dialog) -> bool {
-    matches!(d.name.as_str(), "goalSeek" | "solver" | "analysisToolPak" | "scenarioManager")
+    matches!(d.name.as_str(), "goalSeek" | "solver" | "analysisToolPak" | "scenarioManager" | "consolidate")
         || d.fields.iter().any(|f| matches!(f, Field::Ref { .. }))
 }
 
