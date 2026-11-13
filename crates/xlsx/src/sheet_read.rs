@@ -350,9 +350,7 @@ pub fn read_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<(Sheet, cr
             _ => {}
         }
     }
-    if let Some(p) = pending_split {
-        apply_split(p, &mut sheet);
-    }
+    apply_split(pending_split, &mut sheet);
     own_table_shorthand(&mut sheet);
     read_sheet_slicers(cx, &rels, &mut sheet)?;
     let read_controls = read_form_controls(cx, &root, &rels, &mut sheet);
@@ -542,7 +540,8 @@ struct PendingSplit {
 
 /// Turns a split pane's bars, in twips from the corner of the window that shows the sheetView's
 /// topLeftCell, into the model's split at the nearest cell boundaries.
-fn apply_split(p: PendingSplit, sheet: &mut Sheet) {
+fn apply_split(p: Option<PendingSplit>, sheet: &mut Sheet) {
+    let Some(p) = p else { return };
     use crate::sheet_write::{SPLIT_COL_HEADER_TWIPS, SPLIT_ROW_HEADER_TWIPS, split_cell};
     let origin = sheet.view_top_left;
     let cols = if p.x > 0.0 {
