@@ -648,8 +648,44 @@ fn fill_spill(sheet: &mut gridcraft_model::Sheet, anchor: CellRef, range: RangeR
 /// Current date-time as a serial (1900 system), from the local clock as Excel reads it: the
 /// system clock (browser clock on wasm) in the local zone, or the zone `TZ` names
 /// (`gridcraft_core::tz`). Falls back to a fixed date only when no clock is available.
+///
+/// `GRIDCRAFT_FIXED_NOW` pins it (`2026-11-13T09:00:00`, `2026-11-13`, or a serial such as
+/// `46339.375`), so a workbook authored with TODAY or NOW is the same on every run; RAND and
+/// friends already draw from a fixed seed.
 pub fn now_serial() -> f64 {
+    if let Some(fixed) = std::env::var("GRIDCRAFT_FIXED_NOW").ok().and_then(|text| parse_fixed_now(&text)) {
+        return fixed;
+    }
     gridcraft_core::date::local_now_ms().map_or(46302.5, gridcraft_core::date::serial_from_unix_ms)
+}
+
+/// `GRIDCRAFT_FIXED_NOW`'s value as a 1900-system serial: an ISO date or date-time (local
+/// time, no zone), or a plain serial number.
+fn parse_fixed_now(text: &str) -> Option<f64> {
+    let text = text.trim();
+    if let Ok(serial) = text.parse::<f64>() {
+        return serial.is_finite().then_some(serial);
+    }
+    let (date, time) = text.split_once(['T', ' ']).unwrap_or((text, "00:00:00"));
+    let mut ymd = date.split('-').map(str::parse::<i64>);
+    let (y, m, d) = (ymd.next()?.ok()?, ymd.next()?.ok()?, ymd.next()?.ok()?);
+    let mut hms = time.split(':').map(str::parse::<f64>);
+    let (h, mi, s) = (hms.next().and_then(Result::ok).unwrap_or(0.0), hms.next().and_then(Result::ok).unwrap_or(0.0), hms.next().and_then(Result::ok).unwrap_or(0.0));
+    let days = gridcraft_core::date::days_from_civil(i32::try_from(y).ok()?, u32::try_from(m).ok()?, u32::try_from(d).ok()?);
+    // 1899-12-30 is serial 0 in the 1900 system (Excel's 1900 leap-year bug included).
+    let epoch = gridcraft_core::date::days_from_civil(1899, 12, 30);
+    Some((days - epoch) as f64 + (h * 3600.0 + mi * 60.0 + s) / 86400.0)
+}
+
+#[cfg(test)]
+mod fixed_now_tests {
+    #[test]
+    fn fixed_now_reads_dates_date_times_and_serials() {
+        assert_eq!(super::parse_fixed_now("2026-11-13"), Some(46339.0));
+        assert_eq!(super::parse_fixed_now("2026-11-13T09:00:00"), Some(46339.375));
+        assert_eq!(super::parse_fixed_now("46339.5"), Some(46339.5));
+        assert_eq!(super::parse_fixed_now("soon"), None);
+    }
 }
 
 /// Evaluates a formula in the context of a cell without storing it (conditional formats, data

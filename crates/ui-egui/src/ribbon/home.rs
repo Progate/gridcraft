@@ -494,11 +494,11 @@ pub(super) fn home(app: &mut SheetApp, ui: &mut Ui) {
                 app,
                 ui,
                 &[
-                    ("Down", "edit.fillDown", json!({})),
-                    ("Right", "edit.fillRight", json!({})),
-                    ("Up", "edit.fillUp", json!({})),
-                    ("Left", "edit.fillLeft", json!({})),
-                    ("Series…", "dialog:series", json!({})),
+                    ("Fill|Down", "edit.fillDown", json!({})),
+                    ("Fill|Right", "edit.fillRight", json!({})),
+                    ("Fill|Up", "edit.fillUp", json!({})),
+                    ("Fill|Left", "edit.fillLeft", json!({})),
+                    ("Fill|Series…", "dialog:series", json!({})),
                     ("Flash Fill", "edit.flashFill", json!({})),
                 ],
             );
