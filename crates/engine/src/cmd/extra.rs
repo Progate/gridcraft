@@ -232,7 +232,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "From Text/CSV",
             ["Data", "Get & Transform Data"],
             None,
-            "{path | name+base64 | text, encoding?: auto|932|65001|1252 (File Origin: Shift-JIS, UTF-8, Windows-1252; default detects), delimiter?: auto|comma|tab|semicolon|space|one character, detect?: first200|all|none (Data Type Detection; none keeps every field as text), sheet?: name (default: the file name), table?: name (default: the file name), prompt?: true (the preview dialog)} → loads into a new sheet of this workbook as a table → {sheet, table, rows, cols, encoding, delimiter}",
+            "{path | name+base64 | text, encoding?: auto|932|65001|1252 (File Origin: Shift-JIS, UTF-8, Windows-1252; default detects), delimiter?: auto|comma|tab|semicolon|space|one character, detect?: first200|all|none (Data Type Detection for the automatic columns; none keeps them as text), columns?: [type | {type} | null by position], types?: {header name: type} (each column's type as Power Query's header menu sets it: auto|text|integer|decimal|date|datetime|time|boolean|skip; text keeps `0101`, skip leaves the column out), sheet?: name (default: the file name), table?: name (default: the file name), prompt?: true (the preview dialog)} → loads into a new sheet of this workbook as a table → {sheet, table, rows, cols, encoding, delimiter}",
             has_doc,
             from_csv
         ),
@@ -241,7 +241,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "From Text/CSV Preview",
             [],
             None,
-            "{path | name+base64 | text, encoding?, delimiter?, detect?} → {encoding, delimiter, detect, rows: [[text]]}: the header and first 20 rows as From Text/CSV would load them",
+            "{path | name+base64 | text, encoding?, delimiter?, detect?, columns?, types?} → {encoding, delimiter, detect, types: [type per column, detected for auto], rows: [[text]]}: the header and first 20 rows as From Text/CSV would load them (skipped columns included; a field that doesn't convert shows Error)",
             has_doc,
             text_import::text_preview
         ),

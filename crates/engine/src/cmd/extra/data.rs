@@ -73,7 +73,7 @@ pub(super) fn from_csv(s: &mut Session, p: &Json) -> Result<Json> {
         // Excel's import preview (File Origin, Delimiter, Data Type Detection, Load): the
         // interface asks `data.textPreview` for what each choice loads.
         let mut params = json!({"encoding": "auto", "delimiter": "auto", "detect": "first200"});
-        for k in ["path", "name", "base64", "text", "sheet"] {
+        for k in ["path", "name", "base64", "text", "sheet", "columns", "types"] {
             if let Some(v) = p.get(k) {
                 params[k] = v.clone();
             }
