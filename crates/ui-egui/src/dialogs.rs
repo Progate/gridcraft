@@ -23,6 +23,7 @@ mod command_search;
 mod cond_format_rules;
 mod data;
 mod error_checking;
+mod evaluate_formula;
 mod find;
 mod format_cells;
 mod insert_function;
@@ -1270,11 +1271,7 @@ impl Dialog {
                 }
                 d
             }
-            "evaluateFormula" => {
-                let mut d = Dialog::custom("evaluateFormula", "Evaluate Formula", json!({}));
-                d.result = app.session.run("formulas.evaluateFormula", json!({})).ok();
-                d
-            }
+            "evaluateFormula" => evaluate_formula::open(app),
             "spelling" => {
                 let mut d = Dialog::custom("spelling", "Spelling", json!({}));
                 d.result = Some(app.session.run("review.spelling", json!({})).unwrap_or_else(|e| json!({"error": e})));

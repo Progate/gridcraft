@@ -9,6 +9,8 @@ use super::{
     target_range, target_ranges, target_sheet, u32_param,
 };
 
+mod walk;
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
@@ -136,7 +138,7 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             error_checking_options
         ),
-        cmd!(query "formulas.evaluateFormula", "Evaluate Formula", ["Formulas", "Formula Auditing"], None, "{cell?, formula?} → steps", has_doc, evaluate_formula),
+        cmd!(query "formulas.evaluateFormula", "Evaluate Formula", ["Formulas", "Formula Auditing"], None, "{cell?, sheet?, formula?} → {formula, result, steps, walk: [{text, underline: [start, end] | null, stepIn: {sheet, cell} | null}]} (walk: the Evaluate Formula dialog's states, the part evaluated next underlined)", has_doc, evaluate_formula),
         cmd!(query "formulas.evaluate", "Evaluate", [], None, "{formula: \"=SUM(A1:A3)\", cell?} → value without changing the sheet; a formula that couldn't be entered in a cell is an error", has_doc, evaluate),
         cmd!(noundo "formulas.calculateNow", "Calculate Now", ["Formulas", "Calculation"], Some("F9"), "{}", has_doc, calc_now),
         cmd!(noundo "formulas.calculateSheet", "Calculate Sheet", ["Formulas", "Calculation"], Some("Shift+F9"), "{}", has_doc, calc_now),
@@ -1133,7 +1135,11 @@ fn error_checking_options(s: &mut Session, p: &Json) -> Result<Json> {
 fn evaluate_formula(s: &mut Session, p: &Json) -> Result<Json> {
     let d = s.doc()?;
     let at = cell_param(s, p, "cell")?.unwrap_or(d.selection.active);
-    let sheet = d.wb.active_sheet();
+    // Step In evaluates a cell of another sheet.
+    let sheet = match str_param(p, "sheet") {
+        Some(name) => d.wb.sheet_index(name).ok_or_else(|| EngineError::Other(format!("no sheet named `{name}`")))?,
+        None => d.wb.active_sheet(),
+    };
     let text = match str_param(p, "formula") {
         Some(f) => f.trim_start_matches('=').to_string(),
         None => {
@@ -1160,7 +1166,15 @@ fn evaluate_formula(s: &mut Session, p: &Json) -> Result<Json> {
         steps.push(json!({"expression": gridcraft_formula::print(e), "value": crate::cmd::inspect::value_json(&v)}));
     }
     let result = gridcraft_calc::recalc::evaluate_expr(&d.wb, sheet, at, &expr);
-    Ok(json!({"formula": format!("={text}"), "steps": steps, "result": crate::cmd::inspect::value_json(&result)}))
+    let walk = walk::walk(&d.wb, sheet, at, expr.clone());
+    Ok(json!({
+        "formula": format!("={text}"),
+        "sheet": d.wb.sheet(sheet).map(|sh| sh.name.clone()),
+        "cell": at.a1(),
+        "steps": steps,
+        "walk": walk,
+        "result": crate::cmd::inspect::value_json(&result),
+    }))
 }
 
 /// Evaluates what typing `formula` into a cell would show. A formula `cell.set` would refuse (it
