@@ -85,8 +85,8 @@ pub(super) fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
         return Err(bad("data.filterBy", "column outside the filter range"));
     }
     let off = col - af.range.start.col;
-    let sys = s.doc()?.wb.date_system;
-    let crit = filter_criterion(p, sys)?;
+    let (sys, region) = (s.doc()?.wb.date_system, s.doc()?.wb.region);
+    let crit = filter_criterion(p, sys, region)?;
     edit(s, |cx| {
         let sh = cx.sheet_mut(sheet)?;
         if let Some(a) = sh.autofilter.as_mut() {
@@ -104,7 +104,7 @@ pub(super) fn filter_by(s: &mut Session, p: &Json) -> Result<Json> {
 }
 
 /// The criterion `data.filterBy` sets from its parameters; `None` clears the column.
-fn filter_criterion(p: &Json, sys: DateSystem) -> Result<Option<FilterCriterion>> {
+fn filter_criterion(p: &Json, sys: DateSystem, region: &gridcraft_core::Region) -> Result<Option<FilterCriterion>> {
     const C: &str = "data.filterBy";
     if bool_param(p, "clear").unwrap_or(false) {
         return Ok(None);
@@ -118,7 +118,7 @@ fn filter_criterion(p: &Json, sys: DateSystem) -> Result<Option<FilterCriterion>
     if let Some(c) = p.get("custom") {
         let cond = |op: &str, value: Option<&Json>| {
             let value = value.map(crate::cmd::edit::json_to_input).unwrap_or_default();
-            custom_filter_condition(op, &date_criterion(&value, sys)).ok_or_else(|| bad(C, format!("unknown custom filter operator `{op}`")))
+            custom_filter_condition(op, &date_criterion(&value, sys, region)).ok_or_else(|| bad(C, format!("unknown custom filter operator `{op}`")))
         };
         let a = cond(c.get("op").and_then(Json::as_str).unwrap_or("="), c.get("value"))?;
         let b = match c.get("op2").and_then(Json::as_str) {
@@ -159,7 +159,19 @@ fn filter_criterion(p: &Json, sys: DateSystem) -> Result<Option<FilterCriterion>
 
 /// A custom filter value typed as a date (`2026/3/4`, `2026-03-04`) becomes its serial number,
 /// which is what Excel stores and compares for date columns; any other value stays as typed.
-fn date_criterion(value: &str, sys: DateSystem) -> String {
+/// In the Japanese region the value is read as a cell entry is there: full-width digits and
+/// symbols from an input method (`１００`, `２０２６/１０/１５`), `¥1,280` and `2026年10月15日`
+/// become the number (or the date's serial) they type in a cell.
+fn date_criterion(value: &str, sys: DateSystem, region: &gridcraft_core::Region) -> String {
+    if region.is_japanese() && !value.contains(['*', '?']) {
+        let parsed = gridcraft_core::parse::parse_input_in(value, sys, region);
+        if let Some(n) = parsed.value.as_f64()
+            && matches!(parsed.value, gridcraft_core::Value::Number(_))
+        {
+            return n.to_string();
+        }
+        return value.to_string();
+    }
     let parsed = gridcraft_core::parse::parse_input(value, sys);
     match (parsed.value.as_f64(), parsed.format) {
         (Some(n), Some(f)) if gridcraft_numfmt::NumberFormat::parse(f).kind() == gridcraft_numfmt::FormatKind::Date => n.to_string(),

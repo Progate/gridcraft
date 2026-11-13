@@ -6453,6 +6453,7 @@ mod region;
 mod repeat;
 mod seams;
 mod sheet_groups;
+mod table_defaults;
 
 #[test]
 fn a_saved_workbook_keeps_its_values_until_an_edit_reaches_them() {

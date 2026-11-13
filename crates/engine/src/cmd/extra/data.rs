@@ -11,6 +11,7 @@ pub(super) fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
     }
     .ok_or_else(|| bad("table.resize", "select a cell in a table"))?;
     edit(s, |cx| {
+        let generated: Vec<String> = (1..=r.width() as usize).map(|n| crate::tables::generated_column_name(&cx.wb, n)).collect();
         let sheet = cx.sheet_mut(si)?;
         let headers: Vec<String> = (r.start.col..=r.end.col).map(|c| sheet.value(CellRef::new(r.start.row, c)).display()).collect();
         if sheet.tables.iter().enumerate().any(|(i, o)| i != ti && o.range.intersects(&r)) {
@@ -24,7 +25,7 @@ pub(super) fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
         }
         let mut cols = Vec::new();
         for (i, h) in headers.iter().enumerate() {
-            let name = if h.is_empty() { format!("Column{}", i + 1) } else { h.clone() };
+            let name = if h.is_empty() { generated.get(i).cloned().unwrap_or_default() } else { h.clone() };
             let existing = t.columns.iter().find(|c| c.name.eq_ignore_ascii_case(&name)).cloned();
             cols.push(existing.unwrap_or(TableColumn {
                 name,
@@ -38,9 +39,12 @@ pub(super) fn table_resize(s: &mut Session, p: &Json) -> Result<Json> {
         let old_end = t.data_range().map_or(t.range.start.row, |d| d.end.row);
         t.columns = cols;
         t.range = r;
-        // Rows the table takes in get its calculated column formulas.
+        // Rows the table takes in get its calculated column formulas and the formats of its last data row.
         if let Some(from) = old_end.checked_add(1) {
             for c in crate::tables::fill_calculated(sheet, ti, from, r.end.row) {
+                cx.changed.push((si, c));
+            }
+            for c in crate::tables::inherit_row_formats(&mut cx.wb, si, ti, old_end, from, r.end.row) {
                 cx.changed.push((si, c));
             }
         }

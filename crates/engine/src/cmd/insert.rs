@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Table",
             ["Insert", "Tables"],
             Some("Cmd+T"),
-            "{range?, header?: true, style?: \"TableStyleMedium2\", name?}",
+            "{range?, header?: true, style?: \"TableStyleMedium2\", name?, prompt?: bool (opens Create Table with the current region and the guessed header box, and makes nothing)}",
             has_doc,
             insert_table
         ),
@@ -63,7 +63,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("table.lastColumn", "Last Column", ["Table", "Table Style Options"], None, "{table?, on?}", has_doc, |s, p| table_flag(s, p, "lastCol")),
         cmd!("table.style", "Table Styles", ["Table", "Table Styles"], None, "{table?, style}", has_doc, table_style),
         cmd!("table.rename", "Table Name", ["Table", "Properties"], None, "{table?, name}", has_doc, table_rename),
-        cmd!("table.convertToRange", "Convert to Range", ["Table", "Tools"], None, "{table?}", has_doc, table_convert),
+        cmd!(
+            "table.convertToRange",
+            "Convert to Range",
+            ["Table", "Tools"],
+            None,
+            "{table?, prompt?: bool (asks first, in the Convert to Range question, and converts nothing)}: the table becomes a normal range keeping its look; structured references to it in formulas, names and charts become A1 references (`=SUM(T[Sales])` → `=SUM($C$2:$C$9)`, sheet-qualified from another sheet; `[@Sales]` → `C2`)",
+            has_doc,
+            table_convert
+        ),
         cmd!(
             "table.totalFunction",
             "Totals Function",
@@ -285,9 +293,33 @@ fn chart_areas(s: &Session, p: &Json) -> Result<Vec<RangeRef>> {
 
 // ---------------------------------------------------------------- tables
 
+/// Whether `r`'s first row reads as headers, as Excel guesses for Create Table's "My table has
+/// headers": every cell of it holds text, and there is a row under it.
+fn first_row_is_header(sh: Option<&gridcraft_model::Sheet>, r: &RangeRef) -> bool {
+    sh.is_some_and(|sh| (r.start.col..=r.end.col).all(|c| sh.value(CellRef::new(r.start.row, c)).is_text()) && r.height() > 1)
+}
+
+/// `$A$1:$D$9`, as Excel's reference boxes show a range.
+fn absolute_a1(r: &RangeRef) -> String {
+    let abs = |c: CellRef| format!("${}${}", gridcraft_core::col_to_letters(c.col), c.row as u64 + 1);
+    if r.is_single() { abs(r.start) } else { format!("{}:{}", abs(r.start), abs(r.end)) }
+}
+
 fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
+    // Create Table's reference box reads `=$A$1:$D$9`, as Excel's does.
+    let typed = str_param(p, "range").and_then(|r| r.trim().strip_prefix('=')).map(|r| with(p, "range", json!(r)));
+    let p = typed.as_ref().unwrap_or(p);
     let r = block(s, p)?;
     let sheet = target_sheet(s, p)?;
+    // Insert ▸ Table, Ctrl+T and Ctrl+L ask first, in Excel's Create Table dialog: the range
+    // (the current region) and whether its first row holds headers.
+    if bool_param(p, "prompt") == Some(true) {
+        let d = s.doc()?;
+        let header = bool_param(p, "header").unwrap_or_else(|| first_row_is_header(d.wb.sheet(sheet), &r));
+        let range = format!("={}", absolute_a1(&r));
+        s.ui_requests.push(crate::UiRequest::Dialog("createTable".into(), json!({"range": range, "header": header})));
+        return Ok(json!({"range": range, "header": header}));
+    }
     let d = s.doc()?;
     if d.wb.sheet(sheet).is_some_and(|sh| sh.tables.iter().any(|t| t.range.intersects(&r))) {
         return Err(EngineError::Other("A table can't overlap another table.".into()));
@@ -301,13 +333,8 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
     if r.count() > 50_000_000 {
         return Err(bad("insert.table", "range too large"));
     }
-    let header = bool_param(p, "header").unwrap_or_else(|| {
-        let sh = d.wb.sheet(sheet);
-        sh.is_some_and(|sh| (r.start.col..=r.end.col).all(|c| sh.value(CellRef::new(r.start.row, c)).is_text()) && r.height() > 1)
-    });
-    let name = str_param(p, "name")
-        .map(str::to_string)
-        .unwrap_or_else(|| (1..).map(|n| format!("Table{n}")).find(|n| d.wb.table(n).is_none()).unwrap_or_else(|| "Table".into()));
+    let header = bool_param(p, "header").unwrap_or_else(|| first_row_is_header(d.wb.sheet(sheet), &r));
+    let name = str_param(p, "name").map(str::to_string).unwrap_or_else(|| crate::tables::next_table_name(&d.wb));
     if !valid_table_name(&name) {
         return Err(EngineError::Other("The name that you entered is not valid.".into()));
     }
@@ -323,8 +350,9 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
     }
     let style = str_param(p, "style").unwrap_or("TableStyleMedium2").to_string();
     let id = d.wb.next_object_id();
+    let generated: Vec<String> = (1..=r.width() as usize).map(|n| crate::tables::generated_column_name(&d.wb, n)).collect();
     edit(s, |cx| {
-        // Without a header row, insert one with generic names.
+        // Without a header row, insert one with generic names (`Column1`, Japanese `列1`).
         let r = if header {
             r
         } else {
@@ -343,7 +371,7 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
             rewrite(cx, &name, &e)?;
             let sh = cx.sheet_mut(sheet)?;
             for (i, c) in (r.start.col..=r.end.col).enumerate() {
-                sh.set_value(CellRef::new(r.start.row, c), gridcraft_core::Value::text(format!("Column{}", i + 1)));
+                sh.set_value(CellRef::new(r.start.row, c), gridcraft_core::Value::text(generated.get(i).map_or("", String::as_str)));
             }
             cx.structural = true;
             RangeRef::new(r.start, CellRef::new((r.end.row + 1).min(MAX_ROWS - 1), r.end.col))
@@ -357,7 +385,7 @@ fn insert_table(s: &mut Session, p: &Json) -> Result<Json> {
         for c in r.start.col..=r.end.col {
             let mut n = sh.value(CellRef::new(r.start.row, c)).display();
             if n.is_empty() {
-                n = format!("Column{}", c - r.start.col + 1);
+                n = generated.get((c - r.start.col) as usize).cloned().unwrap_or_default();
             }
             let base = n.clone();
             let key = base.to_ascii_lowercase();
@@ -606,11 +634,19 @@ fn table_rename(s: &mut Session, p: &Json) -> Result<Json> {
 
 fn table_convert(s: &mut Session, p: &Json) -> Result<Json> {
     let (si, ti) = find_table(s, p)?;
+    // The ribbon button asks first, as Excel does ("Do you want to convert the table to a normal range?").
+    if bool_param(p, "prompt") == Some(true) {
+        let name = s.doc()?.wb.sheet(si).and_then(|sh| sh.tables.get(ti)).map(|t| t.name.clone()).unwrap_or_default();
+        s.ui_requests.push(crate::UiRequest::Dialog("convertToRange".into(), json!({"table": name})));
+        return Ok(json!({"table": name}));
+    }
     edit(s, |cx| {
         // Apply the table look as plain formatting, then drop the table.
         let wb = &mut cx.wb;
         let Some(t) = wb.sheet(si).and_then(|sh| sh.tables.get(ti)).cloned() else { return Ok(Json::Null) };
         let looks: Vec<(CellRef, Style)> = t.range.iter().map(|c| (c, crate::tables::table_cell_style(wb, si, &t, c))).collect();
+        // Structured references to the table become the A1 references they stand for.
+        crate::tables::unstructure(wb, si, &t);
         for (c, st) in looks {
             let id = wb.styles.intern(st);
             if let Some(sh) = wb.sheet_mut(si) {

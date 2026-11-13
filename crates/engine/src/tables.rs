@@ -194,7 +194,7 @@ pub(crate) fn sync_headers(cx: &mut crate::cmd::Ctx) {
         if taken.get(&old.to_lowercase()) == Some(&col) {
             taken.remove(&old.to_lowercase());
         }
-        let base = if text.trim().is_empty() { format!("Column{}", col + 1) } else { text.clone() };
+        let base = if text.trim().is_empty() { generated_column_name(&cx.wb, col + 1) } else { text.clone() };
         let k = next.entry(base.to_lowercase()).or_insert(2);
         let mut name = base.clone();
         while taken.contains_key(&name.to_lowercase()) {
@@ -251,6 +251,208 @@ pub(crate) fn sync_headers(cx: &mut crate::cmd::Ctx) {
     cx.structural = true;
 }
 
+/// The name Excel gives a new table before its number: `Table` (`Table1`), and `テーブル`
+/// (`テーブル1`) in Japanese, where Japanese Excel runs (the workbook's region is ja-JP).
+pub(crate) fn table_name_base(wb: &Workbook) -> &'static str {
+    if wb.region.is_japanese() { "テーブル" } else { "Table" }
+}
+
+/// The first `Table<n>` (`テーブル<n>` in Japanese) no table of `wb` has.
+pub(crate) fn next_table_name(wb: &Workbook) -> String {
+    let base = table_name_base(wb);
+    (1u32..).map(|n| format!("{base}{n}")).find(|n| wb.table(n).is_none()).unwrap_or_else(|| base.to_string())
+}
+
+/// The name of a generated table column `n` (1-based): `Column<n>`, `列<n>` in Japanese, as
+/// Excel names the columns of a table without headers or a column added beside one.
+pub(crate) fn generated_column_name(wb: &Workbook, n: usize) -> String {
+    if wb.region.is_japanese() { format!("列{n}") } else { format!("Column{n}") }
+}
+
+/// Rows `r0..=r1` added to table `ti` take, column by column, the cell formats of row `from`
+/// (the data row they follow), as Excel does when a table grows or rows are inserted in it: the
+/// number format, font, fill, alignment and borders. A cell that already has a format of its own
+/// keeps it, except one that only has the number format typing gave it (a date typed into a new
+/// row), which keeps that number format on top of the column's other formats. Returns the cells
+/// changed.
+pub(crate) fn inherit_row_formats(wb: &mut Workbook, sheet: usize, ti: usize, from: u32, r0: u32, r1: u32) -> Vec<CellRef> {
+    let Some(sh) = wb.sheet(sheet) else { return Vec::new() };
+    let Some(t) = sh.tables.get(ti) else { return Vec::new() };
+    let Some(data) = t.data_range() else { return Vec::new() };
+    if !(data.start.row..=data.end.row).contains(&from) {
+        return Vec::new();
+    }
+    let (r0, r1) = (r0.max(data.start.row), r1.min(data.end.row));
+    if r0 > r1 {
+        return Vec::new();
+    }
+    let normal = wb.styles.get(gridcraft_model::StyleId::DEFAULT).clone();
+    let mut plan = Vec::new();
+    for col in data.start.col..=data.end.col {
+        let above = sh.style_id(CellRef::new(from, col));
+        if above == gridcraft_model::StyleId::DEFAULT {
+            continue;
+        }
+        for row in r0..=r1 {
+            let c = CellRef::new(row, col);
+            if row == from {
+                continue;
+            }
+            let own = sh.style_id(c);
+            if own == above {
+                continue;
+            }
+            if own == gridcraft_model::StyleId::DEFAULT {
+                plan.push((c, above, None));
+                continue;
+            }
+            let st = wb.styles.get(own);
+            if (Style { num_fmt: normal.num_fmt.clone(), ..st.clone() }) == normal {
+                plan.push((c, above, Some(st.num_fmt.clone())));
+            }
+        }
+    }
+    let mut out = Vec::with_capacity(plan.len());
+    for (c, above, num_fmt) in plan {
+        let id = match num_fmt {
+            Some(f) => wb.styles.derive(above, |s| s.num_fmt = f),
+            None => above,
+        };
+        if let Some(sh) = wb.sheet_mut(sheet) {
+            sh.set_style(c, id);
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// The A1 reference structured reference `st` to table `t` stands for, as Excel's Convert to Range
+/// writes it: absolute (`$H$2:$H$43`), except a this-row reference (`[@金額]`), which becomes the
+/// relative cell of the formula's row (`H2`). `sheet` qualifies it (a formula on another sheet, or
+/// a defined name). A part the table lacks (`[#Totals]` without a total row, an unknown column, a
+/// this-row reference outside the table's rows) is `#REF!`.
+fn struct_as_a1(st: &gridcraft_formula::StructRef, t: &Table, sheet: Option<&str>, at: Option<CellRef>) -> gridcraft_formula::Expr {
+    use gridcraft_formula::{Anchor, Expr, RefKind, Reference, SheetSel, StructItem};
+    let bad = Expr::Error(gridcraft_core::CellError::Ref);
+    let items = &st.specifiers;
+    let data = t.data_range();
+    let this_row = items.contains(&StructItem::ThisRow);
+    let (r0, r1) = if items.is_empty() || items == &[StructItem::Data] {
+        match data {
+            Some(d) => (d.start.row, d.end.row),
+            None => return bad,
+        }
+    } else if this_row {
+        match at {
+            Some(c) if (t.range.start.row..=t.range.end.row).contains(&c.row) => (c.row, c.row),
+            _ => return bad,
+        }
+    } else if items.contains(&StructItem::All) {
+        (t.range.start.row, t.range.end.row)
+    } else {
+        let mut span: Option<(u32, u32)> = None;
+        let mut add = |a: u32, b: u32| span = Some(span.map_or((a, b), |(x, y)| (x.min(a), y.max(b))));
+        if items.contains(&StructItem::Headers) {
+            if !t.header_row {
+                return bad;
+            }
+            add(t.range.start.row, t.range.start.row);
+        }
+        if items.contains(&StructItem::Data)
+            && let Some(d) = data
+        {
+            add(d.start.row, d.end.row);
+        }
+        if items.contains(&StructItem::Totals) {
+            if !t.totals_row {
+                return bad;
+            }
+            add(t.range.end.row, t.range.end.row);
+        }
+        match span {
+            Some(s) => s,
+            None => return bad,
+        }
+    };
+    let (mut c0, mut c1) = (t.range.start.col, t.range.end.col);
+    if let Some(a) = &st.col_start {
+        let Some(i) = t.column_index(a) else { return bad };
+        c0 = t.range.start.col + i as u32;
+        c1 = c0;
+        if let Some(b) = &st.col_end {
+            let Some(j) = t.column_index(b) else { return bad };
+            let cj = t.range.start.col + j as u32;
+            (c0, c1) = (c0.min(cj), c0.max(cj));
+        }
+    }
+    let abs = !this_row;
+    let anchor = |row: u32, col: u32| Anchor { row, col, row_abs: abs, col_abs: abs };
+    let kind = if r0 == r1 && c0 == c1 { RefKind::Cell(anchor(r0, c0)) } else { RefKind::Range(anchor(r0, c0), anchor(r1, c1)) };
+    let sheet = sheet.map_or(SheetSel::Current, |n| SheetSel::Named(n.to_string()));
+    Expr::Ref(Reference { sheet, kind })
+}
+
+/// `e` with its structured references to table `t` (on the sheet named `tsheet`) written as A1
+/// references (see [`struct_as_a1`]), for a formula on sheet `host` in cell `at` (`None` for a
+/// defined name, always sheet-qualified, or a chart's reference). A bare table name (`=SUM(注文)`)
+/// is its data rows, unless `bare` is false (a defined name of that name hides the table).
+/// `None` when nothing changed.
+fn unstructure_expr(
+    e: &gridcraft_formula::Expr,
+    t: &Table,
+    tsheet: &str,
+    host: Option<&str>,
+    at: Option<CellRef>,
+    bare: bool,
+) -> Option<gridcraft_formula::Expr> {
+    use gridcraft_formula::Expr;
+    let same = host.is_some_and(|h| h.eq_ignore_ascii_case(tsheet));
+    let qualifier = if same { None } else { Some(tsheet) };
+    let mut hit = false;
+    let ne = e.clone().map(&mut |x| match x {
+        Expr::Struct(st) if st.table.eq_ignore_ascii_case(&t.name) || (st.table.is_empty() && same && at.is_some_and(|c| t.range.contains(c))) => {
+            hit = true;
+            struct_as_a1(&st, t, qualifier, at)
+        }
+        Expr::Name(n) if bare && n.eq_ignore_ascii_case(&t.name) => {
+            hit = true;
+            struct_as_a1(&gridcraft_formula::StructRef { table: n, specifiers: vec![], col_start: None, col_end: None }, t, qualifier, at)
+        }
+        o => o,
+    });
+    hit.then_some(ne)
+}
+
+/// Rewrites every structured reference to table `t` of sheet `si`, in cell formulas, defined
+/// names and charts' references, as the A1 reference it stands for: Convert to Range, which then
+/// removes the table, leaves formulas that work without it, as Excel does.
+pub(crate) fn unstructure(wb: &mut Workbook, si: usize, t: &Table) {
+    let Some(tsheet) = wb.sheet(si).map(|s| s.name.clone()) else { return };
+    for i in 0..wb.sheets.len() {
+        let host = wb.sheets.get(i).map(|s| s.name.clone()).unwrap_or_default();
+        let bare = wb.name(&t.name, i).is_none() && !wb.names.iter().any(|n| n.scope.is_none() && n.name.eq_ignore_ascii_case(&t.name));
+        let formulas: Vec<(CellRef, std::sync::Arc<Formula>)> =
+            wb.sheets.get(i).map(|s| s.cells.iter().filter_map(|(c, x)| x.formula.clone().map(|f| (c, f))).collect()).unwrap_or_default();
+        let Some(sh) = wb.sheet_mut(i) else { continue };
+        for (c, f) in formulas {
+            let Some(e) = f.expr() else { continue };
+            let Some(ne) = unstructure_expr(&e, t, &tsheet, Some(&host), Some(c), bare) else { continue };
+            if let Some(cell) = sh.cells.get_mut(c) {
+                cell.formula = Some(std::sync::Arc::new(Formula { array: f.array, dynamic: f.dynamic, ..Formula::from_expr(ne) }));
+            }
+        }
+    }
+    let bare = !wb.names.iter().any(|n| n.name.eq_ignore_ascii_case(&t.name));
+    for n in wb.names.iter_mut() {
+        if let Ok(e) = gridcraft_formula::parse_name(&n.formula)
+            && let Some(ne) = unstructure_expr(&e, t, &tsheet, None, None, bare)
+        {
+            n.formula = gridcraft_formula::print(&ne);
+        }
+    }
+    crate::cmd::edit::rewrite_cell_links(wb, |_, e| unstructure_expr(&e, t, &tsheet, None, None, bare).unwrap_or(e));
+}
+
 /// The first name `base`, `base2`, `base3`… no column of `t` has (names compare without case).
 fn unique_column_name(t: &Table, base: &str) -> String {
     let taken = |n: &str| t.columns.iter().any(|c| c.name.eq_ignore_ascii_case(n));
@@ -264,8 +466,9 @@ fn unique_column_name(t: &Table, base: &str) -> String {
 /// in the row directly below it (within its columns) adds that row, and content in the column
 /// directly right of it (within its header and data rows) adds that column. A table with a total
 /// row does not grow down, and nothing grows into another table. The new column is named by its
-/// header cell, or `Column<n>` (n its position) when that cell is blank, which is written into it.
-/// New rows get the table's calculated column formulas. `area` is what the command wrote.
+/// header cell, or `Column<n>` (n its position; `列<n>` in Japanese) when that cell is blank, which
+/// is written into it. New rows get the table's calculated column formulas and the formats of the
+/// row above (see [`inherit_row_formats`]). `area` is what the command wrote.
 pub(crate) fn auto_expand(cx: &mut crate::cmd::Ctx, sheet: usize, area: RangeRef) {
     let Some(sh) = cx.wb.sheet(sheet) else { return };
     if sh.tables.is_empty() {
@@ -296,6 +499,9 @@ pub(crate) fn auto_expand(cx: &mut crate::cmd::Ctx, sheet: usize, area: RangeRef
             for c in fill_calculated(sh, ti, row, row) {
                 cx.changed.push((sheet, c));
             }
+            for c in inherit_row_formats(&mut cx.wb, sheet, ti, row.saturating_sub(1), row, row) {
+                cx.changed.push((sheet, c));
+            }
             grown = true;
         }
         // Right: beside the header and data rows (not the total row).
@@ -314,7 +520,7 @@ pub(crate) fn auto_expand(cx: &mut crate::cmd::Ctx, sheet: usize, area: RangeRef
             }
             let header = CellRef::new(t.range.start.row, col);
             let typed = if t.header_row { sh.value(header).display() } else { String::new() };
-            let base = if typed.trim().is_empty() { format!("Column{}", t.columns.len() + 1) } else { typed.clone() };
+            let base = if typed.trim().is_empty() { generated_column_name(&cx.wb, t.columns.len() + 1) } else { typed.clone() };
             let name = unique_column_name(t, &base);
             let header_row = t.header_row;
             let Some(sh) = cx.wb.sheet_mut(sheet) else { return };
@@ -432,7 +638,8 @@ pub(crate) fn calculated_entry(cx: &mut crate::cmd::Ctx, sheet: usize, at: CellR
 }
 
 /// Rows inserted inside a table (whole rows, or cells shifted down across its columns) get its
-/// calculated column formulas, as in Excel.
+/// calculated column formulas and the formats of the data row above them (of the row below, when
+/// they go in above the first data row), as in Excel.
 pub(crate) fn fill_inserted_rows(cx: &mut crate::cmd::Ctx) {
     use gridcraft_formula::adjust::{Axis, Edit};
     if cx.edits.is_empty() {
@@ -453,11 +660,20 @@ pub(crate) fn fill_inserted_rows(cx: &mut crate::cmd::Ctx) {
         .collect();
     for (name, r0, r1, cols) in inserted {
         let Some(si) = cx.wb.sheet_index(&name) else { continue };
-        let Some(sh) = cx.wb.sheet_mut(si) else { continue };
-        for ti in 0..sh.tables.len() {
-            let Some(t) = sh.tables.get(ti) else { continue };
+        let count = cx.wb.sheet(si).map_or(0, |sh| sh.tables.len());
+        for ti in 0..count {
+            let Some(t) = cx.wb.sheet(si).and_then(|sh| sh.tables.get(ti)) else { continue };
             // Cells shifted down within part of a table's columns don't make table rows.
-            if cols.is_some_and(|(c0, c1)| c0 > t.range.start.col || c1 < t.range.end.col) || t.columns.iter().all(|c| c.formula.is_none()) {
+            if cols.is_some_and(|(c0, c1)| c0 > t.range.start.col || c1 < t.range.end.col) {
+                continue;
+            }
+            let Some(data) = t.data_range() else { continue };
+            let from = if r0 > data.start.row { r0 - 1 } else { r1.saturating_add(1) };
+            for c in inherit_row_formats(&mut cx.wb, si, ti, from, r0, r1) {
+                cx.changed.push((si, c));
+            }
+            let Some(sh) = cx.wb.sheet_mut(si) else { continue };
+            if sh.tables.get(ti).is_some_and(|t| t.columns.iter().all(|c| c.formula.is_none())) {
                 continue;
             }
             for c in fill_calculated(sh, ti, r0, r1) {
