@@ -1309,6 +1309,9 @@
    "seq": "NT",
    "kind": "command",
    "target": "insert.table",
+   "params": {
+    "prompt": true
+   },
    "excel": "Table",
    "note": ""
   },

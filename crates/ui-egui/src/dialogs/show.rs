@@ -30,6 +30,12 @@ pub fn build_params(d: &Dialog) -> Json {
             }
         }
         "textImport" => return super::text_import::import_params(d),
+        "createTable" => {
+            // The reference box reads `=$A$1:$D$9`, as Excel's; the command takes it without `=`.
+            if let Some(r) = d.values.get("range").and_then(Json::as_str).map(|r| r.trim().trim_start_matches('=').to_string()) {
+                v["range"] = json!(r);
+            }
+        }
         "pivotGroup" => {
             if let Some(m) = v.as_object_mut() {
                 // Typing a bound turns its Auto box off, as in Excel's Grouping dialog.
@@ -273,6 +279,10 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm, &mut open),
                 "scenarioManager" => super::scenarios::scenario_manager(app, ui, &mut d, &mut confirm, &mut open),
+                "convertToRange" => {
+                    form_fields(app, ui, &mut d);
+                    yes_no(ui, &mut confirm, &mut open);
+                }
                 "customAutoFilter" => super::autofilter::custom_autofilter(app, ui, &mut d, &mut confirm, &mut open),
                 "top10AutoFilter" => super::autofilter::top10_autofilter(app, ui, &mut d, &mut confirm, &mut open),
                 "equation" => crate::equation::editor(app, ui, &mut d, &mut confirm, &mut open),
@@ -618,6 +628,24 @@ pub(super) fn ok_cancel(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) 
             }
             if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
                 *open = false;
+            }
+        })
+    });
+}
+
+/// Yes and No, for a question (Convert to Range): Yes (or Enter) confirms, No closes.
+pub(super) fn yes_no(ui: &mut egui::Ui, confirm: &mut bool, open: &mut bool) {
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let lang = crate::i18n::current(ui.ctx());
+            let t = crate::theme::Tokens::get(ui.ctx());
+            if ui.button(format!(" {} ", lang.tr("No"))).clicked() {
+                *open = false;
+            }
+            let yes = ui.add(egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("Yes"))).color(t.on_accent)).fill(t.accent));
+            if yes.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                *confirm = true;
             }
         })
     });

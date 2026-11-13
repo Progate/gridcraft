@@ -34,7 +34,7 @@ pub(super) fn table_design(app: &mut SheetApp, ui: &mut Ui) {
     let __k = big_button(ui, Icon::Table, "Convert\nto Range", "Convert to Range", false);
     control_keytip(app, ui, &__k, "table.convertToRange");
     if __k.clicked() {
-        act(app, "table.convertToRange", json!({"table": tname}));
+        act(app, "table.convertToRange", json!({"table": tname, "prompt": true}));
     }
     sep(ui);
     if big_button(ui, Icon::Filter, "Insert\nSlicer", "Insert Slicer", false).clicked() {

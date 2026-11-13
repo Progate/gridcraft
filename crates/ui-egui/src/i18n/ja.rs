@@ -1255,6 +1255,12 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
         "How would you describe this object and its context to someone who is blind or has low vision?",
         "このオブジェクトとそのコンテキストを、視覚に障碍のある方にどのように説明しますか?",
     ),
+    ("Create Table", "テーブルの作成"),
+    ("Where is the data for your table?", "テーブルに変換するデータ範囲を指定してください"),
+    ("My table has headers", "先頭行をテーブルの見出しとして使用する"),
+    ("Do you want to convert the table to a normal range?", "テーブルを標準の範囲に変換しますか?"),
+    ("Yes", "はい"),
+    ("No", "いいえ"),
 ];
 
 /// Labels of the ribbon menus, pop-ups and palettes that the reference catalog does not cover (the

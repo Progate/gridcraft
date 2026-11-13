@@ -184,7 +184,8 @@ fn lookup_platform_letters(ctx: LookupContext) -> Option<Shortcut> {
         // Ctrl+Shift+U (Control+Shift+U in Excel for Mac) expands or collapses the formula bar.
         U if ctrl && s => run("view.expandFormulaBar"),
         U if ctrl && mac && !s => Shortcut::Edit,
-        L if cmd => run("insert.table"),
+        // Ctrl+L, like Ctrl+T, opens Create Table.
+        L if cmd => Shortcut::Run("insert.table", json!({"prompt": true})),
         E if cmd && mac && !s => run("home.alignCenter"),
         E if ctrl && mac && !s => run("edit.flashFill"),
         F if cmd && s && !mac => Shortcut::Dialog("formatCells", json!({"tab": "Font"})),

@@ -190,7 +190,7 @@ pub const SEQUENCES: &[(&str, Entry)] = &[
     ("NSP", Entry::Finish(Action::Command("insert.recommendedPivotTables"))), // Excel: Recommended PivotTables
     ("NST", Entry::Finish(Action::Pending("insert.timeline"))), // pending; Excel: Timeline; insert.timeline missing (gap #8); reserved until the command lands
     ("NSZ", Entry::Finish(Action::Command("insert.pivotChart"))), // Excel: PivotChart; PivotChart; reserved until the command lands
-    ("NT", Entry::Finish(Action::Command("insert.table"))),     // Excel: Table
+    ("NT", Entry::Finish(Action::CommandWith("insert.table", "{\"prompt\":true}"))), // Excel: Table
     ("NU", Entry::Finish(Action::Command("insert.symbol"))),    // Excel: Symbols; containment(Symbol)
     ("NZS", Entry::Finish(Action::Command("insert.symbol"))),   // Excel: Excel: Symbol (modern)
     ("NV", Entry::Finish(Action::Command("insert.pivotTable"))), // Excel: PivotTable

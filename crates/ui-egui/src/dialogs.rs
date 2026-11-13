@@ -752,6 +752,26 @@ impl Dialog {
             "equation" => return crate::equation::open_editor(app, &params),
             "goalSeek" => Dialog::custom("goalSeek", "Goal Seek", json!({"set": active, "to": "0", "changing": ""})),
             "scenarioManager" => scenarios::open(app),
+            // Insert ▸ Table (Ctrl+T, Ctrl+L): `insert.table` with `prompt` fills in the current
+            // region and whether its first row looks like headers, as Excel's Create Table does.
+            "createTable" => Dialog::form(
+                "createTable",
+                "Create Table",
+                "insert.table",
+                vec![Ref { key: "range", label: "Where is the data for your table?" }, Check { key: "header", label: "My table has headers" }],
+                json!({
+                    "range": p("range").as_str().map(str::to_string).unwrap_or_else(|| format!("={sel}")),
+                    "header": p("header").as_bool().unwrap_or(true),
+                }),
+            ),
+            // Table Design ▸ Convert to Range asks first, as Excel does.
+            "convertToRange" => Dialog::form(
+                "convertToRange",
+                "Convert to Range",
+                "table.convertToRange",
+                vec![Note("Do you want to convert the table to a normal range?".into())],
+                json!({"table": p("table")}),
+            ),
             "customAutoFilter" => autofilter::open_custom(app, &params)?,
             "top10AutoFilter" => autofilter::open_top10(app, &params)?,
             "forecastSheet" => Dialog::form(
@@ -1330,6 +1350,47 @@ mod tests {
         assert_eq!(build_params(&dialog)["range"], "B2:C5");
         dialog.set_value("range", json!("D2:E6"));
         assert_eq!(build_params(&dialog)["range"], "D2:E6");
+    }
+
+    /// Insert ▸ Table opens Create Table on the current region with the header box guessed; OK
+    /// makes the table from what the box shows (`=$B$2:$C$4`).
+    #[test]
+    fn insert_table_opens_create_table_and_ok_makes_it() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        session.execute("range.setValues", json!({"range": "B2", "values": [["name", "qty"], ["a", 1], ["b", 2]]})).unwrap();
+        session.execute("selection.set", json!({"range": "C3"})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        app.run("insert.table", json!({"prompt": true})).unwrap();
+        app.after_engine();
+        let mut d = app.dialog.take().unwrap();
+        assert_eq!(d.name(), "createTable");
+        assert_eq!((d.values["range"].as_str(), d.values["header"].as_bool()), (Some("=$B$2:$C$4"), Some(true)));
+        assert!(d.fields.iter().any(|f| matches!(f, Field::Ref { key: "range", .. })));
+        assert!(app.session.active().unwrap().wb.active().unwrap().tables.is_empty(), "nothing is made before OK");
+        d.set_value("header", json!(false));
+        let params = build_params(&d);
+        assert_eq!(params["range"], "$B$2:$C$4");
+        app.run(d.command.unwrap(), params).unwrap();
+        let t = app.session.active().unwrap().wb.active().unwrap().tables[0].clone();
+        assert_eq!((t.name.as_str(), t.range.a1().as_str()), ("Table1", "B2:C5"));
+    }
+
+    /// Convert to Range asks first; Yes converts the table.
+    #[test]
+    fn convert_to_range_asks_first() {
+        let mut session = gridcraft_engine::Session::default();
+        session.new_workbook();
+        session.execute("range.setValues", json!({"range": "A1", "values": [["a"], [1]]})).unwrap();
+        session.execute("insert.table", json!({"range": "A1:A2"})).unwrap();
+        let mut app = SheetApp::new(session, Default::default());
+        app.run("table.convertToRange", json!({"table": "Table1", "prompt": true})).unwrap();
+        app.after_engine();
+        let d = app.dialog.take().unwrap();
+        assert_eq!(d.name(), "convertToRange");
+        assert_eq!(app.session.active().unwrap().wb.active().unwrap().tables.len(), 1, "nothing changes before Yes");
+        app.run(d.command.unwrap(), build_params(&d)).unwrap();
+        assert!(app.session.active().unwrap().wb.active().unwrap().tables.is_empty());
     }
 
     /// Right-click ▸ Group… on a number item opens Grouping with the field's smallest and largest

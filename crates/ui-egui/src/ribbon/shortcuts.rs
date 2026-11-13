@@ -44,7 +44,7 @@ pub fn shortcut(app: &mut SheetApp, key: Key, m: Modifiers) {
             None
         }
         Key::T if shift => Some(("formulas.autoSum", json!({}))),
-        Key::T => Some(("insert.table", json!({}))),
+        Key::T => Some(("insert.table", json!({"prompt": true}))),
         Key::E => Some(("edit.flashFill", json!({}))),
         Key::Num1 => {
             app.open_dialog("formatCells", json!({}));
