@@ -670,7 +670,11 @@ fn parse_fixed_now(text: &str) -> Option<f64> {
     let mut ymd = date.split('-').map(str::parse::<i64>);
     let (y, m, d) = (ymd.next()?.ok()?, ymd.next()?.ok()?, ymd.next()?.ok()?);
     let mut hms = time.split(':').map(str::parse::<f64>);
-    let (h, mi, s) = (hms.next().and_then(Result::ok).unwrap_or(0.0), hms.next().and_then(Result::ok).unwrap_or(0.0), hms.next().and_then(Result::ok).unwrap_or(0.0));
+    let (h, mi, s) = (
+        hms.next().and_then(Result::ok).unwrap_or(0.0),
+        hms.next().and_then(Result::ok).unwrap_or(0.0),
+        hms.next().and_then(Result::ok).unwrap_or(0.0),
+    );
     let days = gridcraft_core::date::days_from_civil(i32::try_from(y).ok()?, u32::try_from(m).ok()?, u32::try_from(d).ok()?);
     // 1899-12-30 is serial 0 in the 1900 system (Excel's 1900 leap-year bug included).
     let epoch = gridcraft_core::date::days_from_civil(1899, 12, 30);

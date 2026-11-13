@@ -150,6 +150,9 @@ pub fn inspect(app: &SheetApp, ctx: &egui::Context) -> Json {
         "dialog": app.dialog.as_ref().map(|d| json!({"name": d.name, "title": d.title, "values": d.values, "tab": d.tab})),
         "backstage": app.backstage.as_ref().map(|b| b.page.id()),
         "message": app.message.as_ref().map(|(t, m)| json!({"title": t, "text": m})),
+        "validationAlert": app.validation_alert.as_ref().map(|a| json!({
+            "style": if a.warning { "warning" } else { "information" }, "title": a.title, "text": a.text,
+        })),
         "selectedObject": app.selected_object,
         // The id when the selection is a chart, as before `selectedObject`.
         "selectedChart": app.selected_chart(),
@@ -269,6 +272,11 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
                     "{on?: bool} (toggles without it) → {on}; {lines: int} sets the expanded height (1 collapses) → {on, lines}",
                 ),
                 ("ui.pythonMode", "Python Mode", "{on?: bool} (toggles without it) → {on}; a refused start is an error"),
+                (
+                    "ui.validationAlert.answer",
+                    "Answer Data Validation Alert",
+                    "{button: yes|no|ok|cancel} answers a Warning (yes/no/cancel) or Information (ok/cancel) alert",
+                ),
                 ("view.darkMode", "Dark Mode", ""),
                 ("view.theme", "Display Theme", ""),
                 ("view.animations", "Animations", "{on?: bool} (toggles without it) → {on}"),
@@ -401,7 +409,8 @@ pub fn handle(app: &mut SheetApp, ctx: &egui::Context, method: &str, p: &Json) -
             if app.commit_edit(dr, dc, false, false) {
                 ok(Json::Null)
             } else {
-                err(app.message.clone().map(|m| m.1).unwrap_or_else(|| "could not commit".into()))
+                let alert = app.validation_alert.as_ref().map(|a| a.text.clone());
+                err(app.message.clone().map(|m| m.1).or(alert).unwrap_or_else(|| "could not commit".into()))
             }
         }
         "ui.edit.cancel" => {

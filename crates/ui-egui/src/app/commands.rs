@@ -294,6 +294,15 @@ impl SheetApp {
                 }
                 Ok(json!({"on": self.editor.as_ref().is_some_and(|e| e.python)}))
             }
+            "ui.validationAlert.answer" => {
+                let answer = match p.get("button").and_then(Json::as_str) {
+                    Some("yes" | "ok") => crate::AlertAnswer::Keep,
+                    Some("no") => crate::AlertAnswer::Edit,
+                    Some("cancel") => crate::AlertAnswer::Cancel,
+                    _ => return Some(Err("`button` must be yes, no, ok or cancel".into())),
+                };
+                self.answer_validation_alert(answer).map(|()| Json::Null)
+            }
             "ui.message.dismiss" => {
                 self.message = None;
                 Ok(Json::Null)

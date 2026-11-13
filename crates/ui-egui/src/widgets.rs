@@ -613,6 +613,68 @@ pub fn message_box(app: &mut SheetApp, ctx: &egui::Context) {
     }
 }
 
+/// Draws Excel's data-validation alert: Warning asks "Continue?" with Yes, No and Cancel,
+/// Information shows the message with OK and Cancel. Esc is Cancel; Enter is the default button,
+/// No for Warning (the entry isn't kept by accident) and OK for Information.
+pub fn validation_alert(app: &mut SheetApp, ctx: &egui::Context) {
+    let Some(alert) = app.validation_alert.clone() else { return };
+    let lang = app.ui.language;
+    let title = lang.tr(&alert.title).to_owned();
+    let mut text = lang.tr_error(&alert.text);
+    if alert.warning {
+        text = format!("{text}\n\n{}", lang.tr("Continue?"));
+    }
+    let mut answer = None;
+    egui::Modal::new(egui::Id::unique("validation_alert")).show(ctx, |ui| {
+        ui.set_width(380.0);
+        let t = Tokens::get(ui.ctx());
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
+            if alert.warning {
+                ui.painter().circle_filled(r.center(), 16.0, t.warning);
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, "!", theme::ui_bold(20.0), t.on_warning);
+            } else {
+                ui.painter().circle_filled(r.center(), 16.0, t.accent);
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, "i", theme::ui_bold(20.0), t.on_accent);
+            }
+            ui.vertical(|ui| {
+                ui.label(egui::RichText::new(title).strong());
+                ui.add(egui::Label::new(text).wrap());
+            });
+        });
+        ui.add_space(8.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
+                answer = Some(crate::AlertAnswer::Cancel);
+            }
+            if alert.warning {
+                if ui.button(format!(" {} ", lang.tr("No"))).clicked() {
+                    answer = Some(crate::AlertAnswer::Edit);
+                }
+                if ui.button(format!("  {}  ", lang.tr("Yes"))).clicked() {
+                    answer = Some(crate::AlertAnswer::Keep);
+                }
+            } else if ui.button("  OK  ").clicked() {
+                answer = Some(crate::AlertAnswer::Keep);
+            }
+        });
+        if answer.is_none() {
+            ui.input(|i| {
+                if i.key_pressed(egui::Key::Escape) {
+                    answer = Some(crate::AlertAnswer::Cancel);
+                } else if i.key_pressed(egui::Key::Enter) {
+                    answer = Some(if alert.warning { crate::AlertAnswer::Edit } else { crate::AlertAnswer::Keep });
+                }
+            });
+        }
+    });
+    if let Some(answer) = answer
+        && let Err(e) = app.answer_validation_alert(answer)
+    {
+        app.message = Some(("GridCraft".into(), e));
+    }
+}
+
 /// Shows a translated toast for 2.5 seconds and clears it after the deadline.
 pub fn toast(app: &mut SheetApp, ctx: &egui::Context) {
     let Some((msg, at)) = app.toast.clone() else { return };

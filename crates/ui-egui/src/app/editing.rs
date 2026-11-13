@@ -1,4 +1,4 @@
-use super::{SheetApp, clean_error, editor, formula_bar, formula_locale, json, now_ms};
+use super::{SheetApp, clean_error, editor, formula_bar, formula_locale, json};
 
 /// Why a draft whose sheet was deleted while it was open is dropped.
 pub(crate) const DRAFT_SHEET_GONE: &str = "The sheet of the cell being edited was deleted, so the entry was discarded.";
@@ -117,7 +117,8 @@ impl SheetApp {
     /// A draft its workbook refuses stays open with the reason shown, and the command doesn't run.
     pub(crate) fn settle_drafts(&mut self) -> Result<(), String> {
         if !self.commit_edit(0, 0, false, false) {
-            return Err(self.message.as_ref().map(|(_, m)| m.clone()).unwrap_or_else(|| "The cell being edited can't be entered.".into()));
+            let alert = self.validation_alert.as_ref().map(|a| a.text.clone());
+            return Err(self.message.as_ref().map(|(_, m)| m.clone()).or(alert).unwrap_or_else(|| "The cell being edited can't be entered.".into()));
         }
         self.commit_text_box_edit()
     }
@@ -166,18 +167,30 @@ impl SheetApp {
             }
             None => text,
         };
-        // Data validation.
-        if let Some(d) = self.session.active()
+        // Data validation. An entry the user already chose to keep from a Warning or Information
+        // alert goes in without asking again.
+        let accepted = std::mem::take(&mut self.validation_accepted);
+        if !accepted
+            && let Some(d) = self.session.active()
             && let Some((dv, msg)) = gridcraft_engine::cmd::data::check_validation(&d.wb, ed.sheet, ed.cell, &text)
         {
-            if dv.error_style == gridcraft_engine::model::ErrorStyle::Stop {
-                let title = if dv.error_title.is_empty() { "GridCraft".to_string() } else { dv.error_title.clone() };
-                self.message = Some((title, msg));
-                self.editor = Some(ed);
-                self.session.mode = gridcraft_engine::Mode::Edit;
-                return false;
+            let title = if dv.error_title.is_empty() { "GridCraft".to_string() } else { dv.error_title.clone() };
+            match dv.error_style {
+                gridcraft_engine::model::ErrorStyle::Stop => self.message = Some((title, msg)),
+                // Excel asks instead of accepting: Warning adds "Continue?" with Yes, No and
+                // Cancel, Information shows the message with OK and Cancel.
+                style => {
+                    self.validation_alert = Some(crate::ValidationAlert {
+                        warning: style == gridcraft_engine::model::ErrorStyle::Warning,
+                        title,
+                        text: msg,
+                        commit: (dr, dc, array, fill_selection),
+                    })
+                }
             }
-            self.toast = Some((msg, now_ms()));
+            self.editor = Some(ed);
+            self.session.mode = gridcraft_engine::Mode::Edit;
+            return false;
         }
         // Point mode can leave another sheet active; the edit belongs to the sheet it started on.
         if self.session.active().is_some_and(|d| d.wb.active_sheet() != ed.sheet)
@@ -281,6 +294,35 @@ impl SheetApp {
         let ok = self.commit_edit(dr, dc, false, false);
         self.tab_run = if ok { None } else { run };
         ok
+    }
+
+    /// Answers the open data-validation alert: Keep commits the draft as typed (moving as the
+    /// interrupted Enter would), Edit returns to the draft, Cancel drops it and the cell keeps its
+    /// content. No (Edit) on an Information alert, which has no No button, is refused.
+    pub fn answer_validation_alert(&mut self, answer: crate::AlertAnswer) -> Result<(), String> {
+        let Some(alert) = self.validation_alert.as_ref() else { return Err("no data validation alert is open".into()) };
+        if answer == crate::AlertAnswer::Edit && !alert.warning {
+            return Err("an Information alert has only OK and Cancel".into());
+        }
+        let (dr, dc, array, fill_selection) = alert.commit;
+        self.validation_alert = None;
+        match answer {
+            crate::AlertAnswer::Keep => {
+                self.validation_accepted = true;
+                let ok = self.commit_edit(dr, dc, array, fill_selection);
+                self.validation_accepted = false;
+                if !ok {
+                    return Err(self.message.as_ref().map(|(_, m)| m.clone()).unwrap_or_else(|| "could not commit".into()));
+                }
+            }
+            crate::AlertAnswer::Edit => {
+                if let Some(ed) = &mut self.editor {
+                    ed.request_focus = true;
+                }
+            }
+            crate::AlertAnswer::Cancel => self.cancel_edit(),
+        }
+        Ok(())
     }
 
     pub fn cancel_edit(&mut self) {

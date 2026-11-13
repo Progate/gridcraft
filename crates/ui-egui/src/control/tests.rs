@@ -1254,3 +1254,79 @@ fn python_mode_does_not_start_on_a_draft_typed_inside_a_spill() {
     let a2 = app.session.active().and_then(|d| d.wb.sheet(0)).and_then(|sh| sh.cell(gridcraft_engine::core::CellRef::new(1, 0)).cloned());
     assert_eq!(a2.map(|c| (c.input_text(), c.py.is_some())), Some(("5".to_string(), false)));
 }
+
+/// A1 of a new workbook takes whole numbers over 5, its error alert in `style`.
+fn validated_app(style: &str) -> (SheetApp, egui::Context) {
+    let mut session = gridcraft_engine::Session::new();
+    session.new_workbook();
+    session.execute("data.validation", json!({"range": "A1", "type": "whole", "operator": "greater", "formula1": "5", "errorStyle": style})).unwrap();
+    session.execute("selection.set", json!({"cell": "A1"})).unwrap();
+    (SheetApp::new(session, crate::Services::default()), egui::Context::default())
+}
+
+fn a1_value(app: &SheetApp) -> gridcraft_engine::core::Value {
+    let d = app.session.active().unwrap();
+    d.wb.sheet(0).unwrap().cell(CellRef::parse("A1").unwrap()).map(|c| c.value.clone()).unwrap_or_default()
+}
+
+/// Types `text` in A1 and presses Enter: the reply of `ui.edit.commit`.
+fn enter_in_a1(app: &mut SheetApp, ctx: &egui::Context, text: &str) -> Json {
+    call(app, ctx, "ui.edit.begin", json!({"text": text}));
+    let Outcome::Done(reply) = handle(app, ctx, "ui.edit.commit", &json!({"move": "none"})) else { panic!("commit answers at once") };
+    reply
+}
+
+#[test]
+fn a_warning_rule_asks_to_continue_and_its_answers_keep_edit_or_restore() {
+    let (mut app, ctx) = validated_app("warning");
+    let reply = enter_in_a1(&mut app, &ctx, "3");
+    assert_eq!(reply["ok"], false, "the entry waits for the answer: {reply}");
+    assert_eq!(inspected(&mut app, &ctx)["validationAlert"]["style"], "warning");
+    assert_eq!(a1_value(&app), gridcraft_engine::core::Value::Empty, "nothing is written before the answer");
+
+    // No: back to the draft, still holding what was typed.
+    execute(&mut app, &ctx, "ui.validationAlert.answer", json!({"button": "no"}));
+    assert!(app.validation_alert.is_none());
+    assert!(app.editor.as_ref().is_some_and(|e| e.text == "3"), "No returns to the entry");
+
+    // Cancel: the draft goes and the cell keeps what it had.
+    let Outcome::Done(_) = handle(&mut app, &ctx, "ui.edit.commit", &json!({"move": "none"})) else { panic!() };
+    assert!(app.validation_alert.is_some(), "the same entry asks again");
+    execute(&mut app, &ctx, "ui.validationAlert.answer", json!({"button": "cancel"}));
+    assert!(app.editor.is_none(), "Cancel ends the edit");
+    assert_eq!(a1_value(&app), gridcraft_engine::core::Value::Empty);
+
+    // Yes: the entry goes in as typed.
+    enter_in_a1(&mut app, &ctx, "3");
+    execute(&mut app, &ctx, "ui.validationAlert.answer", json!({"button": "yes"}));
+    assert!(app.editor.is_none() && app.validation_alert.is_none());
+    assert_eq!(a1_value(&app), gridcraft_engine::core::Value::Number(3.0));
+}
+
+#[test]
+fn an_information_rule_shows_ok_and_cancel() {
+    let (mut app, ctx) = validated_app("information");
+    enter_in_a1(&mut app, &ctx, "2");
+    assert_eq!(inspected(&mut app, &ctx)["validationAlert"]["style"], "information");
+    let Outcome::Done(reply) = handle(&mut app, &ctx, "engine.execute", &json!({"command": "ui.validationAlert.answer", "params": {"button": "no"}}))
+    else {
+        panic!()
+    };
+    assert_eq!(reply["ok"], false, "Information has no No button: {reply}");
+    execute(&mut app, &ctx, "ui.validationAlert.answer", json!({"button": "ok"}));
+    assert_eq!(a1_value(&app), gridcraft_engine::core::Value::Number(2.0));
+
+    // A valid entry never asks.
+    let reply = enter_in_a1(&mut app, &ctx, "9");
+    assert_eq!(reply["ok"], true, "{reply}");
+    assert!(app.validation_alert.is_none());
+}
+
+#[test]
+fn a_stop_rule_still_refuses_with_a_message() {
+    let (mut app, ctx) = validated_app("stop");
+    let reply = enter_in_a1(&mut app, &ctx, "3");
+    assert_eq!(reply["ok"], false);
+    assert!(app.validation_alert.is_none() && app.message.is_some());
+    assert!(app.editor.is_some(), "the entry stays open to be fixed");
+}

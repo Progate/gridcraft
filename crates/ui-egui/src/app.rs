@@ -52,6 +52,8 @@ impl SheetApp {
             dialog: None,
             backstage: None,
             message: None,
+            validation_alert: None,
+            validation_accepted: false,
             toast: None,
             notice: None,
             services,
@@ -270,6 +272,7 @@ impl SheetApp {
         macro_ui::forget_closed_editor(self);
         macro_ui::question_box(self, &ctx);
         widgets::message_box(self, &ctx);
+        widgets::validation_alert(self, &ctx);
         widgets::toast(self, &ctx);
         // Requests are admitted in `logic`, for the root viewport, so only its pass issues them.
         if ctx.viewport_id() == egui::ViewportId::ROOT {

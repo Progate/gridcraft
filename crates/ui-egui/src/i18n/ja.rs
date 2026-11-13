@@ -205,7 +205,7 @@ pub(super) const CORE: &[(&str, &str)] = &[
     ("Solver", "ソルバー"),
     ("What-If\nAnalysis", "What-If 分析"),
     ("Data Table…", "データ テーブル…"),
-    ("Scenario Manager…", "シナリオ マネージャー…"),
+    ("Scenario Manager…", "シナリオの登録と管理…"),
     ("Goal Seek…", "ゴール シーク…"),
     ("Forecast\nSheet", "予測シート"),
     ("Spelling", "スペル チェック"),
@@ -930,7 +930,7 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("There are no conditional formatting rules on this sheet.", "このシートには条件付き書式ルールがありません。"),
     ("applies to", "適用先"),
     ("Type a command, e.g. freeze, chart, bold…", "コマンドを入力 (例: ウィンドウ枠の固定、グラフ、太字)…"),
-    ("Set cell:", "目的セル:"),
+    ("Set cell:", "数式入力セル:"),
     ("To value:", "目標値:"),
     ("By changing cell:", "変化させるセル:"),
     ("Goal Seeking found a solution: {value}", "ゴール シークで解が見つかりました: {value}"),
@@ -1291,6 +1291,7 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("My table has headers", "先頭行をテーブルの見出しとして使用する"),
     ("Do you want to convert the table to a normal range?", "テーブルを標準の範囲に変換しますか?"),
     ("Yes", "はい"),
+    ("Continue?", "続けますか?"),
     ("No", "いいえ"),
 ];
 

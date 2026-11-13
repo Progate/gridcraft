@@ -210,6 +210,30 @@ pub struct Notice {
     pub action: Option<(String, String)>,
 }
 
+/// Excel's alert for an entry that breaks a Warning or Information data-validation rule. The draft
+/// stays open behind it; the answer keeps the entry (Yes, OK), returns to it (No) or drops it
+/// (Cancel). A Stop rule shows a plain message instead and never keeps the entry.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidationAlert {
+    /// `true` for Warning (Yes, No, Cancel), `false` for Information (OK, Cancel).
+    pub warning: bool,
+    pub title: String,
+    pub text: String,
+    /// The commit the alert interrupted: how to move after Enter and how the entry goes in.
+    pub(crate) commit: (i64, i64, bool, bool),
+}
+
+/// The answer to a [`ValidationAlert`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AlertAnswer {
+    /// Yes (Warning) or OK (Information): the entry goes in as typed.
+    Keep,
+    /// No (Warning only): back to the draft to fix it.
+    Edit,
+    /// Cancel: the draft is dropped and the cell keeps what it had.
+    Cancel,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Perf {
     pub frame_ms: f64,
@@ -232,6 +256,11 @@ pub struct SheetApp {
     /// The File tab's Backstage view, when open (UI-only; replaces the ribbon, grid and tabs).
     pub backstage: Option<backstage::Backstage>,
     pub message: Option<(String, String)>,
+    /// Excel's Warning or Information alert for an entry that breaks the cell's data validation,
+    /// asking whether to keep it; the draft stays open behind it.
+    pub validation_alert: Option<ValidationAlert>,
+    /// Set while committing a draft the user chose to keep from a validation alert.
+    pub(crate) validation_accepted: bool,
     pub toast: Option<(String, f64)>,
     /// Dismissible info bar under the ribbon (open-time notices).
     pub notice: Option<Notice>,

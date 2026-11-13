@@ -653,7 +653,7 @@ fn editor_shortcuts(
 ) -> EditorKeyOutcome {
     let mut outcome = EditorKeyOutcome { action: None, arrow: false, cancel: false, to_python: false };
     // A message or dialog owns Enter and Escape until it closes.
-    if !has_focus || !mine || app.message.is_some() || app.dialog.is_some() {
+    if !has_focus || !mine || app.message.is_some() || app.validation_alert.is_some() || app.dialog.is_some() {
         return outcome;
     }
     // Ctrl+Alt+Shift+P turns the edit into Python code.
@@ -823,7 +823,7 @@ fn python_editor(app: &mut SheetApp, ui: &mut egui::Ui, id: egui::Id, width: f32
     let Some(mut ed) = app.editor.take() else { return EditorInfo::default() };
     // A message box (the code was refused) or a dialog over the edit has the keyboard; the
     // editor takes it back when it closes.
-    let blocked = app.message.is_some() || app.dialog.is_some();
+    let blocked = app.message.is_some() || app.validation_alert.is_some() || app.dialog.is_some();
     let mut caret = None;
     if blocked {
         ed.request_focus = true;
