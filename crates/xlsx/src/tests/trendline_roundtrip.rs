@@ -66,6 +66,7 @@ fn chart(id: u32, kind: ChartKind, trendlines: Vec<Trendline>) -> Chart {
         pivot: None,
         alt_text: Default::default(),
         label_parts: Default::default(),
+        auto_title: false,
     }
 }
 

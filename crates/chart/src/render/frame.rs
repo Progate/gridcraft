@@ -32,9 +32,16 @@ pub(super) fn on(fill: Rgba) -> Rgba {
     if l < 150.0 { WHITE } else { DARK_TEXT }
 }
 
+/// The chart's title text: its own text, or what its automatic title shows (the name of its one
+/// series, else the placeholder Chart Title, as Excel shows an automatic title).
 pub(super) fn chart_title(chart: &Chart, data: &ChartData) -> Option<String> {
     match &chart.title {
         Some(t) => Some(t.trim().to_string()).filter(|t| !t.is_empty()),
+        None if chart.auto_title => {
+            let named = chart.series.len() == 1 && chart.series.first().is_some_and(|s| s.name.is_some());
+            let name = named.then(|| data.series.first().map(|s| s.name.trim().to_string())).flatten().filter(|t| !t.is_empty());
+            name.or_else(|| Some(if data.placeholder_title.trim().is_empty() { "Chart Title".into() } else { data.placeholder_title.clone() }))
+        }
         None if data.series.len() == 1 => data.series.first().map(|s| s.name.clone()).filter(|t| !t.is_empty()),
         None => None,
     }

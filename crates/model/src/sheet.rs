@@ -967,6 +967,7 @@ mod tests {
                 pivot: None,
                 alt_text: Default::default(),
                 label_parts: Default::default(),
+                auto_title: false,
             }),
             ObjKind::Image => s.images.push(Image {
                 id,

@@ -157,6 +157,7 @@ pub(crate) fn sanitize(d: &ChartData) -> ChartData {
                 number_format: s.number_format.clone(),
             })
             .collect(),
+        placeholder_title: d.placeholder_title.chars().take(255).collect(),
     }
 }
 
@@ -208,6 +209,12 @@ fn apply_budget(mut d: ChartData) -> ChartData {
 /// case: no copy), else a cleaned, truncated copy.
 pub(crate) fn sanitized(d: &ChartData) -> Cow<'_, ChartData> {
     if needs_sanitizing(d) { Cow::Owned(apply_budget(sanitize(d))) } else { Cow::Borrowed(d) }
+}
+
+/// The title text the chart shows (its own text, or what its automatic title reads now), `None`
+/// without a title.
+pub fn title_text(chart: &Chart, data: &ChartData) -> Option<String> {
+    chart_title(chart, data)
 }
 
 /// Lays out and draws a chart into a `w`×`h` box at the origin. Empty for a degenerate box.

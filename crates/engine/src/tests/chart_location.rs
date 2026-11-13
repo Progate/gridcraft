@@ -181,17 +181,18 @@ fn a_single_series_chart_has_no_legend_and_the_default_title_follows_the_languag
     s.execute("range.setValues", json!({"range": "A1", "values": [["月", "売上", "客数"], ["1月", 1, 2], ["2月", 3, 4]]})).unwrap();
     s.execute("insert.chart", json!({"range": "A1:B3", "type": "column"})).unwrap();
     let last = |s: &Session| s.doc().unwrap().wb.active().unwrap().charts.last().unwrap().clone();
+    let shown = |s: &Session| crate::cmd::insert::shown_chart_title(&s.doc().unwrap().wb, 0, &last(s), s.prefs.chart_title());
     assert_eq!(last(&s).legend, gridcraft_model::LegendPos::None);
-    assert_eq!(last(&s).title.as_deref(), Some("売上"));
+    assert_eq!(shown(&s).as_deref(), Some("売上"));
     s.execute("insert.chart", json!({"range": "A1:B3", "type": "pie"})).unwrap();
     assert_eq!(last(&s).legend, gridcraft_model::LegendPos::Right, "a pie names its slices");
     s.prefs.language = "ja".into();
     s.execute("insert.chart", json!({"range": "A1:C3", "type": "column"})).unwrap();
     assert_eq!(last(&s).legend, gridcraft_model::LegendPos::Bottom);
-    assert_eq!(last(&s).title.as_deref(), Some("グラフ タイトル"));
+    assert_eq!(shown(&s).as_deref(), Some("グラフ タイトル"));
     s.prefs.language = "en".into();
     s.execute("insert.chart", json!({"range": "A1:C3", "type": "column"})).unwrap();
-    assert_eq!(last(&s).title.as_deref(), Some("Chart Title"));
+    assert_eq!(shown(&s).as_deref(), Some("Chart Title"));
 }
 
 #[test]

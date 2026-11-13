@@ -26,6 +26,14 @@ impl gridcraft_chart::Measure for EguiMeasure<'_> {
     }
 }
 
+/// The chart's data, with an automatic title's placeholder (Chart Title) in the interface
+/// language, as Excel shows グラフ タイトル in Japanese.
+pub fn resolve(ctx: &egui::Context, wb: &Workbook, sheet: usize, chart: &gridcraft_engine::model::Chart) -> gridcraft_chart::ChartData {
+    let mut data = gridcraft_chart::resolve(wb, sheet, chart);
+    data.placeholder_title = crate::i18n::current(ctx).tr("Chart Title").to_string();
+    data
+}
+
 /// Paints `chart` (not necessarily on the sheet: the Recommended Charts preview) scaled to fit
 /// `rect`.
 pub fn paint_chart(p: &Painter, rect: Rect, wb: &Workbook, sheet: usize, chart: &gridcraft_engine::model::Chart) {
@@ -35,7 +43,7 @@ pub fn paint_chart(p: &Painter, rect: Rect, wb: &Workbook, sheet: usize, chart: 
         return;
     }
     let origin = rect.center() - vec2(w * z, h * z) / 2.0;
-    let data = gridcraft_chart::resolve(wb, sheet, chart);
+    let data = resolve(p.ctx(), wb, sheet, chart);
     let m = EguiMeasure { painter: p, z };
     let prims = gridcraft_chart::render(chart, &data, w, h, &m);
     paint_prims(&p.with_clip_rect(rect.intersect(p.clip_rect())), origin, &prims, z);
@@ -374,7 +382,7 @@ pub(crate) fn paint_objects(app: &SheetApp, p: &Painter, geo: &Geo, wb: &Workboo
         // Soft shadow + white card.
         p.rect_filled(r.translate(vec2(0.0, 1.5)), 2.0, Color32::from_black_alpha(18));
         p.rect_filled(r, 0.0, Tokens::get(p.ctx()).grid_bg);
-        let data = gridcraft_chart::resolve(wb, si, ch);
+        let data = resolve(p.ctx(), wb, si, ch);
         let m = EguiMeasure { painter: p, z: geo.z };
         let prims = gridcraft_chart::render(ch, &data, ch.anchor.width, ch.anchor.height, &m);
         paint_prims(&p.with_clip_rect(r.intersect(p.clip_rect())), r.min, &prims, geo.z);
@@ -523,7 +531,7 @@ pub fn chart_point_at(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &She
     let ch = sh.charts.iter().find(|c| c.id == id)?;
     let r = anchor_rect(geo, sh, &ch.anchor);
     let z = geo.z.max(0.01);
-    let data = gridcraft_chart::resolve(wb, si, ch);
+    let data = resolve(p.ctx(), wb, si, ch);
     let m = EguiMeasure { painter: p, z: geo.z };
     let local = (at - r.min) / z;
     gridcraft_chart::point_at(ch, &data, ch.anchor.width, ch.anchor.height, &m, local.x, local.y)
@@ -543,7 +551,7 @@ pub fn paint_chart_sheet(p: &Painter, area: Rect, wb: &Workbook, si: usize, sh: 
     let r = chart_sheet_rect(area);
     p.rect_filled(r.translate(vec2(0.0, 1.5)), 2.0, Color32::from_black_alpha(18));
     p.rect_filled(r, 0.0, t.grid_bg);
-    let data = gridcraft_chart::resolve(wb, si, ch);
+    let data = resolve(p.ctx(), wb, si, ch);
     let m = EguiMeasure { painter: p, z: 1.0 };
     let prims = gridcraft_chart::render(ch, &data, r.width(), r.height(), &m);
     paint_prims(&p.with_clip_rect(r.intersect(p.clip_rect())), r.min, &prims, 1.0);
@@ -553,7 +561,7 @@ pub fn paint_chart_sheet(p: &Painter, area: Rect, wb: &Workbook, si: usize, sh: 
 pub fn chart_sheet_point_at(p: &Painter, area: Rect, wb: &Workbook, si: usize, sh: &Sheet, at: Pos2) -> Option<(usize, usize)> {
     let ch = sh.charts.first()?;
     let r = chart_sheet_rect(area);
-    let data = gridcraft_chart::resolve(wb, si, ch);
+    let data = resolve(p.ctx(), wb, si, ch);
     let m = EguiMeasure { painter: p, z: 1.0 };
     gridcraft_chart::point_at(ch, &data, r.width(), r.height(), &m, at.x - r.min.x, at.y - r.min.y)
 }

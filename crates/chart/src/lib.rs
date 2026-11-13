@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 pub use axis::{Scale, format_number, nice_scale};
 pub use raster::rasterize;
-pub use render::{Swatch, legend_entries, point_at, render, supports_trendline};
+pub use render::{Swatch, legend_entries, point_at, render, supports_trendline, title_text};
 pub use resolve::{default_palette, resolve, series_color, series_plot_kind};
 pub use sparkline::render_sparkline;
 
@@ -132,6 +132,10 @@ pub struct ChartData {
     /// Workbook-theme colours for the points of pie-like charts, repeating (point `j` uses entry `j % len`); empty uses the default theme.
     #[serde(default)]
     pub palette: Vec<Rgba>,
+    /// What an automatic title shows on a chart without one series name to show: Excel's Chart
+    /// Title, in the interface language (グラフ タイトル). Empty shows `Chart Title`.
+    #[serde(default)]
+    pub placeholder_title: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

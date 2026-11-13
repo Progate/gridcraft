@@ -113,7 +113,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Properties",
             ["Chart Design"],
             None,
-            "{chart?: id, type?, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series, in order] (Combo ▸ Custom Combination: per-series chart type and Secondary Axis; makes the chart a combo), title?, legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?, holeSize?, firstSliceAngle?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
+            "{chart?: id, type?, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series, in order] (Combo ▸ Custom Combination: per-series chart type and Secondary Axis; makes the chart a combo), title?: text (literal; \"\" removes the title), autoTitle?: true (Excel's automatic title: the series name for one series, else Chart Title), legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?, holeSize?, firstSliceAngle?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
             has_doc,
             chart_set
         ),
@@ -788,6 +788,26 @@ pub(crate) fn series_from_areas(wb: &Workbook, sh: &Sheet, areas: &[RangeRef]) -
     }
 }
 
+/// The title chart `c` on sheet `sheet` shows: its own text, or what its automatic title reads now
+/// (the series name, or `placeholder`: Chart Title in the interface language). `None` without one.
+pub fn shown_chart_title(wb: &gridcraft_model::Workbook, sheet: usize, c: &Chart, placeholder: &str) -> Option<String> {
+    let mut data = gridcraft_chart::resolve(wb, sheet, c);
+    data.placeholder_title = placeholder.to_string();
+    gridcraft_chart::title_text(c, &data)
+}
+
+/// Whether the chart's series are rows of its data (Select Data ▸ Switch Row/Column): its own
+/// setting when it was made from a range, else read from where its series sit (charts from files).
+pub fn series_in_rows(c: &Chart) -> bool {
+    if c.source.is_some() { c.by_rows } else { series_block(&c.series).is_some_and(|(_, rows)| rows) }
+}
+
+/// The kinds saved as Office 2016 chartex parts (histogram, box and whisker, waterfall, funnel,
+/// treemap, sunburst), whose titles are written as text rather than Excel's automatic title.
+pub fn is_chartex_kind(kind: ChartKind) -> bool {
+    matches!(kind, ChartKind::Histogram | ChartKind::BoxWhisker | ChartKind::Waterfall | ChartKind::Funnel | ChartKind::Treemap | ChartKind::Sunburst)
+}
+
 /// A scatter plot of a block without category labels takes its first column (or row) as the X
 /// values of the others, as Excel does: two plain columns make one series of points, not two (#428).
 pub fn scatter_x_from_first(kind: ChartKind, series: &mut Vec<Series>) {
@@ -889,8 +909,15 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
     scatter_x_from_first(kind, &mut series);
     let id = d.wb.next_object_id();
     let at = cell_param_on(s, p, "at", sheet)?.unwrap_or_else(|| CellRef::new(bounds.start.row, bounds.end.col + 2));
-    let title = str_param(p, "title").map(str::to_string).or_else(|| {
-        if series.len() == 1 {
+    // Excel gives a new chart an automatic title: the series name while there is one series, else
+    // Chart Title (グラフ タイトル), kept up to date as series come and go. The chartex kinds
+    // (histogram, waterfall…) get that text as their title.
+    let explicit = str_param(p, "title").map(str::to_string);
+    let auto_title = explicit.is_none() && !is_chartex_kind(kind);
+    let title = explicit.or_else(|| {
+        if auto_title {
+            None
+        } else if series.len() == 1 {
             series[0].name.as_ref().map(|n| gridcraft_calc::evaluate(&d.wb, sheet, at, n).display())
         } else {
             Some(s.prefs.chart_title().into())
@@ -932,6 +959,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         pivot: None,
         alt_text: Default::default(),
         label_parts: Default::default(),
+        auto_title,
     };
     if let Some(rows) = p.get("combo") {
         apply_combo(&mut chart, rows)?;
@@ -996,7 +1024,13 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
             }
         }
         if let Some(t) = p.get("title") {
+            // Typed text replaces the automatic title (it no longer follows the series).
             c.title = t.as_str().map(str::to_string);
+            c.auto_title = false;
+        }
+        if bool_param(p, "autoTitle") == Some(true) {
+            c.title = None;
+            c.auto_title = true;
         }
         if let Some(l) = str_param(p, "legend") {
             c.legend = match l {
@@ -1190,7 +1224,7 @@ fn chart_switch(s: &mut Session, p: &Json) -> Result<Json> {
 
 /// The block a chart's series come from, and whether each series is a row of it: the bounding
 /// range of the series names, categories and values, when they're all references to one sheet.
-fn series_block(series: &[Series]) -> Option<(String, bool)> {
+pub(crate) fn series_block(series: &[Series]) -> Option<(String, bool)> {
     let mut sheet: Option<String> = None;
     let mut bounds: Option<RangeRef> = None;
     let mut rows = 0;

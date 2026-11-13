@@ -183,7 +183,16 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
     let lang = crate::i18n::current(ui.ctx());
     ui.collapsing(lang.tr("Chart Title"), |ui| {
         let field = egui::Id::unique(("gridcraft.chart_title", id));
-        if let Some(title) = crate::widgets::committed_text(ui, field, chart.title.as_deref().unwrap_or(""), None) {
+        // An automatic title shows what it reads now (the series name, or グラフ タイトル);
+        // typing replaces it with text.
+        let shown = app
+            .session
+            .active()
+            .and_then(|d| gridcraft_chart::title_text(&chart, &crate::chartview::resolve(ui.ctx(), &d.wb, d.wb.active_sheet(), &chart)))
+            .unwrap_or_default();
+        if let Some(title) = crate::widgets::committed_text(ui, field, &shown, None)
+            && title != shown
+        {
             app.run_or_alert("chart.set", json!({"chart": id, "title": title}));
         }
     });

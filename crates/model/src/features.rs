@@ -632,6 +632,12 @@ pub struct Chart {
     /// What the data labels show while `data_labels` is on (Format Data Labels ▸ Label Contains).
     #[serde(default)]
     pub label_parts: LabelParts,
+    /// Excel's automatic chart title (`c:title` without `c:tx`): shown while `title` is `None`,
+    /// it reads the series name when the chart has one series and Chart Title (グラフ タイトル)
+    /// otherwise, so it follows the data instead of keeping the text it had. Typing a title
+    /// turns it into literal text.
+    #[serde(default)]
+    pub auto_title: bool,
 }
 
 /// Format Data Labels ▸ Label Options ▸ Label Contains: the parts of a data label (`c:dLbls`
@@ -1299,6 +1305,7 @@ mod tests {
             pivot: None,
             alt_text: Default::default(),
             label_parts: Default::default(),
+            auto_title: false,
         };
         let mut json = serde_json::to_value(&chart).expect("serialize chart");
         json.as_object_mut().expect("chart object").remove("hole_size");

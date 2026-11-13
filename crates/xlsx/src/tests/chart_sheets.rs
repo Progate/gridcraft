@@ -44,6 +44,7 @@ fn chart(kind: ChartKind) -> Chart {
         pivot: None,
         alt_text: Default::default(),
         label_parts: Default::default(),
+        auto_title: false,
     }
 }
 

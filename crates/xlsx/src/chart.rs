@@ -281,11 +281,20 @@ pub fn read_chart(root: &El) -> Option<Chart> {
     let hole_size = doughnut.and_then(|g| g.child_val("holeSize")).and_then(|v| v.trim().parse::<u8>().ok()).unwrap_or(75).clamp(10, 90);
     let first_slice_angle =
         plot.child("pieChart").or(doughnut).and_then(|g| g.child_val("firstSliceAng")).and_then(|v| v.trim().parse::<u16>().ok()).unwrap_or(0) % 360;
+    // A `c:title` without text is Excel's automatic title (the series name, or Chart Title). With
+    // no `c:title`, a chart of one series still shows one unless `autoTitleDeleted` is set.
+    let deleted = bool_val(chart, "autoTitleDeleted");
+    let (title, auto_title) = match chart.child("title") {
+        Some(t) if t.child("tx").is_some() => (rich_title(t).or(Some(String::new())), false),
+        Some(_) => (None, true),
+        None if !deleted && series.len() == 1 => (None, true),
+        None => (Some(String::new()), false),
+    };
     Some(Chart {
         id: 0,
         kind,
         anchor: Default::default(),
-        title: chart.child("title").and_then(rich_title),
+        title,
         series,
         legend,
         data_labels,
@@ -306,6 +315,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         pivot: root.path(&["pivotSource", "name"]).map(|n| strip_book(n.text.trim()).to_string()).filter(|n| !n.is_empty()),
         alt_text: Default::default(),
         label_parts,
+        auto_title,
     })
 }
 
@@ -834,6 +844,9 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book_name: &str) -> Str
             s.push_str(&title_xml(t));
             s.push_str("<c:autoTitleDeleted val=\"0\"/>");
         }
+        // Excel's automatic title has no text of its own: Excel shows the series name, or Chart
+        // Title in its own language.
+        None if ch.auto_title => s.push_str("<c:title><c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>"),
         _ => s.push_str("<c:autoTitleDeleted val=\"1\"/>"),
     }
     s.push_str("<c:plotArea><c:layout/>");

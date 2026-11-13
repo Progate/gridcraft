@@ -157,6 +157,8 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         pivot: None,
         alt_text: Default::default(),
         label_parts: Default::default(),
+        // A `cx:title` without text: the automatic title.
+        auto_title: chart.child("title").is_some_and(|t| t.child("tx").is_none()),
     })
 }
 
@@ -290,6 +292,9 @@ pub fn write_chartex(wb: &Workbook, si: usize, ch: &Chart, names: &mut Vec<Strin
     s.push_str("</cx:chartData><cx:chart>");
     if let Some(t) = ch.title.as_deref().filter(|t| !t.is_empty()) {
         let _ = write!(s, "<cx:title pos=\"t\" align=\"ctr\" overlay=\"0\"><cx:tx><cx:txData><cx:v>{}</cx:v></cx:txData></cx:tx></cx:title>", esc(t));
+    }
+    if ch.title.is_none() && ch.auto_title {
+        s.push_str("<cx:title pos=\"t\" align=\"ctr\" overlay=\"0\"/>");
     }
     s.push_str("<cx:plotArea><cx:plotAreaRegion>");
     let layout = match ch.kind {
