@@ -1,3 +1,5 @@
+#[cfg(test)]
+use super::show::build_params;
 use super::show::ok_cancel;
 use super::{Dialog, Json, Key, SheetApp, json};
 
@@ -131,4 +133,180 @@ pub(super) fn paste_name(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, 
         d.values.insert("name".into(), json!(n));
     }
     ok_cancel(ui, confirm, open);
+}
+
+/// The edge boxes of Create Names from Selection, in Excel's order: (value key, label).
+const LABEL_EDGES: [(&str, &str); 4] = [("top", "Top row"), ("left", "Left column"), ("bottom", "Bottom row"), ("right", "Right column")];
+
+/// Formulas › Create from Selection (Ctrl+Shift+F3) opens Excel's Create Names from Selection on
+/// the selection (the current region around a single cell, as Excel takes it), the top row and
+/// the left column ticked when they hold text (`guess_label_edges`).
+pub(super) fn create_names_open(app: &SheetApp) -> Dialog {
+    use gridcraft_engine::cmd::formulas::guess_label_edges;
+    let found = app.session.active().and_then(|doc| {
+        let sh = doc.wb.active()?;
+        let r = doc.selection.current();
+        let r = if r.is_single() { gridcraft_engine::selection::current_region(sh, doc.selection.active) } else { r };
+        Some((r, guess_label_edges(&doc.wb, doc.wb.active_sheet(), r)))
+    });
+    let (range, e) = found.map(|(r, e)| (r.a1(), e)).unwrap_or_default();
+    let mut d = Dialog::custom(
+        "createNames",
+        "Create Names from Selection",
+        json!({"range": range, "top": e.top, "left": e.left, "bottom": e.bottom, "right": e.right, "replace": []}),
+    );
+    d.command = Some("formulas.createFromSelection");
+    d
+}
+
+/// The names OK would make that already exist and haven't been answered yet, in order.
+fn unanswered_existing(app: &SheetApp, d: &Dialog) -> Vec<String> {
+    use gridcraft_engine::cmd::formulas::{LabelEdges, selection_names, workbook_name_exists};
+    let Some(doc) = app.session.active() else { return Vec::new() };
+    let Some(r) = d.values.get("range").and_then(Json::as_str).and_then(gridcraft_engine::core::RangeRef::parse) else { return Vec::new() };
+    let on = |k: &str| d.values.get(k).and_then(Json::as_bool) == Some(true);
+    let edges = LabelEdges { top: on("top"), left: on("left"), bottom: on("bottom"), right: on("right") };
+    let answered = |n: &str| {
+        ["replace", "keep"].iter().any(|k| {
+            d.values.get(*k).and_then(Json::as_array).is_some_and(|a| a.iter().any(|x| x.as_str().is_some_and(|x| x.eq_ignore_ascii_case(n))))
+        })
+    };
+    let mut out: Vec<String> = Vec::new();
+    for (n, _) in selection_names(&doc.wb, doc.wb.active_sheet(), r, edges) {
+        if workbook_name_exists(&doc.wb, &n) && !answered(&n) && !out.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Records the answer to "Replace existing definition of 'X'?" in the `replace` or `keep` list.
+fn answer(d: &mut Dialog, name: &str, replace: bool) {
+    let key = if replace { "replace" } else { "keep" };
+    let mut list = d.values.get(key).and_then(Json::as_array).cloned().unwrap_or_default();
+    list.push(json!(name));
+    d.values.insert(key.into(), Json::Array(list));
+}
+
+/// Create Names from Selection: the four edge boxes, then for each name that already exists
+/// Excel's question 「既存の名前 'X' を置き換えますか?」 (Yes replaces it, No keeps it, Cancel stops
+/// without making any name). OK makes the names in one undo step.
+pub(super) fn create_names(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confirm: &mut bool, open: &mut bool) {
+    let lang = crate::i18n::current(ui.ctx());
+    if let Some(name) = d.values.get("ask").and_then(Json::as_str).map(str::to_string) {
+        ui.label(lang.tr("Replace existing definition of '{name}'?").replace("{name}", &name));
+        ui.add_space(8.0);
+        let mut choice = None;
+        ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button(format!(" {} ", lang.tr("Cancel"))).clicked() {
+                    *open = false;
+                }
+                if ui.button(format!(" {} ", lang.tr("No"))).clicked() {
+                    choice = Some(false);
+                }
+                let t = crate::theme::Tokens::get(ui.ctx());
+                let yes = ui.add(egui::Button::new(egui::RichText::new(format!("   {}   ", lang.tr("Yes"))).color(t.on_accent)).fill(t.accent));
+                if yes.clicked() || ui.input(|i| i.key_pressed(Key::Enter)) {
+                    choice = Some(true);
+                }
+            })
+        });
+        if let Some(replace) = choice {
+            d.values.remove("ask");
+            answer(d, &name, replace);
+            next_question_or_ok(app, d, confirm);
+        }
+        return;
+    }
+    ui.label(lang.tr("Create names from values in the:"));
+    for (key, label) in LABEL_EDGES {
+        let mut on = d.values.get(key).and_then(Json::as_bool).unwrap_or(false);
+        if ui.checkbox(&mut on, lang.tr(label)).changed() {
+            d.values.insert(key.into(), json!(on));
+        }
+    }
+    let mut ok = false;
+    ok_cancel(ui, &mut ok, open);
+    if ok {
+        // A new OK asks again: answers belong to the edges they were given for.
+        d.values.insert("replace".into(), json!([]));
+        d.values.insert("keep".into(), json!([]));
+        next_question_or_ok(app, d, confirm);
+    }
+}
+
+/// Asks about the next existing name, or confirms the dialog when none is left.
+fn next_question_or_ok(app: &SheetApp, d: &mut Dialog, confirm: &mut bool) {
+    match unanswered_existing(app, d).into_iter().next() {
+        Some(n) => {
+            d.values.insert("ask".into(), json!(n));
+        }
+        None => *confirm = true,
+    }
+}
+
+/// `formulas.createFromSelection` params from the dialog: the range, the four edges and the names
+/// answered Yes for (`replace`).
+pub(super) fn create_names_params(v: &mut Json) {
+    if let Some(m) = v.as_object_mut() {
+        m.remove("ask");
+        m.remove("keep");
+        for (key, _) in LABEL_EDGES {
+            let on = m.get(key).and_then(Json::as_bool).unwrap_or(false);
+            m.insert(key.into(), json!(on));
+        }
+    }
+}
+
+#[cfg(test)]
+mod create_names_tests {
+    use super::*;
+
+    fn app(values: Json, existing: &[&str], range: &str) -> SheetApp {
+        let mut s = gridcraft_engine::Session::default();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": values})).unwrap();
+        for n in existing {
+            s.execute("formulas.defineName", json!({"name": n, "refersTo": "=1"})).unwrap();
+        }
+        s.execute("selection.set", json!({"range": range})).unwrap();
+        SheetApp::new(s, Default::default())
+    }
+
+    fn names(app: &SheetApp) -> Vec<(String, String)> {
+        let mut v: Vec<_> = app.session.active().unwrap().wb.names.iter().map(|n| (n.name.clone(), n.formula.clone())).collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn opens_on_the_current_region_with_text_edges_ticked() {
+        let mut app = app(json!([["", "Jan", "Feb"], ["North", 1, 2], ["South", 3, 4]]), &[], "B2");
+        let d = Dialog::open(&mut app, "createNames", json!({})).unwrap();
+        assert_eq!(d.values["range"], "A1:C3");
+        let edges: Vec<&Json> = LABEL_EDGES.iter().map(|(k, _)| &d.values[*k]).collect();
+        assert_eq!(edges, [&json!(true), &json!(true), &json!(false), &json!(false)]);
+    }
+
+    #[test]
+    fn ok_asks_about_each_existing_name_and_replaces_the_yes_ones() {
+        let mut app = app(json!([["Jan", "Feb", "Mar"], [1, 2, 3]]), &["Jan", "feb"], "A1:C2");
+        let mut d = Dialog::open(&mut app, "createNames", json!({})).unwrap();
+        let mut confirm = false;
+        next_question_or_ok(&app, &mut d, &mut confirm);
+        assert_eq!((d.values["ask"].clone(), confirm), (json!("Jan"), false));
+        d.values.remove("ask");
+        answer(&mut d, "Jan", true);
+        next_question_or_ok(&app, &mut d, &mut confirm);
+        assert_eq!((d.values["ask"].clone(), confirm), (json!("Feb"), false));
+        d.values.remove("ask");
+        answer(&mut d, "Feb", false);
+        next_question_or_ok(&app, &mut d, &mut confirm);
+        assert!(confirm);
+        let params = build_params(&d);
+        assert_eq!(params, json!({"range": "A1:C2", "top": true, "left": false, "bottom": false, "right": false, "replace": ["Jan"]}));
+        app.run(d.command.unwrap(), params).unwrap();
+        assert_eq!(names(&app), [("Jan".into(), "Sheet1!$A$2:$A$2".into()), ("Mar".into(), "Sheet1!$C$2:$C$2".into()), ("feb".into(), "1".into())]);
+    }
 }

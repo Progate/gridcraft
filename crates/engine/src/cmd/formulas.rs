@@ -54,7 +54,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Create from Selection",
             ["Formulas", "Defined Names"],
             Some("Cmd+Shift+F3"),
-            "{range?, top?: true, left?: false, bottom?: false, right?: false, replace?: false (existing names are kept and listed in `skipped`), force?: false (labels of the shape GridCraft keeps its own data in, `_gc_<key>_<n>` and `_sc_<key>`, are listed in `skipped` unless force is true)}",
+            "{range?, top?: true, left?: false, bottom?: false, right?: false, replace?: false | true | [names] (existing names are kept and listed in `skipped`; true replaces them all, a list just those), force?: false (labels of the shape GridCraft keeps its own data in, `_gc_<key>_<n>` and `_sc_<key>`, are listed in `skipped` unless force is true)}. With none of range/top/left/bottom/right (the menu and Ctrl+Shift+F3) it opens the Create Names from Selection dialog.",
             has_doc,
             create_from_selection
         ),
@@ -561,15 +561,49 @@ fn name_manager(s: &mut Session, _: &Json) -> Result<Json> {
     Ok(Json::Array(list))
 }
 
-fn create_from_selection(s: &mut Session, p: &Json) -> Result<Json> {
-    let r = target_range(s, p)?;
-    let top = bool_param(p, "top").unwrap_or(true);
-    let left = bool_param(p, "left").unwrap_or(false);
-    let bottom = bool_param(p, "bottom").unwrap_or(false);
-    let right = bool_param(p, "right").unwrap_or(false);
-    let replace = bool_param(p, "replace").unwrap_or(false);
-    let d = s.doc()?;
-    let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
+/// The edges of a selection Create from Selection takes labels from (Excel's Top row, Left
+/// column, Bottom row and Right column).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LabelEdges {
+    pub top: bool,
+    pub left: bool,
+    pub bottom: bool,
+    pub right: bool,
+}
+
+/// The edges Excel's Create Names from Selection dialog ticks when it opens on `r`: the top row
+/// when it holds text and there is a row below it, the left column when it holds text and there is
+/// a column beside it (the corner cell is left out of both). The top row when neither holds text.
+pub fn guess_label_edges(wb: &Workbook, sheet: usize, r: RangeRef) -> LabelEdges {
+    let Some(sh) = wb.sheet(sheet) else { return LabelEdges { top: true, ..LabelEdges::default() } };
+    let text = |cells: &mut dyn Iterator<Item = CellRef>| {
+        let values: Vec<Value> = cells.map(|c| sh.value(c)).filter(|v| !v.is_empty()).collect();
+        !values.is_empty() && values.iter().all(|v| matches!(v, Value::Text(_)))
+    };
+    let top = r.end.row > r.start.row && text(&mut (r.start.col + 1..=r.end.col).map(|c| CellRef::new(r.start.row, c)));
+    let left = r.end.col > r.start.col && text(&mut (r.start.row + 1..=r.end.row).map(|row| CellRef::new(row, r.start.col)));
+    // A single column or row has no corner to leave out: its first cell is the label.
+    let top = top || (r.start.col == r.end.col && r.end.row > r.start.row && matches!(sh.value(r.start), Value::Text(_)));
+    let left = left || (r.start.row == r.end.row && r.end.col > r.start.col && matches!(sh.value(r.start), Value::Text(_)));
+    LabelEdges { top: top || !left, left, bottom: false, right: false }
+}
+
+/// A label as a name, the way Excel's Create from Selection makes one: spaces and characters a
+/// name can't hold become `_`, and a label that can't start a name (`2026`, `A1`) gets `_` in
+/// front. Empty when nothing usable is left.
+pub fn label_name(label: &str) -> String {
+    let mut n: String = label.trim().chars().map(|c| if c.is_alphanumeric() || matches!(c, '.' | '_' | '\\' | '?') { c } else { '_' }).collect();
+    if !n.is_empty() && !valid_name(&n) {
+        n.insert(0, '_');
+    }
+    if valid_name(&n) { n } else { String::new() }
+}
+
+/// The names Create from Selection makes from the labels on `edges` of `r` on `sheet`, with what
+/// each refers to (`Sheet1!$B$2:$B$5`): the cells between the labels, in Excel's order (top, bottom,
+/// left, right).
+pub fn selection_names(wb: &Workbook, sheet: usize, r: RangeRef, edges: LabelEdges) -> Vec<(String, String)> {
+    let Some(sh) = wb.sheet(sheet) else { return Vec::new() };
     let q = gridcraft_formula::quote_sheet(&sh.name);
     let abs = |r: RangeRef| {
         format!(
@@ -580,13 +614,7 @@ fn create_from_selection(s: &mut Session, p: &Json) -> Result<Json> {
             r.end.row + 1
         )
     };
-    let clean = |t: String| -> String {
-        let mut n: String = t.trim().chars().map(|c| if c.is_alphanumeric() || c == '.' { c } else { '_' }).collect();
-        if !n.is_empty() && !valid_name(&n) {
-            n.insert(0, '_');
-        }
-        if valid_name(&n) { n } else { String::new() }
-    };
+    let LabelEdges { top, left, bottom, right } = edges;
     // The labels in the chosen edge rows/columns name the cells between them.
     let (r0, r1) = (r.start.row + top as u32, r.end.row.saturating_sub(bottom as u32));
     let (c0, c1) = (r.start.col + left as u32, r.end.col.saturating_sub(right as u32));
@@ -594,7 +622,7 @@ fn create_from_selection(s: &mut Session, p: &Json) -> Result<Json> {
     if r0 <= r1 && c0 <= c1 {
         for (on, row) in [(top, r.start.row), (bottom, r.end.row)] {
             for c in (c0..=c1).filter(|_| on) {
-                let name = clean(sh.value(CellRef::new(row, c)).display());
+                let name = label_name(&sh.value(CellRef::new(row, c)).display());
                 if !name.is_empty() {
                     made.push((name, abs(RangeRef::new(CellRef::new(r0, c), CellRef::new(r1, c)))));
                 }
@@ -602,21 +630,52 @@ fn create_from_selection(s: &mut Session, p: &Json) -> Result<Json> {
         }
         for (on, col) in [(left, r.start.col), (right, r.end.col)] {
             for row in (r0..=r1).filter(|_| on) {
-                let name = clean(sh.value(CellRef::new(row, col)).display());
+                let name = label_name(&sh.value(CellRef::new(row, col)).display());
                 if !name.is_empty() {
                     made.push((name, abs(RangeRef::new(CellRef::new(row, c0), CellRef::new(row, c1)))));
                 }
             }
         }
     }
-    // Excel asks before replacing an existing name; here it's kept unless `replace` is set, and
+    made
+}
+
+/// Whether a workbook-level name `n` exists (names compare without case, as in Excel): the names
+/// Create from Selection asks about before replacing.
+pub fn workbook_name_exists(wb: &Workbook, n: &str) -> bool {
+    wb.names.iter().any(|x| x.name.eq_ignore_ascii_case(n) && x.scope.is_none())
+}
+
+fn create_from_selection(s: &mut Session, p: &Json) -> Result<Json> {
+    // The menu call (no range and no edges) opens Excel's Create Names from Selection dialog,
+    // whose OK sends the ticked edges.
+    if ["range", "top", "left", "bottom", "right"].iter().all(|k| p.get(*k).is_none()) {
+        s.ui_requests.push(crate::UiRequest::Dialog("createNames".into(), json!({})));
+        return ok();
+    }
+    let r = target_range(s, p)?;
+    let edges = LabelEdges {
+        top: bool_param(p, "top").unwrap_or(true),
+        left: bool_param(p, "left").unwrap_or(false),
+        bottom: bool_param(p, "bottom").unwrap_or(false),
+        right: bool_param(p, "right").unwrap_or(false),
+    };
+    // `replace`: true replaces every existing name, or a list replaces just those (the ones the
+    // person answered Yes for in Excel's "Replace existing definition of 'X'?").
+    let replace_all = bool_param(p, "replace").unwrap_or(false);
+    let replace_listed: Vec<String> =
+        p.get("replace").and_then(Json::as_array).map(|a| a.iter().filter_map(Json::as_str).map(str::to_string).collect()).unwrap_or_default();
+    let replace = |n: &str| replace_all || replace_listed.iter().any(|x| x.eq_ignore_ascii_case(n));
+    let d = s.doc()?;
+    let made = selection_names(&d.wb, d.wb.active_sheet(), r, edges);
+    // Excel asks before replacing an existing name; here it's kept unless `replace` names it, and
     // reported.
-    let exists = |n: &str| d.wb.names.iter().any(|x| x.name.eq_ignore_ascii_case(n) && x.scope.is_none());
+    let exists = |n: &str| workbook_name_exists(&d.wb, n);
     // A label that names one of GridCraft's own hidden data names would replace part of an item
     // (see `refuse_stash_name`).
     let force = bool_param(p, "force").unwrap_or(false);
     let ours = |n: &str| !force && holds_gridcraft_data(&d.wb, n);
-    let (made, skipped): (Vec<_>, Vec<_>) = made.into_iter().partition(|(n, _)| !ours(n) && (replace || !exists(n)));
+    let (made, skipped): (Vec<_>, Vec<_>) = made.into_iter().partition(|(n, _)| !ours(n) && (replace(n) || !exists(n)));
     let skipped: Vec<String> = skipped.into_iter().map(|(n, _)| n).collect();
     let n = made.len();
     edit(s, |cx| {
@@ -1245,6 +1304,58 @@ mod tests {
         s.execute("formulas.defineName", json!({"name": "_gc_macro_1_1", "refersTo": "=1", "force": true})).unwrap();
         s.execute("formulas.deleteName", json!({"name": "_gc_macro_1_1", "force": true})).unwrap();
         assert!(!names(&s).iter().any(|n| n.name == "_gc_macro_1_1"));
+    }
+
+    #[test]
+    fn labels_become_names_as_excel_makes_them() {
+        assert_eq!(label_name("Unit Price"), "Unit_Price");
+        assert_eq!(label_name("2026"), "_2026");
+        assert_eq!(label_name("1st Quarter"), "_1st_Quarter");
+        assert_eq!(label_name("Sales-Tax (%)"), "Sales_Tax____");
+        assert_eq!(label_name("A1"), "_A1");
+        assert_eq!(label_name("売上 合計"), "売上_合計");
+        assert_eq!(label_name("  "), "");
+    }
+
+    #[test]
+    fn create_names_guesses_text_edges_like_excel() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1:C3", "values": [["", "Jan", "Feb"], ["North", 1, 2], ["South", 3, 4]]})).unwrap();
+        let wb = &s.doc().unwrap().wb;
+        let r = |a: &str| RangeRef::parse(a).unwrap();
+        assert_eq!(guess_label_edges(wb, 0, r("A1:C3")), LabelEdges { top: true, left: true, ..Default::default() });
+        assert_eq!(guess_label_edges(wb, 0, r("B1:C3")), LabelEdges { top: true, ..Default::default() });
+        assert_eq!(guess_label_edges(wb, 0, r("A2:C3")), LabelEdges { left: true, ..Default::default() });
+        // Numbers only: Excel still offers the top row.
+        assert_eq!(guess_label_edges(wb, 0, r("B2:C3")), LabelEdges { top: true, ..Default::default() });
+        assert_eq!(guess_label_edges(wb, 0, r("A1:A3")), LabelEdges { top: true, ..Default::default() });
+    }
+
+    #[test]
+    fn create_from_selection_replaces_only_the_listed_names() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1:C2", "values": [["Jan", "Feb", "Mar"], [1, 2, 3]]})).unwrap();
+        for (n, f) in [("Jan", "=1"), ("Feb", "=2")] {
+            s.execute("formulas.defineName", json!({"name": n, "refersTo": f})).unwrap();
+        }
+        let r = s.execute("formulas.createFromSelection", json!({"range": "A1:C2", "top": true, "replace": ["jan"]})).unwrap();
+        assert_eq!((r["created"].clone(), r["skipped"].clone()), (json!(2), json!(["Feb"])));
+        let refers = |s: &Session, n: &str| s.doc().unwrap().wb.names.iter().find(|x| x.name == n).map(|x| x.formula.clone());
+        assert_eq!(refers(&s, "Jan").as_deref(), Some("Sheet1!$A$2:$A$2"));
+        assert_eq!(refers(&s, "Feb").as_deref(), Some("2"));
+        assert_eq!(refers(&s, "Mar").as_deref(), Some("Sheet1!$C$2:$C$2"));
+    }
+
+    #[test]
+    fn create_from_selection_from_the_menu_opens_the_dialog() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1:A2", "values": [["Jan"], [1]]})).unwrap();
+        s.execute("formulas.createFromSelection", json!({})).unwrap();
+        assert!(s.doc().unwrap().wb.names.is_empty());
+        assert!(s.take_ui_requests().iter().any(|q| matches!(q, crate::UiRequest::Dialog(n, _) if n == "createNames")));
     }
 
     #[test]
