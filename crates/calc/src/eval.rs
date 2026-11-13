@@ -19,7 +19,7 @@ mod reference_fns;
 mod special;
 
 use array::map_unary;
-pub use array::{binary_values, zip2};
+pub use array::{binary_values, binary_values_in, zip2};
 pub use format::r1c1_to_a1;
 pub use special::{SPECIAL_FUNCTIONS, is_known_function, precedents, resized_sum_range};
 
@@ -716,9 +716,10 @@ impl<'h> Evaluator<'h> {
                     left = l.as_ref();
                 }
                 let mut acc = self.value(left);
+                let collation = gridcraft_core::Collation::for_region(self.host.workbook().region);
                 while let Some((o, r)) = rest.pop() {
                     let y = self.value(r);
-                    acc = binary_values(o, &acc, &y, self.host.workbook().date_system);
+                    acc = binary_values_in(o, &acc, &y, self.host.workbook().date_system, collation);
                 }
                 Ev::V(acc)
             }

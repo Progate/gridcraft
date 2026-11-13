@@ -166,10 +166,17 @@ pub(super) fn single(v: Value) -> Option<Value> {
 pub(super) const MAX_CONCAT_ARRAY_BYTES: usize = 512 * 1024 * 1024;
 
 pub fn binary_values(op: BinOp, x: &Value, y: &Value, sys: gridcraft_core::DateSystem) -> Value {
+    binary_values_in(op, x, y, sys, gridcraft_core::Collation::Default)
+}
+
+/// [`binary_values`] with `<`, `>`, `<=` and `>=` ordering text in `collation`: a Japanese
+/// workbook compares 関東 and 中国 as Japanese Excel does (the order Sort and SORT use).
+/// `=` and `<>` stay the default comparison, so only the order changes.
+pub fn binary_values_in(op: BinOp, x: &Value, y: &Value, sys: gridcraft_core::DateSystem, collation: gridcraft_core::Collation) -> Value {
     if op == BinOp::Concat && (matches!(x, Value::Array(_)) || matches!(y, Value::Array(_))) {
         return concat_arrays(x, y, sys, MAX_CONCAT_ARRAY_BYTES);
     }
-    zip2(x, y, |a, b| binary_scalar(op, a, b, sys))
+    zip2(x, y, |a, b| binary_scalar(op, a, b, sys, collation))
 }
 
 /// `x & y` with at least one array operand, giving `#NUM!` once the texts built so far pass `budget`
@@ -177,7 +184,7 @@ pub fn binary_values(op: BinOp, x: &Value, y: &Value, sys: gridcraft_core::DateS
 fn concat_arrays(x: &Value, y: &Value, sys: gridcraft_core::DateSystem, budget: usize) -> Value {
     let mut used = 0usize;
     try_zip2(x, y, |a, b| {
-        let v = binary_scalar(BinOp::Concat, a, b, sys);
+        let v = binary_scalar(BinOp::Concat, a, b, sys, gridcraft_core::Collation::Default);
         if let Value::Text(t) = &v {
             used = used.saturating_add(t.len());
             if used > budget {
@@ -189,7 +196,7 @@ fn concat_arrays(x: &Value, y: &Value, sys: gridcraft_core::DateSystem, budget: 
     .unwrap_or(Value::Error(CellError::Num))
 }
 
-fn binary_scalar(op: BinOp, a: &Value, b: &Value, sys: gridcraft_core::DateSystem) -> Value {
+fn binary_scalar(op: BinOp, a: &Value, b: &Value, sys: gridcraft_core::DateSystem, collation: gridcraft_core::Collation) -> Value {
     if let Value::Error(e) = a {
         return Value::Error(*e);
     }
@@ -227,10 +234,10 @@ fn binary_scalar(op: BinOp, a: &Value, b: &Value, sys: gridcraft_core::DateSyste
         },
         BinOp::Eq => Value::Bool(compare(a, b) == Equal),
         BinOp::Ne => Value::Bool(compare(a, b) != Equal),
-        BinOp::Lt => Value::Bool(compare(a, b) == Less),
-        BinOp::Gt => Value::Bool(compare(a, b) == Greater),
-        BinOp::Le => Value::Bool(compare(a, b) != Greater),
-        BinOp::Ge => Value::Bool(compare(a, b) != Less),
+        BinOp::Lt => Value::Bool(collation.compare(a, b) == Less),
+        BinOp::Gt => Value::Bool(collation.compare(a, b) == Greater),
+        BinOp::Le => Value::Bool(collation.compare(a, b) != Greater),
+        BinOp::Ge => Value::Bool(collation.compare(a, b) != Less),
         BinOp::Range | BinOp::Union | BinOp::Intersect => Value::Error(CellError::Value),
     }
 }

@@ -6792,3 +6792,16 @@ fn history_charges_the_storage_of_empty_comment_replies() {
     // 500 replies of no text are still 500 elements.
     assert!(crate::sheet_text_bytes(&sheet) >= 500 * std::mem::size_of::<(String, String)>());
 }
+
+/// In a Japanese workbook `<` and `>` order text as Sort and SORT do; `=` is unchanged.
+#[test]
+fn comparison_operators_follow_the_japanese_order() {
+    let mut s = s();
+    s.execute("app.region.set", json!({"region": "ja-JP"})).unwrap();
+    s.execute("cell.set", json!({"cell": "A1", "input": "=\"関東\"<\"中国\""})).unwrap();
+    s.execute("cell.set", json!({"cell": "A2", "input": "=\"いちご\"<\"大阪\""})).unwrap();
+    s.execute("cell.set", json!({"cell": "A3", "input": "=\"a\"=\"A\""})).unwrap();
+    assert_eq!(v(&s, "A1"), Value::Bool(true));
+    assert_eq!(v(&s, "A2"), Value::Bool(true));
+    assert_eq!(v(&s, "A3"), Value::Bool(true));
+}
