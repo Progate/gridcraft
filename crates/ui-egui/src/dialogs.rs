@@ -857,6 +857,14 @@ impl Dialog {
             }
             "solverResults" => Dialog::custom("solverResults", "Solver Results", params.clone()),
             "subtotal" => subtotal::open(app, &params),
+            // Workbook Links ▸ Change source: the workbook the link's formulas read instead.
+            "changeLinkSource" => Dialog::form(
+                "changeLinkSource",
+                "Workbook Links|Change Source",
+                "data.changeLinkSource",
+                vec![Text { key: "source", label: "Workbook Links|File name:" }],
+                json!({"link": p("link"), "source": params.get("source").and_then(Json::as_str).unwrap_or("")}),
+            ),
             // Group / Ungroup on a block of cells ask whether to group its rows or its columns.
             "groupLines" | "ungroupLines" => {
                 let group = name == "groupLines";

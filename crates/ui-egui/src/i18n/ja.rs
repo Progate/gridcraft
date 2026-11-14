@@ -2359,6 +2359,23 @@ const OUTLINE: &[(&str, &str)] = &[
     ("Group|Columns", "列"),
 ];
 
+/// Data ▸ Queries & Connections ▸ Workbook Links as Japanese Microsoft 365 words it (ブックのリンク).
+const WORKBOOK_LINKS: &[(&str, &str)] = &[
+    ("Workbook Links", "ブックのリンク"),
+    ("Workbook Links|Refresh All", "すべて更新"),
+    ("Workbook Links|Break All", "すべてのリンクを解除"),
+    ("Workbook Links|Refresh", "更新"),
+    ("Workbook Links|Change source", "ソースの変更"),
+    ("Workbook Links|Break links", "リンクの解除"),
+    ("Workbook Links|OK", "OK"),
+    ("Workbook Links|Unknown", "不明"),
+    ("Workbook Links|Error: Source not found", "エラー: ソースが見つかりません"),
+    ("Workbook Links|This workbook has no links to other workbooks.", "このブックには、他のブックへのリンクはありません。"),
+    ("Workbook Links|Change Source", "ソースの変更"),
+    ("Workbook Links|File name:", "ファイル名:"),
+    ("This workbook has no links to other workbooks.", "このブックには、他のブックへのリンクはありません。"),
+];
+
 /// Engine messages with one varying part, `{}`: the part is translated by the catalog when it
 /// knows it, else kept.
 const MESSAGE_TEMPLATES: &[(&str, &str)] = &[
@@ -2398,6 +2415,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         .chain(FORMAT_CELLS)
         .chain(CONSOLIDATE)
         .chain(OUTLINE)
+        .chain(WORKBOOK_LINKS)
         .find(|(english, _)| *english == text)
         .map(|(_, translated)| *translated)
 }
@@ -2488,7 +2506,16 @@ mod tests {
     #[test]
     fn consolidate_labels_are_their_own() {
         let others: HashSet<&str> = catalog_keys()
-            .chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).chain(FORMAT_CELLS).chain(OUTLINE).map(|(english, _)| *english))
+            .chain(
+                EXTRA
+                    .iter()
+                    .chain(AUTOFILTER)
+                    .chain(CONDITIONAL_FORMATTING)
+                    .chain(FORMAT_CELLS)
+                    .chain(OUTLINE)
+                    .chain(WORKBOOK_LINKS)
+                    .map(|(english, _)| *english),
+            )
             .collect();
         let mut seen = HashSet::new();
         for (english, japanese) in CONSOLIDATE {
@@ -2505,7 +2532,7 @@ mod tests {
             .chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).chain(FORMAT_CELLS).chain(CONSOLIDATE).map(|(english, _)| *english))
             .collect();
         let mut seen = HashSet::new();
-        for (english, japanese) in OUTLINE {
+        for (english, japanese) in OUTLINE.iter().chain(WORKBOOK_LINKS) {
             assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
             assert!(!others.contains(english), "{english:?} is already in another list");
             assert!(seen.insert(*english), "duplicate key: {english:?}");

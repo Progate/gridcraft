@@ -1,4 +1,4 @@
-//! Right-hand task panes: Comments, Watch Window, Selection Pane, Format Chart.
+//! Right-hand task panes: Comments, Watch Window, Selection Pane, Format Chart, Workbook Links.
 
 use egui::{Color32, Ui, vec2};
 use serde_json::{Value as Json, json};
@@ -26,6 +26,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         ui.horizontal(|ui| {
             let title = match pane.as_str() {
                 "comments" => "Comments",
+                "workbookLinks" => "Workbook Links",
                 "watch" => "Watch Window",
                 "selection" => "Selection",
                 "formatChart" => "Format Chart Area",
@@ -44,6 +45,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
         ui.separator();
         egui::ScrollArea::vertical().show(ui, |ui| match pane.as_str() {
             "comments" => comments(app, ui),
+            "workbookLinks" => crate::workbook_links_pane::body(app, ui),
             "watch" => watch(app, ui),
             "selection" => selection(app, ui),
             "formatChart" => format_chart(app, ui),

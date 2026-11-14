@@ -138,6 +138,12 @@ impl SheetApp {
         if id == "data.consolidate" && params.get("sources").is_none_or(Json::is_null) {
             return self.open_dialog("consolidate", params);
         }
+        // Workbook Links (Edit Links, Alt A K, command search) opens Excel's task pane; programmatic
+        // callers of `run` get the list.
+        if id == "data.editLinks" {
+            self.grid.pane = Some("workbookLinks".into());
+            return;
+        }
         // Group / Ungroup on a block of cells (not whole rows or columns) ask whether to group its
         // rows or its columns, as Excel's dialog does; programmatic callers of `run` group rows.
         if matches!(id, "data.group" | "data.ungroup")

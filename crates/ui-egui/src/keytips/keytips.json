@@ -1946,9 +1946,9 @@
   {
    "seq": "AK",
    "kind": "command",
-   "target": "data.queriesConnections",
+   "target": "data.editLinks",
    "excel": "Edit Links",
-   "note": "Edit Links (Queries & Connections);"
+   "note": "Workbook Links (Queries & Connections): opens the task pane"
   },
   {
    "seq": "AM",

@@ -2071,7 +2071,7 @@ fn keytip_aj_() {
 fn keytip_ak_() {
     let mut h = harness(blank());
     sequence(&mut h, "AK", false);
-    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AK must run data.queriesConnections cleanly");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "AK must run data.editLinks cleanly");
 }
 
 #[test]

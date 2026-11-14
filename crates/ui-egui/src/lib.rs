@@ -59,6 +59,7 @@ pub mod theme;
 mod updates_ui;
 pub mod widgets;
 mod window_ui;
+mod workbook_links_pane;
 
 pub use window_ui::WindowUi;
 
