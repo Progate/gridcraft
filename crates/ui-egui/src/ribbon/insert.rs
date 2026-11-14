@@ -151,6 +151,8 @@ pub(super) fn insert(app: &mut SheetApp, ui: &mut Ui) {
                 });
             }
         });
+        // Excel's PivotChart, in the Charts group.
+        super::contextual::pivot_chart_button(app, ui, true);
     });
     sep(ui);
     if big_button(ui, Icon::Filter, "Slicer", "Insert a slicer to filter a table", false).clicked() {

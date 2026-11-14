@@ -37,6 +37,7 @@ fn shown_text(app: &SheetApp, id: u32, element: ChartElement) -> Option<String> 
         ChartElement::Title => gridcraft_engine::cmd::insert::shown_chart_title(&d.wb, si, c, app.session.prefs.chart_title()),
         ChartElement::HorizontalAxisTitle => c.axis_title(true).map(str::to_string),
         ChartElement::VerticalAxisTitle => c.axis_title(false).map(str::to_string),
+        ChartElement::SecondaryVerticalAxisTitle => c.y2_title.clone(),
     }
 }
 
@@ -49,6 +50,7 @@ pub fn set_params(app: &SheetApp, id: u32, element: ChartElement, text: &str) ->
         ChartElement::HorizontalAxisTitle => "xTitle",
         ChartElement::VerticalAxisTitle if across => "xTitle",
         ChartElement::VerticalAxisTitle => "yTitle",
+        ChartElement::SecondaryVerticalAxisTitle => "y2Title",
     };
     json!({"chart": id, key: text})
 }

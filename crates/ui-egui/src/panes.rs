@@ -236,6 +236,59 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
             }
         }
     });
+    if chart.kind == gridcraft_chart::ChartKind::Histogram {
+        // Format Axis ▸ Axis Options ▸ Bins, as Excel's: Automatic, Bin width or Number of bins,
+        // and the Overflow and Underflow bins.
+        ui.collapsing(lang.tr("Format Axis"), |ui| {
+            let b = chart.bins.unwrap_or_default();
+            ui.label(egui::RichText::new(lang.tr("Bins")).strong());
+            if ui.radio(b.width.is_none() && b.count.is_none(), lang.tr("Automatic")).clicked() {
+                app.run_or_alert("chart.set", json!({"chart": id, "binWidth": null, "binCount": null}));
+            }
+            for (label, key, on, value) in
+                [("Bin width", "binWidth", b.width.is_some(), b.width), ("Number of bins", "binCount", b.count.is_some(), b.count.map(f64::from))]
+            {
+                ui.horizontal(|ui| {
+                    // Typing a value picks this choice, as in Excel.
+                    let _ = ui.radio(on, lang.tr(label));
+                    let field = egui::Id::unique(("gridcraft.histogram_bins", id, key));
+                    let shown = value.map(|v| v.to_string()).unwrap_or_default();
+                    if let Some(t) = crate::widgets::committed_text(ui, field, &shown, Some(70.0))
+                        && let Ok(v) = t.trim().parse::<f64>()
+                    {
+                        app.run_or_alert("chart.set", json!({"chart": id, key: v}));
+                    }
+                });
+            }
+            for (label, key, value) in [("Overflow bin", "overflow", b.overflow), ("Underflow bin", "underflow", b.underflow)] {
+                ui.horizontal(|ui| {
+                    let mut on = value.is_some();
+                    let field = egui::Id::unique(("gridcraft.histogram_cut", id, key));
+                    let shown = value.map(|v| v.to_string()).unwrap_or_default();
+                    let typed = crate::widgets::committed_text(ui, field, &shown, Some(70.0));
+                    if ui.checkbox(&mut on, lang.tr(label)).changed() && !on {
+                        app.run_or_alert("chart.set", json!({"chart": id, key: null}));
+                    } else if let Some(t) = typed
+                        && let Ok(v) = t.trim().parse::<f64>()
+                    {
+                        app.run_or_alert("chart.set", json!({"chart": id, key: v}));
+                    }
+                });
+            }
+        });
+    }
+    if chart.kind == gridcraft_chart::ChartKind::BoxWhisker {
+        // Format Data Series ▸ Series Options ▸ Quartile Calculation.
+        ui.collapsing(lang.tr("Quartile Calculation"), |ui| {
+            let exclusive = chart.series.first().is_none_or(|s| s.quartiles == gridcraft_engine::model::QuartileMethod::Exclusive);
+            if ui.radio(!exclusive, lang.tr("Inclusive median")).clicked() {
+                app.run_or_alert("chart.set", json!({"chart": id, "quartiles": "inclusive"}));
+            }
+            if ui.radio(exclusive, lang.tr("Exclusive median")).clicked() {
+                app.run_or_alert("chart.set", json!({"chart": id, "quartiles": "exclusive"}));
+            }
+        });
+    }
     ui.collapsing(lang.tr("Legend"), |ui| {
         ui.horizontal(|ui| {
             for (l, v) in [("None", "none"), ("Bottom", "bottom"), ("Top", "top"), ("Left", "left"), ("Right", "right")] {
@@ -399,8 +452,8 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
     });
     ui.collapsing(lang.tr("Colors & Layout"), |ui| {
         ui.horizontal_wrapped(|ui| {
-            for p in ["colorful", "monochrome", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6"] {
-                if ui.button(p).clicked() {
+            for (p, label) in crate::ribbon::contextual::color_palettes(lang) {
+                if ui.button(label).clicked() {
                     app.run_or_alert("chart.changeColors", json!({"chart": id, "palette": p}));
                 }
             }

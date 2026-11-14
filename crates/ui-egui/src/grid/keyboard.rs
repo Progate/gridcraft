@@ -183,6 +183,9 @@ fn delete_chart_element(app: &mut SheetApp) -> bool {
         gridcraft_chart::ChartElement::Title => json!({"chart": id, "element": "title", "on": false}),
         gridcraft_chart::ChartElement::HorizontalAxisTitle => json!({"chart": id, "element": "axisTitle", "axis": "horizontal", "on": false}),
         gridcraft_chart::ChartElement::VerticalAxisTitle => json!({"chart": id, "element": "axisTitle", "axis": "vertical", "on": false}),
+        gridcraft_chart::ChartElement::SecondaryVerticalAxisTitle => {
+            json!({"chart": id, "element": "axisTitle", "axis": "secondaryVertical", "on": false})
+        }
     };
     app.run_or_alert("chart.addElement", params);
     app.grid.chart_element = None;

@@ -120,6 +120,8 @@ struct ChartState {
     across: bool,
     horizontal_title: bool,
     vertical_title: bool,
+    /// A series is on the secondary axis, and whether that axis has a title.
+    secondary: Option<bool>,
     title: bool,
     overlay: bool,
     data_table: bool,
@@ -140,6 +142,7 @@ fn chart_state(app: &SheetApp) -> Option<ChartState> {
         across: c.value_axis_across(),
         horizontal_title: c.axis_title(true).is_some(),
         vertical_title: c.axis_title(false).is_some(),
+        secondary: c.series.iter().any(|s| s.secondary).then_some(c.y2_title.is_some()),
         title: shown.is_some(),
         overlay: c.title_overlay,
         data_table: c.supports_data_table(),
@@ -159,7 +162,11 @@ fn add_chart_element_menu(app: &mut SheetApp, ui: &mut Ui, c: &ChartState) {
     let id = c.id;
     if c.axes {
         ui.menu_button(lang.tr("Axis Titles"), |ui| {
-            for (label, axis, on) in [("Primary Horizontal", "horizontal", c.horizontal_title), ("Primary Vertical", "vertical", c.vertical_title)] {
+            let mut axes = vec![("Primary Horizontal", "horizontal", c.horizontal_title), ("Primary Vertical", "vertical", c.vertical_title)];
+            if let Some(on) = c.secondary {
+                axes.push(("Secondary Vertical", "secondaryVertical", on));
+            }
+            for (label, axis, on) in axes {
                 if check_item(app, ui, label, on) {
                     act(app, "chart.addElement", json!({"chart": id, "element": "axisTitle", "axis": axis, "on": !on}));
                     ui.close();
@@ -225,6 +232,17 @@ fn add_chart_element_menu(app: &mut SheetApp, ui: &mut Ui, c: &ChartState) {
     });
 }
 
+/// Change Colors' palettes as `(palette, label)`: Excel's Colorful Palette (the theme accents in
+/// turn) and Monochromatic Palettes (shades of one accent).
+pub(crate) fn color_palettes(lang: crate::i18n::Language) -> Vec<(&'static str, String)> {
+    let mono = |n: usize| lang.tr("Monochromatic Palette {n}").replace("{n}", &n.to_string());
+    let mut v = vec![("colorful", lang.tr("Colorful Palette {n}").replace("{n}", "1")), ("monochrome", mono(1))];
+    for (i, p) in ["accent1", "accent2", "accent3", "accent4", "accent5", "accent6"].into_iter().enumerate() {
+        v.push((p, mono(i + 2)));
+    }
+    v
+}
+
 /// How many Chart Styles the ribbon shows before the More arrow, as Excel's gallery row.
 const RIBBON_CHART_STYLES: u32 = 6;
 
@@ -276,6 +294,15 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
         });
     }
     sep(ui);
+    let cc = big_button(ui, Icon::Theme, "Change\nColors", "Change Colors", true);
+    control_keytip(app, ui, &cc, "chart.changeColors");
+    egui::Popup::menu(&cc).show(|ui| {
+        for (p, label) in color_palettes(app.ui.language) {
+            if ui.button(label).clicked() {
+                act(app, "chart.changeColors", json!({"chart": id, "palette": p}));
+            }
+        }
+    });
     chart_style_strip(app, ui, &c);
     sep(ui);
     let __k = big_button(ui, Icon::Redo, "Switch\nRow/Column", "Switch Row/Column", false);
@@ -318,6 +345,7 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("comboChart", json!({"chart": id}));
         }
     });
+    pivot_chart_fields(app, ui, id);
     sep(ui);
     let __k = big_button(ui, Icon::Chart, "Move\nChart", "Move Chart", false);
     control_keytip(app, ui, &__k, "chart.move");
@@ -450,6 +478,95 @@ pub(super) fn sparkline_tab(app: &mut SheetApp, ui: &mut Ui) {
             act(app, "sparkline.set", json!({"cell": cell, "markers": on}));
         }
     });
+}
+
+/// PivotChart (ピボットグラフ) for the ribbon: a PivotChart of the PivotTable at the active cell in
+/// the chart type picked. Outside a PivotTable it starts one (Insert PivotTable), as Excel's
+/// button asks for the data first.
+pub(super) fn pivot_chart_button(app: &mut SheetApp, ui: &mut Ui, small: bool) {
+    let pc = if small {
+        crate::widgets::small_button(ui, Icon::PivotTable, "PivotChart", "PivotChart", true)
+    } else {
+        big_button(ui, Icon::PivotTable, "PivotChart", "PivotChart", true)
+    };
+    control_keytip(app, ui, &pc, "insert.pivotChart");
+    let in_pivot = crate::pivot_pane::active_pivot(app);
+    egui::Popup::menu(&pc).show(|ui| {
+        let Some(pivot) = in_pivot else {
+            if ui.button(app.ui.language.tr("PivotTable")).clicked() {
+                act(app, "insert.pivotTable", json!({}));
+            }
+            return;
+        };
+        for (label, k, s) in [
+            ("Clustered Column", "column", ""),
+            ("Stacked Column", "column", "stacked"),
+            ("Clustered Bar", "bar", ""),
+            ("Line", "line", ""),
+            ("Line with Markers", "line", "markers"),
+            ("Pie", "pie", ""),
+            ("Doughnut", "doughnut", ""),
+            ("Area", "area", ""),
+        ] {
+            if ui.button(app.ui.language.tr(label)).clicked() {
+                act(app, "insert.pivotChart", json!({"pivot": pivot, "type": k, "subtype": s}));
+            }
+        }
+    });
+}
+
+/// A PivotChart's field buttons (Excel draws them on the chart): each axis field of its PivotTable
+/// with its filter list and Expand / Collapse Entire Field.
+fn pivot_chart_fields(app: &mut SheetApp, ui: &mut Ui, id: u32) {
+    let Some(pivot) = app
+        .session
+        .active()
+        .and_then(|d| d.wb.active()?.charts.iter().find(|c| c.id == id)?.pivot.clone())
+        .map(|p| p.rsplit_once('!').map_or(p.clone(), |(_, n)| n.to_string()))
+    else {
+        return;
+    };
+    sep(ui);
+    let fb = big_button(ui, Icon::Filter, "Field\nButtons", "Field Buttons", true);
+    egui::Popup::menu(&fb).show(|ui| {
+        let Ok(info) = app.session.run("pivot.fields", json!({"pivot": pivot})) else { return };
+        let fields: Vec<String> = ["rows", "columns"]
+            .iter()
+            .flat_map(|k| info["pivot"][*k].as_array().cloned().unwrap_or_default())
+            .filter_map(|f| f["field"].as_str().or(f["sourceCol"].as_str()).or(f["name"].as_str()).map(str::to_string))
+            .collect();
+        let lang = app.ui.language;
+        for f in fields {
+            ui.menu_button(format!("{f} ▾"), |ui| {
+                for (label, collapse) in [("Expand Entire Field", false), ("Collapse Entire Field", true)] {
+                    if ui.button(lang.tr(label)).clicked() {
+                        act(app, "pivot.collapse", json!({"pivot": pivot, "field": f, "collapse": collapse}));
+                    }
+                }
+                crate::pivot_pane::filter_menu(app, ui, &pivot, &f, &info);
+            });
+        }
+    });
+}
+
+/// PivotTable Analyze (ピボットテーブル分析), while the active cell is in a PivotTable: Expand Field
+/// and Collapse Field for the active field, Refresh, PivotChart and the field list.
+pub(super) fn pivot_analyze(app: &mut SheetApp, ui: &mut Ui) {
+    let Some(pivot) = crate::pivot_pane::active_pivot(app) else { return };
+    for (label, tip, collapse) in [("Expand\nField", "Expand Field", false), ("Collapse\nField", "Collapse Field", true)] {
+        let __k = big_button(ui, if collapse { Icon::Minus } else { Icon::Plus }, label, tip, false);
+        if __k.clicked() {
+            act(app, "pivot.collapse", json!({"pivot": pivot, "collapse": collapse}));
+        }
+    }
+    sep(ui);
+    let __k = big_button(ui, Icon::Redo, "Refresh", "Refresh", false);
+    control_keytip(app, ui, &__k, "pivot.refresh");
+    if __k.clicked() {
+        act(app, "pivot.refresh", json!({"pivot": pivot}));
+    }
+    sep(ui);
+    pivot_chart_button(app, ui, false);
 }
 
 /// A Quick Layout's tooltip: the chart elements it shows, in the interface language.

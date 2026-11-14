@@ -111,6 +111,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             if is_values {
                                 return;
                             }
+                            if *key != "values" {
+                                filter_menu(app, ui, &name, &f, &info);
+                            }
                             if *key == "values" {
                                 ui.separator();
                                 for (func, l) in [
@@ -193,5 +196,50 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 .accessible_name(lang.tr("Report Layout"));
         });
         let _: Option<Json> = None;
+    });
+}
+
+/// A row, column or filter field's item list, as Excel's field dropdown: (Select All) and a
+/// checkbox per item, applied with `pivot.filter` at once.
+pub(crate) fn filter_menu(app: &mut SheetApp, ui: &mut Ui, pivot: &str, field: &str, info: &Json) {
+    let lang = i18n::current(ui.ctx());
+    let items: Vec<String> = info["fields"]
+        .as_array()
+        .and_then(|fs| fs.iter().find(|f| f["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(field))))
+        .and_then(|f| f["items"].as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    if items.is_empty() {
+        return;
+    }
+    let selected: Option<Vec<String>> = info["pivot"]["filters"]
+        .as_array()
+        .and_then(|fs| fs.iter().find(|f| f["field"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(field))))
+        .and_then(|f| f["selected"].as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect());
+    let shown = |it: &str| selected.as_ref().is_none_or(|s| s.iter().any(|x| x.eq_ignore_ascii_case(it)));
+    ui.separator();
+    ui.menu_button(lang.tr("Filter"), |ui| {
+        let mut all = selected.is_none();
+        if ui.checkbox(&mut all, lang.tr("(Select All)")).changed() && all {
+            app.run_or_alert("pivot.filter", json!({"pivot": pivot, "field": field, "selected": null}));
+        }
+        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+            for it in &items {
+                let mut on = shown(it);
+                if ui.checkbox(&mut on, it.as_str()).changed() {
+                    let mut keep: Vec<&String> = items.iter().filter(|x| shown(x) && *x != it).collect();
+                    if on {
+                        keep.push(it);
+                    }
+                    // Every item ticked again is no filter; none ticked is refused, as Excel's OK greys out.
+                    if keep.len() == items.len() {
+                        app.run_or_alert("pivot.filter", json!({"pivot": pivot, "field": field, "selected": null}));
+                    } else if !keep.is_empty() {
+                        app.run_or_alert("pivot.filter", json!({"pivot": pivot, "field": field, "selected": keep}));
+                    }
+                }
+            }
+        });
     });
 }

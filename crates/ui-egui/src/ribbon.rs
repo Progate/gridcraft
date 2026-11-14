@@ -27,7 +27,7 @@ mod title_bar;
 mod view;
 
 use automate::automate;
-use contextual::{chart_design, chart_format, sparkline_tab, table_design};
+use contextual::{chart_design, chart_format, pivot_analyze, sparkline_tab, table_design};
 pub(crate) use controls::{ComboResult, editable_combo};
 use controls::{act, keytip};
 use data::data;
@@ -157,6 +157,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             "Chart Design" => chart_design(app, ui),
                             CHART_FORMAT_TAB => chart_format(app, ui),
                             SPARKLINE_TAB => sparkline_tab(app, ui),
+                            PIVOT_ANALYZE_TAB => pivot_analyze(app, ui),
                             crate::paper_view::TAB => crate::paper_view::ribbon_tab(app, ui),
                             _ => home(app, ui),
                         }
@@ -281,7 +282,10 @@ pub(crate) const CHART_FORMAT_TAB: &str = "Format";
 /// The Sparkline tab (スパークライン), while the active cell holds a sparkline.
 pub(crate) const SPARKLINE_TAB: &str = "Sparkline";
 
-const CONTEXTUAL_TABS: [&str; 5] = ["Table Design", "Chart Design", CHART_FORMAT_TAB, SPARKLINE_TAB, crate::paper_view::TAB];
+/// PivotTable Analyze (ピボットテーブル分析), while the active cell is in a PivotTable.
+pub(crate) const PIVOT_ANALYZE_TAB: &str = "PivotTable Analyze";
+
+const CONTEXTUAL_TABS: [&str; 6] = ["Table Design", "Chart Design", CHART_FORMAT_TAB, SPARKLINE_TAB, PIVOT_ANALYZE_TAB, crate::paper_view::TAB];
 
 fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
     let mut v = Vec::new();
@@ -290,6 +294,9 @@ fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
     {
         if sh.table_at(d.selection.active).is_some() {
             v.push("Table Design");
+        }
+        if app.selected_object.is_none() && crate::pivot_pane::active_pivot(app).is_some() {
+            v.push(PIVOT_ANALYZE_TAB);
         }
         if app.selected_chart().is_some_and(|id| sh.charts.iter().any(|c| c.id == id)) {
             v.push("Chart Design");
