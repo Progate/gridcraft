@@ -26,7 +26,8 @@ mod fields;
 mod layout;
 mod params;
 
-use charts::{insert_pivot_chart, recommended};
+pub(crate) use charts::insert_pivot_chart;
+use charts::recommended;
 use create::{insert_pivot, options, show_details, summarize_table};
 use fields::{add_field, calculated_field, fields, list, move_field, remove_field, value_settings};
 use layout::{change_source, collapse, delete, filter, grand_totals, group, layout, refresh, refresh_all, sort};
@@ -133,7 +134,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Expand/Collapse Field",
             ["PivotTable Analyze", "Active Field"],
             None,
-            "{pivot?, field, items?: [labels] (default: all), collapse?: true, replace?}",
+            "{pivot?, field? (default: the field whose label the active cell shows: Expand Field / Collapse Field), items?: [labels] (default: all), collapse?: true, replace?}",
             has_doc,
             collapse
         ),
@@ -201,7 +202,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Show Details",
             [],
             None,
-            "{cell?: \"B5\" (a value, subtotal or grand total cell of a PivotTable on the active sheet; default: the active cell)} puts the source records behind that value on a new sheet before the current one → {sheet, records}. An error when the PivotTable's Enable show details option is off (`pivot.options` `{enableShowDetails: true}` turns it on).",
+            "{cell?: \"B5\" (a value, subtotal or grand total cell of a PivotTable on the active sheet; default: the active cell)} puts the source records behind that value as a table (Table1 / テーブル1) on a new sheet before the current one → {sheet, records, table}. An error when the PivotTable's Enable show details option is off (`pivot.options` `{enableShowDetails: true}` turns it on).",
             has_doc,
             show_details
         ),

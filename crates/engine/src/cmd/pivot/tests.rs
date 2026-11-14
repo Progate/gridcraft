@@ -1336,3 +1336,61 @@ fn group_without_settings_opens_the_grouping_dialog() {
     assert_eq!(params["end"], "4/1/2026");
     assert_eq!(params["autoStart"], true);
 }
+
+#[test]
+fn a_chart_inserted_from_a_cell_of_the_report_is_a_pivot_chart() {
+    let mut s = sales();
+    s.prefs.language = "ja".into();
+    s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"]})).unwrap();
+    s.execute("selection.set", json!({"range": "B5"})).unwrap();
+    s.execute("insert.chart", json!({"type": "column"})).unwrap();
+    let ch = pivot_chart(&s);
+    assert_eq!(ch.pivot.as_deref(), Some("Sheet2!PivotTable1"), "linked to the PivotTable, as Excel makes it");
+    assert_eq!(ch.title.as_deref(), Some("集計"), "Excel's Japanese default title");
+    // The recommended-charts path too.
+    s.execute("insert.recommendedCharts", json!({})).unwrap();
+    assert!(pivot_chart(&s).pivot.is_some());
+    s.execute("pivot.addField", json!({"field": "Product", "area": "columns"})).unwrap();
+    s.execute("insert.pivotChart", json!({"pivot": "B5"})).unwrap();
+    assert_eq!(pivot_chart(&s).title.as_deref(), Some("グラフ タイトル"));
+    // Outside the report it stays an ordinary chart.
+    s.execute("range.setValues", json!({"range": "H1", "values": [["a", "b"], [1, 2]]})).unwrap();
+    s.execute("insert.chart", json!({"range": "H1:I2", "type": "column"})).unwrap();
+    assert_eq!(pivot_chart(&s).pivot, None);
+}
+
+#[test]
+fn expand_and_collapse_field_take_the_active_cells_field() {
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Region", "Product"], "values": ["Sales"]})).unwrap();
+    s.execute("selection.set", json!({"range": "A5"})).unwrap();
+    let r = s.execute("pivot.collapse", json!({"collapse": true})).unwrap();
+    assert_eq!(r["collapsed"].as_array().unwrap().len(), 3, "every Region item: {r}");
+    let r = s.execute("pivot.collapse", json!({"collapse": false})).unwrap();
+    assert!(r["collapsed"].as_array().unwrap().is_empty());
+    s.execute("selection.set", json!({"range": "B5"})).unwrap();
+    assert!(s.execute("pivot.collapse", json!({})).is_err(), "a value cell names no field");
+    let f = s.execute("pivot.fields", json!({})).unwrap();
+    assert_eq!(f["fields"][0]["items"], json!(["East", "North", "West"]), "the filter list's items");
+}
+
+#[test]
+fn show_details_lists_the_records_as_a_table() {
+    let mut s = sales();
+    s.execute("insert.pivotTable", json!({"rows": ["Region"], "values": ["Sales"]})).unwrap();
+    s.execute("selection.set", json!({"range": "B4"})).unwrap();
+    let r = s.execute("pivot.showDetails", json!({})).unwrap();
+    assert_eq!(r["table"], "Table1");
+    let d = s.doc().unwrap();
+    let t = &d.wb.active().unwrap().tables[0];
+    let last = format!("A1:E{}", r["records"].as_u64().unwrap() + 1);
+    assert_eq!((t.name.as_str(), t.range.a1(), t.style.as_str()), ("Table1", last, "TableStyleMedium2"), "the header and every record");
+    assert_eq!(t.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Region", "Product", "Date", "Units", "Sales"]);
+    // A second list is Table2; saved and read back as tables.
+    s.execute("sheet.activate", json!({"sheet": "Sheet2"})).unwrap();
+    s.execute("selection.set", json!({"range": "B5"})).unwrap();
+    assert_eq!(s.execute("pivot.showDetails", json!({})).unwrap()["table"], "Table2");
+    let wb = (*s.doc().unwrap().wb).clone();
+    let (back, _) = gridcraft_xlsx::read_xlsx(&gridcraft_xlsx::write_xlsx(&wb).unwrap()).unwrap();
+    assert_eq!(back.sheets.iter().map(|sh| sh.tables.len()).sum::<usize>(), 2);
+}

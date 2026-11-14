@@ -46,6 +46,8 @@ fn chart(id: u32, kind: ChartKind, series: Vec<Series>) -> Chart {
         auto_title: false,
         title_overlay: false,
         chart_style: None,
+        y2_title: None,
+        bins: None,
     }
 }
 

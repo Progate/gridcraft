@@ -318,6 +318,8 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         auto_title,
         title_overlay: chart.child("title").is_some_and(|t| bool_val(t, "overlay")),
         chart_style: None,
+        y2_title: plot.kids("valAx").find(|a| a.child_val("crosses") == Some("max")).and_then(|a| a.child("title")).and_then(rich_title),
+        bins: None,
     })
 }
 
@@ -950,7 +952,8 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book_name: &str) -> Str
     if secondary.is_some() {
         // As Excel writes a secondary axis: its value axis on the right crossing the hidden
         // secondary category axis at its maximum, then that category axis, deleted.
-        s.push_str(&axis_xml(&Ax { cat: false, id: 4, cross: 3, pos: "r", delete: false, grid: false, title: None, crosses_max: true }));
+        let title = ch.y2_title.as_deref();
+        s.push_str(&axis_xml(&Ax { cat: false, id: 4, cross: 3, pos: "r", delete: false, grid: false, title, crosses_max: true }));
         s.push_str(&axis_xml(&Ax { cat: true, id: 3, cross: 4, pos: "b", delete: true, grid: false, title: None, crosses_max: false }));
     }
     if let Some(t) = &ch.data_table {

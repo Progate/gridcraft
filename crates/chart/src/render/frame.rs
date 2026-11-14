@@ -80,6 +80,28 @@ pub(super) fn axis_titles(ctx: &mut Ctx, chart: &Chart, mut area: Bx) -> Bx {
         area.x += lh;
         area.w -= lh;
     }
+    // The secondary value axis's title, turned down its right side, while a series uses that axis.
+    if chart.series.iter().any(|s| s.secondary)
+        && let Some(t) = chart.y2_title.as_deref().map(str::trim).filter(|t| !t.is_empty())
+    {
+        let t = ctx.fit(t, AXIS_TITLE_SIZE, area.h);
+        if !t.is_empty() {
+            let tw = ctx.tw(&t, AXIS_TITLE_SIZE);
+            ctx.elements.push((ChartElement::SecondaryVerticalAxisTitle, [area.right() - lh, area.cy() - tw / 2.0 - 2.0, lh, tw + 4.0]));
+            ctx.out.push(Prim::Text {
+                x: area.right(),
+                y: area.cy(),
+                text: t,
+                size: AXIS_TITLE_SIZE,
+                color: TEXT,
+                bold: false,
+                align: HAlign::Center,
+                valign: VAlign::Top,
+                rotation: PI / 2.0,
+            });
+        }
+        area.w -= lh;
+    }
     area
 }
 

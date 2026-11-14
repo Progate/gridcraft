@@ -455,6 +455,8 @@ fn sample() -> Workbook {
         auto_title: false,
         title_overlay: false,
         chart_style: None,
+        y2_title: None,
+        bins: None,
     };
     for kind in [
         ChartKind::ColumnClustered,

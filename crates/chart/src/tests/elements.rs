@@ -67,3 +67,20 @@ fn a_centered_overlay_title_leaves_the_plot_its_room() {
     assert!(plot_top(&over) < above - 10.0, "the plot grows into the title's room: {} vs {above}", plot_top(&over));
     assert!(texts(&over).contains(&"Quarterly Sales"));
 }
+
+#[test]
+fn histogram_bins_follow_the_width_and_the_overflow_and_underflow_bins() {
+    let mut c = chart(ChartKind::Histogram);
+    c.data_labels = false;
+    let mut s = series("s", &(1..=20).map(|n| f64::from(n * 5)).collect::<Vec<_>>(), [1, 2, 3, 255], ChartKind::Histogram);
+    s.number_format = "General".into();
+    let d = ChartData { series: vec![s], ..Default::default() };
+    c.bins = Some(gridcraft_model::HistogramBins { width: Some(20.0), overflow: Some(80.0), underflow: Some(20.0), count: None });
+    let p = render(&c, &d, 600.0, 300.0, &ApproxMeasure);
+    let t = texts(&p);
+    assert!(t.contains(&"≤20") && t.contains(&">80"), "{t:?}");
+    assert!(t.contains(&"(20, 40]") && t.contains(&"(60, 80]"), "{t:?}");
+    c.bins = Some(gridcraft_model::HistogramBins { count: Some(2), ..Default::default() });
+    let p = render(&c, &d, 600.0, 300.0, &ApproxMeasure);
+    assert!(texts(&p).iter().filter(|t| t.ends_with(']')).count() == 2, "{:?}", texts(&p));
+}

@@ -262,6 +262,8 @@ pub(super) fn fields(s: &mut Session, p: &Json) -> Result<Json> {
                     "numeric": src.numeric.get(c).copied().unwrap_or(false),
                     "date": src.dates.get(c).copied().unwrap_or(false),
                     "samples": pv::distinct_labels(&d.wb, src, c, pv::Grouping::None, 5),
+                    // The items a field's filter list offers (up to 1,000, as the UI shows them).
+                    "items": if src.numeric.get(c).copied().unwrap_or(false) { vec![] } else { pv::distinct_labels(&d.wb, src, c, pv::Grouping::None, 1000) },
                     "areas": areas,
                 })
             })

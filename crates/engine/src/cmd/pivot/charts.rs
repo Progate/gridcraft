@@ -26,7 +26,7 @@ fn chart_pivot(s: &Session, p: &Json) -> Result<(usize, usize)> {
     find_pivot(s, p)
 }
 
-pub(super) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
+pub(crate) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
     let (si, pi) = chart_pivot(s, p)?;
     let d = s.doc()?;
     let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
@@ -44,7 +44,9 @@ pub(super) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
     let title = match p.get("title") {
         Some(Json::String(t)) => Some(t.clone()),
         Some(Json::Null) => None,
-        _ => Some(if series.len() == 1 { "Total".to_string() } else { "Chart Title".to_string() }),
+        // Excel's default PivotChart title, in the interface language: Total (集計) over one series,
+        // else Chart Title (グラフ タイトル).
+        _ => Some(if series.len() == 1 { s.prefs.pivot_total().to_string() } else { s.prefs.chart_title().to_string() }),
     };
     let id = d.wb.next_object_id();
     let link = pv::chart_link(&sh.name, &pt.name);
@@ -80,6 +82,8 @@ pub(super) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
         auto_title: false,
         title_overlay: false,
         chart_style: None,
+        y2_title: None,
+        bins: None,
     };
     edit(s, |cx| {
         cx.sheet_mut(si)?.charts.push(chart);

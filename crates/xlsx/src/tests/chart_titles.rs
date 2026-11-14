@@ -43,6 +43,8 @@ fn chart(title: Option<&str>, auto_title: bool, series: usize) -> Chart {
         auto_title,
         title_overlay: false,
         chart_style: None,
+        y2_title: None,
+        bins: None,
     }
 }
 

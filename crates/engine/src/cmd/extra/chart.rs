@@ -82,7 +82,10 @@ pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
                 let title = match str_param(p, "axis") {
                     Some("horizontal") => c.axis_title_mut(true),
                     Some("vertical") => c.axis_title_mut(false),
-                    _ => return Err(bad("chart.addElement", "`axis` must be horizontal or vertical")),
+                    // Secondary Vertical: the secondary value axis, which a series must use.
+                    Some("secondaryVertical") if c.series.iter().any(|s| s.secondary) => &mut c.y2_title,
+                    Some("secondaryVertical") => return Err(bad("chart.addElement", "no series is plotted on a secondary axis")),
+                    _ => return Err(bad("chart.addElement", "`axis` must be horizontal, vertical or secondaryVertical")),
                 };
                 *title = on.then(|| title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| axis_title.into()));
             }

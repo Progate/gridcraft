@@ -647,6 +647,32 @@ pub struct Chart {
     /// (Style 1), which a new chart and a change of chart type get.
     #[serde(default)]
     pub chart_style: Option<u32>,
+    /// Axis Titles ▸ Secondary Vertical (第 2 縦軸): the secondary value axis's title.
+    #[serde(default)]
+    pub y2_title: Option<String>,
+    /// A histogram's bins (Format Axis ▸ Bins); `None` is Excel's automatic bins.
+    #[serde(default)]
+    pub bins: Option<HistogramBins>,
+}
+
+/// Format Axis ▸ Axis Options of a histogram (`cx:binning`): bin width or number of bins (neither:
+/// automatic), and the overflow and underflow bins that gather the values beyond a cut-off.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistogramBins {
+    /// Bin width (`cx:binSize`).
+    pub width: Option<f64>,
+    /// Number of bins (`cx:binCount`).
+    pub count: Option<u32>,
+    /// Overflow bin: values above it are counted in one last bin.
+    pub overflow: Option<f64>,
+    /// Underflow bin: values at or below it are counted in one first bin.
+    pub underflow: Option<f64>,
+}
+
+impl HistogramBins {
+    /// Most bins a histogram draws or a file or command may ask for.
+    pub const MAX_COUNT: u32 = 1000;
 }
 
 /// Format Data Labels ▸ Label Options ▸ Label Contains: the parts of a data label (`c:dLbls`
@@ -1384,6 +1410,8 @@ mod tests {
             auto_title: false,
             title_overlay: false,
             chart_style: None,
+            y2_title: None,
+            bins: None,
         };
         let mut json = serde_json::to_value(&chart).expect("serialize chart");
         json.as_object_mut().expect("chart object").remove("hole_size");

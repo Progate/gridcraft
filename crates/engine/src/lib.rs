@@ -476,6 +476,11 @@ impl Prefs {
         if self.japanese() { "グラフ タイトル" } else { "Chart Title" }
     }
 
+    /// The title Excel gives a PivotChart of one series (集計 in Japanese).
+    pub fn pivot_total(&self) -> &'static str {
+        if self.japanese() { "集計" } else { "Total" }
+    }
+
     /// The text Excel gives a new axis title, in the interface language (軸ラベル in Japanese).
     pub fn axis_title(&self) -> &'static str {
         if self.japanese() { "軸ラベル" } else { "Axis Title" }

@@ -10,33 +10,61 @@ use super::{
 pub(super) fn histogram(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) {
     let Some(s) = data.series.first() else { return };
     let vals: Vec<f64> = s.values.iter().flatten().copied().collect();
-    let Some((lo, hi)) = value_range(vals.iter().copied()) else { return };
-    let n = vals.len();
+    let Some((lo_all, hi_all)) = value_range(vals.iter().copied()) else { return };
+    let spec = chart.bins.unwrap_or_default();
+    // Overflow and underflow bins gather the values beyond their cut-offs; the regular bins span
+    // what lies between (Excel's Format Axis ▸ Bins).
+    let under = spec.underflow.filter(|u| u.is_finite() && *u > lo_all && *u < hi_all);
+    let over = spec.overflow.filter(|o| o.is_finite() && *o < hi_all && *o > lo_all && under.is_none_or(|u| *o > u));
+    let lo = under.unwrap_or(lo_all);
+    let hi = over.unwrap_or(hi_all);
+    let core: Vec<f64> = vals.iter().copied().filter(|v| under.is_none_or(|u| *v > u) && over.is_none_or(|o| *v <= o)).collect();
+    let n = core.len().max(1);
     let span = hi - lo;
-    let mut bins = ((n as f64).sqrt().ceil() as usize).clamp(1, 100);
+    let max_bins = gridcraft_model::HistogramBins::MAX_COUNT as usize;
+    let (mut bins, mut width) = match (spec.width.filter(|w| w.is_finite() && *w > 0.0), spec.count) {
+        (Some(w), _) => (((span / w).ceil() as usize).clamp(1, max_bins), w),
+        (None, Some(c)) => {
+            let c = (c as usize).clamp(1, max_bins);
+            (c, span / c as f64)
+        }
+        (None, None) => {
+            let b = ((n as f64).sqrt().ceil() as usize).clamp(1, 100);
+            (b, span / b as f64)
+        }
+    };
     if !(span.is_finite() && span > 0.0) {
         bins = 1;
+        width = 1.0;
     }
-    let width = if bins == 1 && span.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) { 1.0 } else { span / bins as f64 };
     // Upper edge of each bin, exactly as shown in the labels below. Bins are right-inclusive (the first is closed on both sides), so a value
     // equal to an edge belongs to the bin that ends there.
     let edges: Vec<f64> = (0..bins).map(|b| if b + 1 == bins { hi.max(lo + b as f64 * width) } else { lo + (b + 1) as f64 * width }).collect();
     let mut counts = vec![0usize; bins];
-    for v in &vals {
+    for v in &core {
         let b = edges.partition_point(|e| e < v).min(bins - 1);
         if let Some(c) = counts.get_mut(b) {
             *c += 1;
         }
     }
     let f = Fmt::new(&s.number_format);
-    let labels: Vec<String> = (0..bins)
+    let mut labels: Vec<String> = (0..bins)
         .map(|b| {
             let a = lo + b as f64 * width;
             let e = edges.get(b).copied().unwrap_or(a);
-            let open = if b == 0 { '[' } else { '(' };
+            let open = if b == 0 && under.is_none() { '[' } else { '(' };
             format!("{open}{}, {}]", f.format(a, Some(width / 10.0)), f.format(e, Some(width / 10.0)))
         })
         .collect();
+    if let Some(u) = under {
+        counts.insert(0, vals.iter().filter(|v| **v <= u).count());
+        labels.insert(0, format!("≤{}", f.format(u, None)));
+    }
+    if let Some(o) = over {
+        counts.push(vals.iter().filter(|v| **v > o).count());
+        labels.push(format!(">{}", f.format(o, None)));
+    }
+    let bins = counts.len();
     let maxc = counts.iter().copied().max().unwrap_or(0) as f64;
     let ys = nice_scale(0.0, maxc, true);
     let fc = Fmt::new("General");

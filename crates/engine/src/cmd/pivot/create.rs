@@ -228,6 +228,9 @@ pub(super) fn show_details(s: &mut Session, p: &Json) -> Result<Json> {
         return Err(other("The workbook is protected and cannot be changed."));
     }
     let count = records.len();
+    // Excel lists the records as a table (テーブル1 in Japanese), in the default table style.
+    let table_id = d.wb.next_object_id();
+    let table_name = crate::tables::next_table_name(&d.wb);
     let mut new_sheet_at: Option<usize> = None;
     let res = edit(s, |cx| {
         let si = insert_sheet_before_active(cx);
@@ -280,11 +283,63 @@ pub(super) fn show_details(s: &mut Session, p: &Json) -> Result<Json> {
                 sh.set_cell(CellRef::new(r as u32 + 1, c as u32), Cell { value: v.clone(), formula: None, style, py: None });
             }
         }
+        let ncols = u32::try_from(src.headers.len()).unwrap_or(u32::MAX);
+        let mut table = None;
+        if ncols > 0 {
+            let mut seen = std::collections::HashSet::new();
+            let columns = src
+                .headers
+                .iter()
+                .enumerate()
+                .map(|(c, h)| {
+                    // Table column names are unique and not empty, as Excel's are.
+                    let mut n = if h.trim().is_empty() { crate::tables::generated_column_name(&cx.wb, c + 1) } else { h.clone() };
+                    let base = n.clone();
+                    let mut k = 2;
+                    while !seen.insert(n.to_lowercase()) {
+                        n = format!("{base}{k}");
+                        k += 1;
+                    }
+                    gridcraft_model::TableColumn {
+                        name: n,
+                        totals: gridcraft_model::TotalsFn::None,
+                        totals_label: None,
+                        formula: None,
+                        unique_name: None,
+                        xml: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let rows = u32::try_from(count).unwrap_or(u32::MAX).max(1);
+            table = Some(gridcraft_model::Table {
+                id: table_id,
+                name: table_name.clone(),
+                range: RangeRef::new(CellRef::new(0, 0), CellRef::new(rows, ncols - 1)),
+                header_row: true,
+                totals_row: false,
+                columns,
+                style: "TableStyleMedium2".into(),
+                banded_rows: true,
+                banded_cols: false,
+                first_col: false,
+                last_col: false,
+                filter_button: true,
+                filter: vec![],
+                table_type: None,
+                connection_id: None,
+            });
+        }
+        let sh = cx.sheet_mut(si)?;
+        for (c, col) in table.iter().flat_map(|t| t.columns.iter().enumerate()) {
+            sh.set_value(CellRef::new(0, c as u32), gridcraft_core::Value::text(col.name.as_str()));
+        }
+        let has_table = table.is_some();
+        sh.tables.extend(table);
         let name = sh.name.clone();
         cx.wb.set_active_sheet(si);
         *cx.sel = crate::Selection::at(CellRef::new(0, 0));
         cx.structural = true;
-        Ok(json!({"sheet": name, "records": count}))
+        Ok(json!({"sheet": name, "records": count, "table": has_table.then_some(table_name)}))
     })?;
     if let Some(at) = new_sheet_at
         && let Ok(d) = s.doc_mut()

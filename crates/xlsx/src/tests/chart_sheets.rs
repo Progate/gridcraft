@@ -47,6 +47,8 @@ fn chart(kind: ChartKind) -> Chart {
         auto_title: false,
         title_overlay: false,
         chart_style: None,
+        y2_title: None,
+        bins: None,
     }
 }
 

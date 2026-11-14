@@ -57,6 +57,8 @@ pub enum ChartElement {
     HorizontalAxisTitle,
     /// Axis Titles ▸ Primary Vertical.
     VerticalAxisTitle,
+    /// Axis Titles ▸ Secondary Vertical.
+    SecondaryVerticalAxisTitle,
 }
 
 /// A drawing primitive in chart coordinates (origin top-left, y down, units = points/pixels).

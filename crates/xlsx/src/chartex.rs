@@ -99,6 +99,7 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
     let mut kind = None;
     let mut series = vec![];
     let mut data_labels = false;
+    let mut bins = None;
     for s in region.kids("series") {
         let layout = s.attr("layoutId").unwrap_or("");
         // A Pareto line belongs to its histogram.
@@ -107,6 +108,9 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         }
         let k = kind_of(layout)?;
         kind.get_or_insert(k);
+        if let Some(b) = s.path(&["layoutPr", "binning"]) {
+            bins = bins.or_else(|| read_bins(b));
+        }
         let id = s.child_val("dataId").unwrap_or("");
         let (cat, val) = data.iter().find(|(i, _, _)| i == id).map(|(_, c, v)| (c.clone(), v.clone())).unwrap_or_default();
         data_labels |= s.path(&["dataLabels", "visibility"]).is_some_and(|v| v.flag("value", false));
@@ -161,7 +165,26 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         auto_title: chart.child("title").is_some_and(|t| t.child("tx").is_none()),
         title_overlay: false,
         chart_style: None,
+        y2_title: None,
+        bins,
     })
+}
+
+/// A histogram's `cx:binning`: bin width or count and the overflow and underflow cut-offs (each
+/// `auto` or absent for none). `None` when everything is automatic.
+fn read_bins(b: &El) -> Option<gridcraft_model::HistogramBins> {
+    let cut = |k: &str| b.attr(k).and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite());
+    let bins = gridcraft_model::HistogramBins {
+        width: b.child("binSize").and_then(|x| x.attr_f64("val")).filter(|v| v.is_finite() && *v > 0.0),
+        count: b
+            .child("binCount")
+            .and_then(|x| x.attr("val"))
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .map(|n| n.clamp(1, gridcraft_model::HistogramBins::MAX_COUNT)),
+        overflow: cut("overflow"),
+        underflow: cut("underflow"),
+    };
+    (bins != gridcraft_model::HistogramBins::default()).then_some(bins)
 }
 
 // ---------------------------------------------------------------- writing
@@ -348,7 +371,26 @@ pub fn write_chartex(wb: &Workbook, si: usize, ch: &Chart, names: &mut Vec<Strin
         }
         let _ = write!(s, "<cx:dataId val=\"{i}\"/>");
         match ch.kind {
-            ChartKind::Histogram => s.push_str("<cx:layoutPr><cx:binning intervalClosed=\"r\"/></cx:layoutPr>"),
+            ChartKind::Histogram => {
+                // Excel's Format Axis ▸ Bins: the cut-offs as attributes, then the width or count.
+                let b = ch.bins.unwrap_or_default();
+                s.push_str("<cx:layoutPr><cx:binning intervalClosed=\"r\"");
+                for (k, v) in [("underflow", b.underflow), ("overflow", b.overflow)] {
+                    if let Some(v) = v.filter(|v| v.is_finite()) {
+                        let _ = write!(s, " {k}=\"{}\"", crate::xml::num(v));
+                    }
+                }
+                match (b.width.filter(|w| w.is_finite() && *w > 0.0), b.count) {
+                    (Some(w), _) => {
+                        let _ = write!(s, "><cx:binSize val=\"{}\"/></cx:binning></cx:layoutPr>", crate::xml::num(w));
+                    }
+                    (None, Some(n)) => {
+                        let _ =
+                            write!(s, "><cx:binCount val=\"{}\"/></cx:binning></cx:layoutPr>", n.clamp(1, gridcraft_model::HistogramBins::MAX_COUNT));
+                    }
+                    (None, None) => s.push_str("/></cx:layoutPr>"),
+                }
+            }
             ChartKind::BoxWhisker => {
                 let method = match ser.quartiles {
                     QuartileMethod::Exclusive => "exclusive",

@@ -93,3 +93,55 @@ fn sparkline_set_changes_the_whole_group_and_saves_high_and_low_points() {
     assert!(s.execute("sparkline.set", json!({"range": "E1", "type": "area"})).is_err());
     assert!(s.execute("sparkline.set", json!({"range": "E1", "high": "yes"})).is_err());
 }
+
+#[test]
+fn a_sunburst_of_label_columns_is_one_hierarchy() {
+    let mut s = s();
+    s.execute(
+        "range.setValues",
+        json!({"range": "A1", "values": [["店舗", "分類", "商品名", "売上"], ["駅前店", "パン", "あんぱん", 10], ["駅前店", "菓子", "クッキー", 5], ["公園通り店", "パン", "食パン", 7]]}),
+    )
+    .unwrap();
+    for t in ["sunburst", "treemap"] {
+        s.execute("insert.chart", json!({"range": "A1:D4", "type": t})).unwrap();
+        let c = chart(&s);
+        assert_eq!(c.series.len(), 1, "{t}: one series of sales");
+        assert_eq!(c.series[0].values, "Sheet1!$D$2:$D$4");
+        assert_eq!(c.series[0].categories.as_deref(), Some("Sheet1!$A$2:$C$4"), "{t}: store → category → product");
+    }
+    // Saved as Excel's chartex: the three label columns as one category dimension.
+    reopen(&mut s);
+    let c = chart(&s);
+    assert_eq!((c.series.len(), c.series[0].categories.as_deref()), (1, Some("Sheet1!$A$2:$C$4")));
+    // A column chart of the same block keeps Excel's ordinary series.
+    s.execute("insert.chart", json!({"range": "C1:D4", "type": "sunburst"})).unwrap();
+    assert_eq!(chart(&s).series[0].categories.as_deref(), Some("Sheet1!$C$2:$C$4"));
+}
+
+#[test]
+fn histogram_bins_and_the_secondary_axis_title() {
+    let mut s = s();
+    let rows: Vec<_> = std::iter::once(json!(["点数"])).chain((1..=20).map(|n| json!([n * 5]))).collect();
+    s.execute("range.setValues", json!({"range": "A1", "values": rows})).unwrap();
+    s.execute("insert.chart", json!({"range": "A1:A21", "type": "histogram"})).unwrap();
+    s.execute("chart.set", json!({"binWidth": 20, "overflow": 80, "underflow": 20})).unwrap();
+    let b = chart(&s).bins.unwrap();
+    assert_eq!((b.width, b.count, b.overflow, b.underflow), (Some(20.0), None, Some(80.0), Some(20.0)));
+    s.execute("chart.set", json!({"binCount": 4, "underflow": null})).unwrap();
+    let b = chart(&s).bins.unwrap();
+    assert_eq!((b.width, b.count, b.underflow), (None, Some(4), None), "a count replaces the width");
+    reopen(&mut s);
+    assert_eq!(chart(&s).bins.map(|b| (b.count, b.overflow)), Some((Some(4), Some(80.0))), "saved as cx:binning");
+    s.execute("chart.set", json!({"bins": "auto"})).unwrap();
+    assert_eq!(chart(&s).bins, None);
+    assert!(s.execute("chart.set", json!({"binWidth": 0})).is_err());
+    assert!(s.execute("chart.set", json!({"binCount": 5000})).is_err());
+    // A secondary axis's title.
+    column_chart(&mut s);
+    assert!(s.execute("chart.addElement", json!({"element": "axisTitle", "axis": "secondaryVertical"})).is_err(), "no secondary axis yet");
+    s.execute("chart.set", json!({"combo": [{}, {"type": "line", "secondary": true}]})).unwrap();
+    s.execute("chart.addElement", json!({"element": "axisTitle", "axis": "secondaryVertical"})).unwrap();
+    s.execute("chart.set", json!({"y2Title": "前年（人）"})).unwrap();
+    reopen(&mut s);
+    assert_eq!(chart(&s).y2_title.as_deref(), Some("前年（人）"), "the secondary value axis's c:title");
+}

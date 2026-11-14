@@ -360,7 +360,11 @@ fn group_range(s: &mut Session, p: &Json, field: String) -> Result<Json> {
 
 pub(super) fn collapse(s: &mut Session, p: &Json) -> Result<Json> {
     const C: &str = "pivot.collapse";
-    let field = str_param(p, "field").ok_or_else(|| bad(C, "missing `field`"))?.to_string();
+    // Without a field: the one whose label the active cell shows (PivotTable Analyze ▸ Active Field).
+    let field = match str_param(p, "field") {
+        Some(f) => f.to_string(),
+        None => field_at_active_cell(s, p).map_err(|_| bad(C, "missing `field` (or select a row or column label)"))?,
+    };
     let on = bool_param(p, "collapse").unwrap_or(true);
     let items: Option<Vec<String>> =
         p.get("items").and_then(Json::as_array).map(|a| a.iter().take(100_000).filter_map(|x| x.as_str().map(str::to_string)).collect());

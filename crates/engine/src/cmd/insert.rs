@@ -113,7 +113,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Properties",
             ["Chart Design"],
             None,
-            "{chart?: id, type?, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series, in order] (Combo ▸ Custom Combination: per-series chart type and Secondary Axis; makes the chart a combo), title?: text (literal; \"\" removes the title), autoTitle?: true (Excel's automatic title: the series name for one series, else Chart Title), legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?: n (Chart Styles gallery: Style n, 1 to 14 for a column chart; saved as Excel's chart style id), titlePosition?: above|overlay (Chart Title ▸ Above Chart / Centered Overlay), holeSize?, firstSliceAngle?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
+            "{chart?: id, type?, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series, in order] (Combo ▸ Custom Combination: per-series chart type and Secondary Axis; makes the chart a combo), title?: text (literal; \"\" removes the title), autoTitle?: true (Excel's automatic title: the series name for one series, else Chart Title), legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?: n (Chart Styles gallery: Style n, 1 to 14 for a column chart; saved as Excel's chart style id), titlePosition?: above|overlay (Chart Title ▸ Above Chart / Centered Overlay), holeSize?, firstSliceAngle?, xTitle?, yTitle?, y2Title? (secondary vertical axis), bins?: auto, binWidth?, binCount?, overflow?: number|null, underflow?: number|null (histogram: Format Axis ▸ Bins), at?, width?, height?, dx?, dy?}",
             has_doc,
             chart_set
         ),
@@ -834,6 +834,37 @@ pub fn scatter_x_from_first(kind: ChartKind, series: &mut Vec<Series>) {
     }
 }
 
+/// A treemap or sunburst of label columns beside a value column (store, category, product,
+/// sales) is one hierarchy, as Excel makes it: the text columns after the first join it as the
+/// levels of the categories (`A2:C22`) and only the numeric columns stay series.
+fn hierarchy_from_label_columns(sh: &Sheet, series: &mut Vec<Series>) {
+    let range = |r: &str| RangeRef::parse(&gridcraft_core::split_sheet(r).1.replace('$', ""));
+    let text = |s: &Series| {
+        range(&s.values).is_some_and(|r| {
+            r.width() == 1 && r.count() <= 100_000 && {
+                let cells: Vec<CellRef> = (r.start.row..=r.end.row).map(|row| CellRef::new(row, r.start.col)).collect();
+                cells.iter().any(|c| sh.value(*c).is_text()) && cells.iter().all(|c| sh.value(*c).is_text() || sh.value(*c).is_empty())
+            }
+        })
+    };
+    let labels = series.iter().take_while(|s| text(s)).count();
+    let Some(cat) = series.first().and_then(|s| s.categories.clone()) else { return };
+    if labels == 0 || labels == series.len() {
+        return;
+    }
+    let (Some(first), Some(last)) = (range(&cat), series.get(labels - 1).and_then(|s| range(&s.values))) else { return };
+    if last.start.row != first.start.row || last.end.row != first.end.row {
+        return;
+    }
+    let col = gridcraft_core::col_to_letters;
+    let q = gridcraft_formula::quote_sheet(&sh.name);
+    let levels = format!("{q}!${}${}:${}${}", col(first.start.col), first.start.row + 1, col(last.end.col), first.end.row + 1);
+    series.drain(..labels);
+    for s in series.iter_mut() {
+        s.categories = Some(levels.clone());
+    }
+}
+
 /// Most cells a chart's source block may span (bounds the series it builds).
 const MAX_CHART_CELLS: u64 = 1_000_000;
 
@@ -922,6 +953,9 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         return Err(EngineError::Other("Select data for the chart first.".into()));
     }
     scatter_x_from_first(kind, &mut series);
+    if matches!(kind, ChartKind::Treemap | ChartKind::Sunburst) && !by_rows {
+        hierarchy_from_label_columns(sh, &mut series);
+    }
     let id = d.wb.next_object_id();
     let at = cell_param_on(s, p, "at", sheet)?.unwrap_or_else(|| CellRef::new(bounds.start.row, bounds.end.col + 2));
     // Excel gives a new chart an automatic title: the series name while there is one series, else
@@ -977,6 +1011,8 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         auto_title,
         title_overlay: false,
         chart_style: None,
+        y2_title: None,
+        bins: None,
     };
     if let Some(rows) = p.get("combo") {
         apply_combo(&mut chart, rows)?;
@@ -985,12 +1021,34 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
 }
 
 fn insert_chart(s: &mut Session, p: &Json) -> Result<Json> {
+    // As in Excel, a chart inserted from a cell of a PivotTable report is a PivotChart of it.
+    if let Some(cell) = pivot_report_cell(s, p)? {
+        let t = str_param(p, "type").filter(|t| *t != "auto").unwrap_or("column");
+        return crate::cmd::pivot::insert_pivot_chart(s, &with(&with(p, "pivot", json!(cell)), "type", json!(t)));
+    }
     let (sheet, chart) = build_chart(s, p)?;
     let id = chart.id;
     edit(s, |cx| {
         cx.sheet_mut(sheet)?.charts.push(chart);
         Ok(json!({"chart": id}))
     })
+}
+
+/// The cell of a PivotTable report a new chart is made from (the range's first cell, else the
+/// active cell), when the chart type can be a PivotChart; `None` otherwise.
+fn pivot_report_cell(s: &Session, p: &Json) -> Result<Option<String>> {
+    let t = str_param(p, "type").unwrap_or("column");
+    if is_chartex_kind(chart_kind(t, str_param(p, "subtype").unwrap_or(""))) && t != "auto" {
+        return Ok(None);
+    }
+    let d = s.doc()?;
+    let si = target_sheet(s, p)?;
+    if si != d.wb.active_sheet() {
+        return Ok(None);
+    }
+    let cell = if p.get("range").is_some() { target_range(s, p)?.start } else { d.selection.active };
+    let in_report = d.wb.sheet(si).is_some_and(|sh| sh.pivots.iter().any(|pt| pt.last_range.is_some_and(|r| r.contains(cell))));
+    Ok(in_report.then(|| cell.a1()))
 }
 
 fn find_chart(s: &Session, p: &Json) -> Result<(usize, usize)> {
@@ -1096,6 +1154,10 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         if let Some(t) = p.get("yTitle") {
             c.y_title = t.as_str().map(str::to_string);
         }
+        if let Some(t) = p.get("y2Title") {
+            c.y2_title = t.as_str().map(str::to_string);
+        }
+        apply_bins(c, p)?;
         if let Some(at) = at {
             c.anchor.cell = at;
         }
@@ -1113,6 +1175,51 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         }
         Ok(Json::Null)
     })
+}
+
+/// Format Axis ▸ Bins of a histogram: `bins: "auto"` (automatic, no cut-offs), `binWidth` or
+/// `binCount` (each replaces the other), `overflow` and `underflow` (a number, or null for none).
+fn apply_bins(c: &mut Chart, p: &Json) -> Result<()> {
+    const KEYS: [&str; 5] = ["bins", "binWidth", "binCount", "overflow", "underflow"];
+    if !KEYS.iter().any(|k| p.get(*k).is_some()) {
+        return Ok(());
+    }
+    if c.kind != ChartKind::Histogram {
+        return Err(bad("chart.set", "bins belong to a histogram"));
+    }
+    let mut b = if str_param(p, "bins") == Some("auto") { Default::default() } else { c.bins.unwrap_or_default() };
+    let num = |k: &str| -> Result<Option<Option<f64>>> {
+        match p.get(k) {
+            None => Ok(None),
+            Some(Json::Null) => Ok(Some(None)),
+            Some(v) => {
+                v.as_f64().filter(|x| x.is_finite()).map(|x| Some(Some(x))).ok_or_else(|| bad("chart.set", format!("`{k}` must be a number or null")))
+            }
+        }
+    };
+    if let Some(w) = num("binWidth")? {
+        if w.is_some_and(|w| w <= 0.0) {
+            return Err(bad("chart.set", "`binWidth` must be more than 0"));
+        }
+        b.width = w;
+        b.count = None;
+    }
+    if let Some(n) = num("binCount")? {
+        b.count = match n {
+            Some(n) if n >= 1.0 && n <= f64::from(gridcraft_model::HistogramBins::MAX_COUNT) => Some(n.round() as u32),
+            Some(_) => return Err(bad("chart.set", "`binCount` must be 1 to 1000")),
+            None => None,
+        };
+        b.width = None;
+    }
+    if let Some(v) = num("overflow")? {
+        b.overflow = v;
+    }
+    if let Some(v) = num("underflow")? {
+        b.underflow = v;
+    }
+    c.bins = (b != gridcraft_model::HistogramBins::default()).then_some(b);
+    Ok(())
 }
 
 /// The chart type of one series of a combo chart: column, line and area, as Excel's Combo
