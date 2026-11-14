@@ -393,8 +393,13 @@ fn structure_problem(wb: &Workbook, sel: &gridcraft_engine::Selection) -> Option
                 return Some(format!("{}!{c}: array formula covers {a}", sh.name));
             }
         }
-        for (k, m) in sh.merges.iter().enumerate() {
-            if let Some(o) = sh.merges.iter().skip(k + 1).find(|o| overlaps(m, o)) {
+        // Sorted by first row, a merge can only overlap the ones after it that start no lower
+        // than its last row: Merge Across on whole columns makes a million one-row merges, which
+        // a check of every pair never finishes.
+        let mut merges: Vec<&gridcraft_engine::core::RangeRef> = sh.merges.iter().collect();
+        merges.sort_by_key(|m| (m.start.row, m.start.col));
+        for (k, m) in merges.iter().enumerate() {
+            if let Some(o) = merges.iter().skip(k + 1).take_while(|o| o.start.row <= m.end.row).find(|o| overlaps(m, o)) {
                 return Some(format!("{}: merges {m} and {o} overlap", sh.name));
             }
         }

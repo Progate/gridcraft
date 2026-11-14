@@ -811,6 +811,11 @@ fn merge(s: &mut Session, p: &Json, how: &str) -> Result<Json> {
     let ranges = target_ranges(s, p)?;
     let how =
         if how == "center" && s.doc()?.wb.sheet(sheet).is_some_and(|sh| ranges.iter().all(|r| sh.merges.contains(r))) { "unmerge" } else { how };
+    // Excel greys the merge commands out over a table: a merged header loses its column name
+    // (the file then reads the table's structured references as #REF!).
+    if how != "unmerge" && s.doc()?.wb.sheet(sheet).is_some_and(|sh| sh.tables.iter().any(|t| ranges.iter().any(|r| r.intersects(&t.range)))) {
+        return Err(EngineError::Other("Cells in a table can't be merged.".into()));
+    }
     edit(s, |cx| {
         let mut touched = Vec::new();
         // Areas whose merging changes: a merged cell blocks a dynamic array's spill.
@@ -1059,6 +1064,17 @@ use sizes::{autofit_cols, autofit_rows, col_width, default_width, hide, row_heig
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cells_in_a_table_are_not_merged() {
+        let mut s = Session::new();
+        s.execute("file.new", json!({"sample": "sales"})).unwrap();
+        let before = s.doc().unwrap().wb.active().unwrap().merges.clone();
+        for cmd in ["home.mergeAcross", "home.mergeCells", "home.mergeCenter"] {
+            assert!(s.execute(cmd, json!({"range": "D:E"})).is_err(), "{cmd} over the table");
+        }
+        assert_eq!(s.doc().unwrap().wb.active().unwrap().merges, before);
+    }
 
     #[test]
     fn merge_across_keeps_the_first_value_of_each_row() {
