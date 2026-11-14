@@ -1013,6 +1013,7 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         chart_style: None,
         y2_title: None,
         bins: None,
+        pivot_buttons: Default::default(),
     };
     if let Some(rows) = p.get("combo") {
         apply_combo(&mut chart, rows)?;
@@ -1038,7 +1039,9 @@ fn insert_chart(s: &mut Session, p: &Json) -> Result<Json> {
 /// active cell), when the chart type can be a PivotChart; `None` otherwise.
 fn pivot_report_cell(s: &Session, p: &Json) -> Result<Option<String>> {
     let t = str_param(p, "type").unwrap_or("column");
-    if is_chartex_kind(chart_kind(t, str_param(p, "subtype").unwrap_or(""))) && t != "auto" {
+    let kind = chart_kind(t, str_param(p, "subtype").unwrap_or(""));
+    // Kinds a PivotChart can't be (X Y, bubble, stock and the 2016 kinds) make an ordinary chart.
+    if (is_chartex_kind(kind) || matches!(kind, ChartKind::Scatter | ChartKind::ScatterLines | ChartKind::Bubble | ChartKind::Stock)) && t != "auto" {
         return Ok(None);
     }
     let d = s.doc()?;

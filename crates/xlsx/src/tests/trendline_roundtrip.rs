@@ -71,6 +71,7 @@ fn chart(id: u32, kind: ChartKind, trendlines: Vec<Trendline>) -> Chart {
         chart_style: None,
         y2_title: None,
         bins: None,
+        pivot_buttons: Default::default(),
     }
 }
 

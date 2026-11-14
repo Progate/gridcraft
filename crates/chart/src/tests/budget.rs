@@ -25,6 +25,7 @@ fn data_of(series: usize, points: usize) -> ChartData {
             })
             .collect(),
         placeholder_title: String::new(),
+        pivot_buttons: None,
     }
 }
 

@@ -45,6 +45,7 @@ fn chart(title: Option<&str>, auto_title: bool, series: usize) -> Chart {
         chart_style: None,
         y2_title: None,
         bins: None,
+        pivot_buttons: Default::default(),
     }
 }
 

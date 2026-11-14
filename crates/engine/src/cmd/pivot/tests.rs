@@ -612,7 +612,9 @@ fn pivot_chart_errors() {
     s.execute("insert.pivotTable", json!({"rows": ["Region"]})).unwrap();
     // Not in the report; no values.
     assert!(s.execute("insert.pivotChart", json!({"pivot": "Z99"})).is_err());
-    assert!(s.execute("insert.pivotChart", json!({})).unwrap_err().to_string().contains("Values"));
+    // A PivotTable without values gets an empty PivotChart, as in Excel; it fills in with them.
+    assert_eq!(s.execute("insert.pivotChart", json!({})).unwrap()["series"], 0);
+    s.execute("edit.undo", json!({})).unwrap();
     s.execute("pivot.addField", json!({"field": "Units", "area": "values"})).unwrap();
     let r = s.execute("insert.pivotChart", json!({"pivot": "PivotTable1", "type": "line", "title": null})).unwrap();
     assert_eq!(r["series"], 1);

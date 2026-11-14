@@ -654,6 +654,44 @@ pub struct Chart {
     /// A histogram's bins (Format Axis ▸ Bins); `None` is Excel's automatic bins.
     #[serde(default)]
     pub bins: Option<HistogramBins>,
+    /// A PivotChart's field buttons (PivotChart Analyze ▸ Field Buttons): which kinds it draws.
+    #[serde(default)]
+    pub pivot_buttons: PivotFieldButtons,
+}
+
+/// The kinds of field buttons a PivotChart draws on itself, as PivotChart Analyze ▸ Field Buttons
+/// (フィールド ボタン) shows and hides them, saved as the chart's `c14:pivotOptions`
+/// (`dropZoneFilter`, `dropZoneSeries`, `dropZoneCategories`, `dropZoneData`). A new PivotChart
+/// shows them all, as Excel's does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotFieldButtons {
+    /// Report filter field buttons, at the top left.
+    pub report_filter: bool,
+    /// Legend (series) field buttons, above the legend.
+    pub legend: bool,
+    /// Axis (category) field buttons, at the bottom left.
+    pub axis: bool,
+    /// Value field buttons, at the top left of the plot.
+    pub value: bool,
+}
+
+impl Default for PivotFieldButtons {
+    fn default() -> Self {
+        PivotFieldButtons::ALL
+    }
+}
+
+impl PivotFieldButtons {
+    /// Every kind shown.
+    pub const ALL: PivotFieldButtons = PivotFieldButtons { report_filter: true, legend: true, axis: true, value: true };
+    /// Hide All (すべて非表示).
+    pub const NONE: PivotFieldButtons = PivotFieldButtons { report_filter: false, legend: false, axis: false, value: false };
+
+    /// Whether any kind is shown.
+    pub fn any(self) -> bool {
+        self.report_filter || self.legend || self.axis || self.value
+    }
 }
 
 /// Format Axis ▸ Axis Options of a histogram (`cx:binning`): bin width or number of bins (neither:
@@ -1547,6 +1585,7 @@ mod tests {
             chart_style: None,
             y2_title: None,
             bins: None,
+            pivot_buttons: Default::default(),
         };
         let mut json = serde_json::to_value(&chart).expect("serialize chart");
         json.as_object_mut().expect("chart object").remove("hole_size");

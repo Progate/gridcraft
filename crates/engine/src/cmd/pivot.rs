@@ -32,7 +32,15 @@ use analyze::{
     active_field, blank_rows, buttons, clear_all, clear_filter, expand_buttons, field_headers, field_settings, items, label_filter, repeat_labels,
     value_filter,
 };
+pub use charts::build_pivot_chart;
 pub(crate) use charts::insert_pivot_chart;
+
+/// The data a new PivotTable or PivotChart takes by default, as Create PivotTable and Create
+/// PivotChart fill Table/Range: the table at the active cell, else the selection or its current
+/// region, with its sheet (`Sheet1!$A$1:$C$9`).
+pub fn selection_source(s: &Session) -> Result<String> {
+    create::default_source(s)
+}
 use charts::recommended;
 use create::{insert_pivot, options, show_details, summarize_table};
 use fields::{add_field, calculated_field, fields, list, move_field, remove_field, value_settings};
@@ -83,9 +91,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "PivotChart",
             ["Insert", "Charts"],
             None,
-            "{pivot?: name | id | a cell of the report (\"Sheet2!B5\"; default: the PivotTable at the active cell), type?: column|bar|line|pie|area|… (default column), subtype?, title?, at?: \"H2\", width?, height?} adds a chart bound to the PivotTable's report: categories are the innermost row items, series the column items × value fields; it follows refreshes and layout changes → {chart, pivot, series}",
+            "{pivot?: name | id | a cell of the report (\"Sheet2!B5\"; default: the PivotTable at the active cell), source?: a table or range (Create PivotChart: makes a PivotTable of it first, at destination?: \"new\" | \"Sheet1!H3\", with rows?, columns?, values?, filters? as insert.pivotTable), type?: column|bar|line|pie|doughnut|area|radar|combo (default column; not scatter, bubble, stock or the 2016 kinds, as in Excel), subtype?, combo?: [{type, subtype?, secondary?}] (as insert.chart), title?, at?: \"H2\", width?, height?} adds a chart bound to the PivotTable's report: categories are the innermost row items, series the column items × value fields; it follows refreshes and layout changes; an empty PivotTable gets an empty chart → {chart, pivot, series}",
             has_doc,
             insert_pivot_chart
+        ),
+        cmd!(
+            "chart.fieldButtons",
+            "Field Buttons",
+            ["PivotChart Analyze", "Show/Hide"],
+            None,
+            "{chart?: id (default: the last PivotChart on the sheet), all?: bool (false = Hide All), reportFilter?: bool, legend?: bool, axis?: bool, value?: bool} (no flags: toggles all) → {chart, reportFilter, legend, axis, value}; saved as the chart's c14:pivotOptions",
+            has_doc,
+            charts::field_buttons
         ),
         cmd!(query "pivot.fields", "PivotTable Fields", [], None, "{pivot?} → source fields (name, numeric, date, samples, areas) and the current layout", has_doc, fields),
         cmd!(query "pivot.fieldList", "Field List", ["PivotTable Analyze", "Show"], None, "{pivot?} (same as pivot.fields)", has_doc, fields),

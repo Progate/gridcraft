@@ -5,7 +5,7 @@ use gridcraft_core::{CellRef, MAX_COLS, MAX_ROWS, RangeRef, Value, category_leve
 use gridcraft_model::{Chart, ChartKind, Theme, Workbook, style::apply_tint};
 use gridcraft_numfmt::{NumberFormat, format_value};
 
-use crate::{ChartData, Rgba, SeriesData, TrendlineData};
+use crate::{ChartData, FieldButton, PivotButtons, Rgba, SeriesData, TrendlineData};
 
 /// Cap on points per series (keeps whole-column references from exploding).
 pub(crate) const MAX_POINTS: usize = 100_000;
@@ -413,7 +413,60 @@ pub fn resolve(wb: &Workbook, sheet: usize, chart: &Chart) -> ChartData {
     let n = series.iter().map(|s| s.values.len()).max().unwrap_or(0);
     let categories = categories.unwrap_or_else(|| (1..=n).map(|i| i.to_string()).collect());
     let palette = default_palette(&wb.theme, n.min(PALETTE_CYCLE));
-    ChartData { categories, category_levels, series, palette, placeholder_title: String::new() }
+    ChartData { categories, category_levels, series, palette, placeholder_title: String::new(), pivot_buttons: None }
+}
+
+/// Most field buttons of one kind a PivotChart draws.
+const MAX_FIELD_BUTTONS: usize = 32;
+
+/// The field buttons PivotChart `chart` shows, from the fields of its PivotTable and the kinds
+/// its Field Buttons setting shows: `None` for an ordinary chart, a PivotChart whose PivotTable
+/// is gone, or one showing no kind.
+pub fn pivot_field_buttons(wb: &Workbook, chart: &Chart) -> Option<PivotButtons> {
+    let show = chart.pivot_buttons;
+    if !show.any() {
+        return None;
+    }
+    let link = chart.pivot.as_deref()?.trim();
+    // `[Book.xlsx]Sheet2!PivotTable1`: the workbook in brackets is this one.
+    let link = match link.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or(rest, |(_, r)| r),
+        None => link,
+    };
+    let (sheet, name) = link.rsplit_once('!')?;
+    let sheet = gridcraft_core::unquote_sheet(sheet.trim());
+    let si = wb.sheet_index(&sheet)?;
+    let pt = wb.sheet(si)?.pivots.iter().find(|p| p.name.eq_ignore_ascii_case(name.trim()))?;
+    let hides = |col: &str| pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(col) && f.selected.is_some());
+    let in_axis = |col: &str| pt.rows.iter().chain(&pt.columns).any(|f| f.source_col.eq_ignore_ascii_case(col));
+    let fields = |list: &[gridcraft_model::PivotField]| -> Vec<FieldButton> {
+        list.iter()
+            .take(MAX_FIELD_BUTTONS)
+            .map(|f| FieldButton {
+                name: f.source_col.clone(),
+                filtered: hides(&f.source_col) || f.label_filter.is_some() || f.value_filter.is_some(),
+            })
+            .collect()
+    };
+    Some(PivotButtons {
+        report_filter: if show.report_filter {
+            pt.filters
+                .iter()
+                .filter(|f| !f.hidden_only && !in_axis(&f.source_col))
+                .take(MAX_FIELD_BUTTONS)
+                .map(|f| FieldButton { name: f.source_col.clone(), filtered: f.selected.is_some() })
+                .collect()
+        } else {
+            Vec::new()
+        },
+        value: if show.value {
+            pt.values.iter().take(MAX_FIELD_BUTTONS).map(|v| FieldButton { name: v.name.clone(), filtered: false }).collect()
+        } else {
+            Vec::new()
+        },
+        axis: if show.axis { fields(&pt.rows) } else { Vec::new() },
+        legend: if show.legend { fields(&pt.columns) } else { Vec::new() },
+    })
 }
 
 #[cfg(test)]

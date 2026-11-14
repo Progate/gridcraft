@@ -98,7 +98,16 @@ pub(super) fn rebind_charts(wb: &mut Workbook, sheet: &str, pivot: &str, origin:
     for i in hits {
         let Some(sh) = wb.sheet_mut(i) else { continue };
         for ch in sh.charts.iter_mut().filter(|c| linked(c)) {
-            ch.series = series.clone();
+            // A series keeps what was chosen for its place in the chart (a combo's line on the
+            // secondary axis, a colour), as Excel's PivotChart keeps it through a refresh.
+            let mut next = series.clone();
+            for (new, old) in next.iter_mut().zip(&ch.series) {
+                new.kind = old.kind;
+                new.secondary = old.secondary;
+                new.color = old.color;
+                new.smooth = old.smooth;
+            }
+            ch.series = next;
         }
     }
 }

@@ -977,6 +977,7 @@ mod tests {
                 chart_style: None,
                 y2_title: None,
                 bins: None,
+                pivot_buttons: Default::default(),
             }),
             ObjKind::Image => s.images.push(Image {
                 id,

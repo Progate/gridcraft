@@ -49,6 +49,7 @@ fn chart(kind: ChartKind) -> Chart {
         chart_style: None,
         y2_title: None,
         bins: None,
+        pivot_buttons: Default::default(),
     }
 }
 

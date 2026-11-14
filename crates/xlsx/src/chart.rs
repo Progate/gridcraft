@@ -321,6 +321,7 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         source: None,
         by_rows: false,
         pivot: root.path(&["pivotSource", "name"]).map(|n| strip_book(n.text.trim()).to_string()).filter(|n| !n.is_empty()),
+        pivot_buttons: read_pivot_options(root),
         alt_text: Default::default(),
         label_parts,
         auto_title,
@@ -329,6 +330,42 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         y2_title: plot.kids("valAx").find(|a| a.child_val("crosses") == Some("max")).and_then(|a| a.child("title")).and_then(rich_title),
         bins: None,
     })
+}
+
+/// Which field buttons a PivotChart draws, from its `c14:pivotOptions` (in the `c:pivotSource`
+/// extension list). A PivotChart without them (Hide All, or a file from before Excel 2010)
+/// draws none.
+fn read_pivot_options(root: &El) -> gridcraft_model::PivotFieldButtons {
+    let Some(o) = root.path(&["pivotSource", "extLst"]).and_then(|l| l.kids("ext").find_map(|e| e.child("pivotOptions"))) else {
+        return gridcraft_model::PivotFieldButtons::NONE;
+    };
+    if !bool_val(o, "dropZonesVisible") {
+        return gridcraft_model::PivotFieldButtons::NONE;
+    }
+    gridcraft_model::PivotFieldButtons {
+        report_filter: bool_val(o, "dropZoneFilter"),
+        legend: bool_val(o, "dropZoneSeries"),
+        axis: bool_val(o, "dropZoneCategories"),
+        value: bool_val(o, "dropZoneData"),
+    }
+}
+
+/// A PivotChart's `c14:pivotOptions` extension: the field buttons it shows, as Excel writes them
+/// inside `c:pivotSource`. Nothing when Hide All is on.
+fn pivot_options_xml(b: gridcraft_model::PivotFieldButtons) -> String {
+    if !b.any() {
+        return String::new();
+    }
+    let mut x = String::from(
+        "<c:extLst><c:ext uri=\"{781A3756-C4B2-4CAC-9D66-4F8BD8637D16}\" xmlns:c14=\"http://schemas.microsoft.com/office/drawing/2007/8/2/chart\"><c14:pivotOptions>",
+    );
+    for (on, tag) in [(b.report_filter, "dropZoneFilter"), (b.axis, "dropZoneCategories"), (b.value, "dropZoneData"), (b.legend, "dropZoneSeries")] {
+        if on {
+            let _ = write!(x, "<c14:{tag} val=\"1\"/>");
+        }
+    }
+    x.push_str("<c14:dropZonesVisible val=\"1\"/></c14:pivotOptions></c:ext></c:extLst>");
+    x
 }
 
 // ---------------------------------------------------------------- writing
@@ -865,7 +902,13 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book_name: &str) -> Str
     // without the brackets Excel shows an ordinary chart.
     if let Some(link) = ch.pivot.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
         let link = strip_book(link);
-        let _ = write!(s, "<c:pivotSource><c:name>[{}]{}</c:name><c:fmtId val=\"0\"/></c:pivotSource>", esc(book_name), esc(link));
+        let _ = write!(
+            s,
+            "<c:pivotSource><c:name>[{}]{}</c:name><c:fmtId val=\"0\"/>{}</c:pivotSource>",
+            esc(book_name),
+            esc(link),
+            pivot_options_xml(ch.pivot_buttons)
+        );
     }
     s.push_str("<c:chart>");
     match &ch.title {

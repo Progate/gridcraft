@@ -1,8 +1,9 @@
 use super::create::{insert_pivot, source_param};
 use super::{
-    Anchor, CellRef, Chart, ChartKind, EngineError, Json, LegendPos, Result, Session, Workbook, anchor_mode_param, bad, cell_param, edit, f64_param,
-    find_pivot, json, other, pv, str_param,
+    Anchor, CellRef, Chart, ChartKind, EngineError, Json, LegendPos, Result, Session, Workbook, anchor_mode_param, bad, bool_param, cell_param, edit,
+    f64_param, find_pivot, json, other, pv, str_param, u32_param,
 };
+use gridcraft_model::PivotFieldButtons;
 
 // ---------------------------------------------------------------- PivotChart
 
@@ -27,18 +28,55 @@ fn chart_pivot(s: &Session, p: &Json) -> Result<(usize, usize)> {
 }
 
 pub(crate) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
+    // Insert ▸ PivotChart outside a PivotTable (Create PivotChart): a new PivotTable of `source`
+    // at `destination`, then its PivotChart, as one step.
+    if p.get("source").is_some_and(|v| !v.is_null()) {
+        let mut q = serde_json::Map::new();
+        for k in ["source", "destination", "name", "rows", "columns", "values", "filters", "lang"] {
+            if let Some(v) = p.get(k).filter(|v| !v.is_null()) {
+                q.insert(k.into(), v.clone());
+            }
+        }
+        let made = insert_pivot(s, &Json::Object(q))?;
+        let name = made.get("name").and_then(Json::as_str).unwrap_or_default().to_string();
+        let mut rest = p.clone();
+        if let Some(m) = rest.as_object_mut() {
+            m.remove("source");
+            m.insert("pivot".into(), json!(name));
+        }
+        return insert_pivot_chart(s, &rest);
+    }
+    let (si, chart) = build_pivot_chart(s, p)?;
+    let (id, n) = (chart.id, chart.series.len());
+    let pivot_name = chart.pivot.as_deref().and_then(pv::parse_chart_link).map(|(_, name)| name).unwrap_or_default();
+    edit(s, |cx| {
+        cx.sheet_mut(si)?.charts.push(chart);
+        Ok(json!({"chart": id, "pivot": pivot_name, "series": n}))
+    })
+}
+
+/// The PivotChart `insert.pivotChart` would add for these params (`pivot`, `type`, `combo`…),
+/// without adding it: the sheet it goes on and the chart (previews in the Insert Chart dialog).
+pub fn build_pivot_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
     let (si, pi) = chart_pivot(s, p)?;
     let d = s.doc()?;
     let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
     let pt = sh.pivots.get(pi).ok_or_else(|| other("There's no such PivotTable."))?;
-    let area = pt.last_range.ok_or_else(|| other("Refresh the PivotTable before adding a PivotChart."))?;
+    // An empty PivotTable gets an empty PivotChart, as in Excel: its series come with the fields.
+    let area = pt.last_range.unwrap_or(gridcraft_core::RangeRef::cell(pt.anchor));
     let out = pv::compute(&d.wb, pt, si).map_err(other)?;
-    if out.chart_rows.is_empty() || out.chart_cols.is_empty() {
-        return Err(other("Add a field to the Values area and one to Rows or Columns before creating a PivotChart."));
-    }
-    let series = pv::chart_series(&sh.name, area.start, &out);
+    let series = if out.chart_rows.is_empty() || out.chart_cols.is_empty() { Vec::new() } else { pv::chart_series(&sh.name, area.start, &out) };
     let t = str_param(p, "type").unwrap_or("column");
     let kind = crate::cmd::insert::chart_kind(t, str_param(p, "subtype").unwrap_or(""));
+    if crate::cmd::insert::is_chartex_kind(kind)
+        || matches!(kind, ChartKind::Scatter | ChartKind::ScatterLines | ChartKind::Bubble | ChartKind::Stock)
+    {
+        // Excel offers none of these for a PivotChart: their data isn't a report's rows and columns.
+        return Err(bad(
+            "insert.pivotChart",
+            "a PivotChart can't be an X Y (scatter), bubble, stock, treemap, sunburst, histogram, box and whisker, waterfall or funnel chart",
+        ));
+    }
     let at =
         cell_param(s, p, "at")?.unwrap_or_else(|| CellRef::new(area.start.row, area.end.col.saturating_add(2).min(gridcraft_core::MAX_COLS - 1)));
     let title = match p.get("title") {
@@ -50,9 +88,7 @@ pub(crate) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let id = d.wb.next_object_id();
     let link = pv::chart_link(&sh.name, &pt.name);
-    let pivot_name = pt.name.clone();
-    let n = series.len();
-    let chart = Chart {
+    let mut chart = Chart {
         id,
         kind,
         anchor: Anchor {
@@ -65,10 +101,11 @@ pub(crate) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
         },
         title,
         series,
-        legend: if matches!(kind, ChartKind::Pie | ChartKind::Doughnut) { LegendPos::Right } else { LegendPos::Bottom },
+        // A PivotChart's legend is at the right, under its legend field buttons, as in Excel.
+        legend: LegendPos::Right,
         data_labels: false,
         data_table: None,
-        gridlines: !matches!(kind, ChartKind::Pie | ChartKind::Doughnut | ChartKind::Treemap | ChartKind::Sunburst | ChartKind::Funnel),
+        gridlines: !matches!(kind, ChartKind::Pie | ChartKind::Doughnut),
         hole_size: 75,
         first_slice_angle: 0,
         style: 1,
@@ -84,10 +121,52 @@ pub(crate) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
         chart_style: None,
         y2_title: None,
         bins: None,
+        pivot_buttons: Default::default(),
     };
+    if let Some(rows) = p.get("combo").filter(|v| !v.is_null()) {
+        crate::cmd::insert::apply_combo(&mut chart, rows)?;
+    }
+    Ok((si, chart))
+}
+
+/// `chart.fieldButtons`: the field buttons a PivotChart draws (PivotChart Analyze ▸ Field Buttons).
+/// `all` shows (true) or hides (false, Hide All) every kind; `reportFilter`, `legend`, `axis` and
+/// `value` set one kind. With none of them it toggles, as the button's upper half does: a chart
+/// showing any button hides them all, one showing none shows them all.
+pub(super) fn field_buttons(s: &mut Session, p: &Json) -> Result<Json> {
+    const CMD: &str = "chart.fieldButtons";
+    let d = s.doc()?;
+    let si = d.wb.active_sheet();
+    let sh = d.wb.sheet(si).ok_or(EngineError::NoDocument)?;
+    let ci = match u32_param(p, "chart") {
+        Some(id) => sh.charts.iter().position(|c| c.id == id).ok_or_else(|| bad(CMD, "no such chart"))?,
+        None => sh.charts.iter().rposition(|c| c.pivot.is_some()).ok_or_else(|| bad(CMD, "this sheet has no PivotChart"))?,
+    };
+    let Some(ch) = sh.charts.get(ci) else { return Err(bad(CMD, "no such chart")) };
+    if ch.pivot.is_none() {
+        return Err(other("Field buttons are only on PivotCharts."));
+    }
+    let mut b = ch.pivot_buttons;
+    let kinds = ["reportFilter", "legend", "axis", "value"];
+    match bool_param(p, "all") {
+        Some(true) => b = PivotFieldButtons::ALL,
+        Some(false) => b = PivotFieldButtons::NONE,
+        None if kinds.iter().all(|k| p.get(*k).is_none_or(Json::is_null)) => {
+            b = if b.any() { PivotFieldButtons::NONE } else { PivotFieldButtons::ALL }
+        }
+        None => {}
+    }
+    for (k, slot) in kinds.into_iter().zip([&mut b.report_filter, &mut b.legend, &mut b.axis, &mut b.value]) {
+        if let Some(v) = bool_param(p, k) {
+            *slot = v;
+        }
+    }
+    let id = ch.id;
     edit(s, |cx| {
-        cx.sheet_mut(si)?.charts.push(chart);
-        Ok(json!({"chart": id, "pivot": pivot_name, "series": n}))
+        if let Some(c) = cx.sheet_mut(si)?.charts.get_mut(ci) {
+            c.pivot_buttons = b;
+        }
+        Ok(json!({"chart": id, "reportFilter": b.report_filter, "legend": b.legend, "axis": b.axis, "value": b.value}))
     })
 }
 

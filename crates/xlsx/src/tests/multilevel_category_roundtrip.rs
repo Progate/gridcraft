@@ -59,6 +59,7 @@ fn workbook(categories: &str, values: &str) -> Workbook {
         chart_style: None,
         y2_title: None,
         bins: None,
+        pivot_buttons: Default::default(),
     });
     Workbook { sheets: vec![Arc::new(s)], ..Workbook::default() }
 }

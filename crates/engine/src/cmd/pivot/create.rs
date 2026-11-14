@@ -9,7 +9,7 @@ use super::{
 // ---------------------------------------------------------------- insert
 
 /// The default source: the table at the selection, else the selected block / current region.
-fn default_source(s: &Session) -> Result<String> {
+pub(super) fn default_source(s: &Session) -> Result<String> {
     let d = s.doc()?;
     let sh = d.wb.active().ok_or(EngineError::NoDocument)?;
     if let Some(t) = sh.table_at(d.selection.active) {

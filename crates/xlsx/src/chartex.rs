@@ -167,6 +167,7 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         chart_style: None,
         y2_title: None,
         bins,
+        pivot_buttons: Default::default(),
     })
 }
 

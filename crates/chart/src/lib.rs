@@ -25,8 +25,8 @@ use serde::{Deserialize, Serialize};
 
 pub use axis::{Scale, format_number, nice_scale};
 pub use raster::rasterize;
-pub use render::{Swatch, element_at, element_rect, legend_entries, point_at, render, supports_trendline, title_text};
-pub use resolve::{default_palette, resolve, series_color, series_plot_kind};
+pub use render::{Swatch, element_at, element_rect, field_button_at, legend_entries, point_at, render, supports_trendline, title_text};
+pub use resolve::{default_palette, pivot_field_buttons, resolve, series_color, series_plot_kind};
 pub use sparkline::{SparkPoints, render_sparkline, render_sparkline_points};
 
 /// Straight (non-premultiplied) RGBA colour.
@@ -149,6 +149,50 @@ pub struct ChartData {
     /// Title, in the interface language (グラフ タイトル). Empty shows `Chart Title`.
     #[serde(default)]
     pub placeholder_title: String,
+    /// A PivotChart's field buttons, drawn on the chart on screen ([`pivot_field_buttons`]);
+    /// `None` (as [`resolve`] leaves it) draws none, as Excel prints none.
+    #[serde(default)]
+    pub pivot_buttons: Option<PivotButtons>,
+}
+
+/// The field buttons of a PivotChart, by where Excel draws them: report filters at the top left,
+/// value fields at the top left of the plot, axis (category) fields at the bottom left, legend
+/// (series) fields above the legend.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PivotButtons {
+    pub report_filter: Vec<FieldButton>,
+    pub value: Vec<FieldButton>,
+    pub axis: Vec<FieldButton>,
+    pub legend: Vec<FieldButton>,
+}
+
+impl PivotButtons {
+    /// The buttons of `kind`.
+    pub fn of(&self, kind: FieldButtonKind) -> &[FieldButton] {
+        match kind {
+            FieldButtonKind::ReportFilter => &self.report_filter,
+            FieldButtonKind::Value => &self.value,
+            FieldButtonKind::Axis => &self.axis,
+            FieldButtonKind::Legend => &self.legend,
+        }
+    }
+}
+
+/// One field button: the field's name, and whether the field hides some of its items (the
+/// button then shows a funnel, as Excel's does).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldButton {
+    pub name: String,
+    pub filtered: bool,
+}
+
+/// The kinds of PivotChart field buttons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum FieldButtonKind {
+    ReportFilter,
+    Value,
+    Axis,
+    Legend,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

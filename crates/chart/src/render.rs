@@ -8,7 +8,7 @@ use gridcraft_model::{Chart, ChartKind, LineDash, QuartileMethod, Theme, Trendli
 use crate::axis::{Fmt, Scale, clean, nice_scale};
 use crate::resolve::{MAX_POINTS, MAX_SERIES, MAX_TRENDLINES, points_per_series, series_color};
 use crate::trend::{auto_name, fit_trendline, moving_average};
-use crate::{ChartData, ChartElement, HAlign, Measure, Prim, Rgba, SeriesData, VAlign};
+use crate::{ChartData, ChartElement, FieldButtonKind, HAlign, Measure, Prim, Rgba, SeriesData, VAlign};
 
 mod cartesian;
 mod frame;
@@ -61,6 +61,9 @@ struct Ctx<'a> {
     points: Vec<(usize, usize, [f32; 4])>,
     /// Where the title and axis titles were drawn (`[x, y, w, h]`), for [`element_at`].
     elements: Vec<(ChartElement, [f32; 4])>,
+    /// Where a PivotChart's field buttons were drawn: (kind, index among its kind, `[x, y, w, h]`),
+    /// for [`field_button_at`].
+    buttons: Vec<(FieldButtonKind, usize, [f32; 4])>,
 }
 
 #[cfg(test)]
@@ -193,6 +196,7 @@ pub(crate) fn sanitize(d: &ChartData) -> ChartData {
             })
             .collect(),
         placeholder_title: d.placeholder_title.chars().take(255).collect(),
+        pivot_buttons: d.pivot_buttons.clone(),
     }
 }
 
@@ -277,15 +281,83 @@ pub fn point_at(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure
     ctx.points.iter().rev().find(|(_, _, [px, py, pw, ph])| x >= *px && x <= px + pw && y >= *py && y <= py + ph).map(|(s, j, _)| (*s, *j))
 }
 
+/// The PivotChart field button drawn under `(x, y)` (in the coordinates of [`render`]'s box), as
+/// (kind, index among the buttons of its kind).
+pub fn field_button_at(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure, x: f32, y: f32) -> Option<(FieldButtonKind, usize)> {
+    let ctx = layout(chart, data, w, h, m)?;
+    ctx.buttons.iter().rev().find(|(_, _, [bx, by, bw, bh])| x >= *bx && x <= bx + bw && y >= *by && y <= by + bh).map(|(k, i, _)| (*k, *i))
+}
+
+/// Draws the field buttons of `kinds` in a row of height `bh` from `x` (or ending at `x + w` when
+/// `right`), as far as `w` reaches. Each is a grey button with the field's name and, but for a
+/// value field, a ▼ (a funnel when the field hides items).
+#[allow(clippy::too_many_arguments)]
+fn field_button_row(ctx: &mut Ctx, b: &crate::PivotButtons, kinds: &[FieldButtonKind], x: f32, y: f32, w: f32, bh: f32, right: bool) {
+    const FACE: Rgba = [0xF2, 0xF2, 0xF2, 0xFF];
+    const EDGE: Rgba = [0xA6, 0xA6, 0xA6, 0xFF];
+    let size = bh * 0.62;
+    let gap = 3.0;
+    let mut list: Vec<(FieldButtonKind, usize, String, bool, f32)> = Vec::new();
+    for &k in kinds {
+        for (i, f) in b.of(k).iter().enumerate() {
+            let arrow = if k == FieldButtonKind::Value { 0.0 } else { bh * 0.8 };
+            let bw = (ctx.tw(&f.name, size) + 8.0 + arrow).min(w.max(0.0));
+            list.push((k, i, f.name.clone(), f.filtered, bw));
+        }
+    }
+    if right {
+        list.reverse();
+    }
+    let mut used = 0.0f32;
+    for (k, i, name, filtered, bw) in list {
+        if used + bw > w {
+            break;
+        }
+        let bx = if right { x + w - used - bw } else { x + used };
+        used += bw + gap;
+        ctx.out.push(Prim::Rect { x: bx, y, w: bw, h: bh, fill: Some(FACE), stroke: Some((EDGE, 0.75)), radius: 1.5 });
+        let arrow = if k == FieldButtonKind::Value { 0.0 } else { bh * 0.8 };
+        let t = ctx.fit(&name, size, (bw - 8.0 - arrow).max(0.0) + 0.5);
+        ctx.text(bx + 4.0, y + bh / 2.0, &t, size, DARK_TEXT, (HAlign::Left, VAlign::Middle));
+        if arrow > 0.0 {
+            let (cx, cy, s) = (bx + bw - arrow / 2.0 - 1.0, y + bh / 2.0, bh * 0.18);
+            let pts = if filtered {
+                // A funnel: a wide top narrowing to a stem.
+                vec![
+                    [cx - s * 1.6, cy - s * 1.4],
+                    [cx + s * 1.6, cy - s * 1.4],
+                    [cx + s * 0.35, cy + s * 0.2],
+                    [cx + s * 0.35, cy + s * 1.6],
+                    [cx - s * 0.35, cy + s * 1.2],
+                    [cx - s * 0.35, cy + s * 0.2],
+                ]
+            } else {
+                vec![[cx - s * 1.4, cy - s * 0.7], [cx + s * 1.4, cy - s * 0.7], [cx, cy + s * 0.9]]
+            };
+            ctx.out.push(Prim::Polygon { pts, fill: DARK_TEXT, stroke: None });
+        }
+        ctx.buttons.push((k, i, [bx, y, bw, bh]));
+    }
+}
+
 fn layout<'a>(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &'a dyn Measure) -> Option<Ctx<'a>> {
     if !(w.is_finite() && h.is_finite()) || w < 1.0 || h < 1.0 || w > 1e7 || h > 1e7 {
         return None;
     }
     let data = sanitized(data);
-    let mut ctx = Ctx { out: Vec::new(), m, points: Vec::new(), elements: Vec::new() };
+    let mut ctx = Ctx { out: Vec::new(), m, points: Vec::new(), elements: Vec::new(), buttons: Vec::new() };
     ctx.out.push(Prim::Rect { x: 0.0, y: 0.0, w, h, fill: Some(WHITE), stroke: Some((GRID, 1.0)), radius: 0.0 });
     let pad = (w.min(h) * 0.04).clamp(2.0, 10.0);
     let mut area = Bx { x: pad, y: pad, w: w - 2.0 * pad, h: h - 2.0 * pad };
+    let buttons = data.pivot_buttons.clone().unwrap_or_default();
+    let bh = (h * 0.07).clamp(10.0, 16.0);
+    let legend_shown = chart.legend != gridcraft_model::LegendPos::None && !legend_entries(chart, &data).is_empty();
+    // Report filter buttons above everything, at the top left.
+    if !buttons.report_filter.is_empty() && area.ok() {
+        field_button_row(&mut ctx, &buttons, &[FieldButtonKind::ReportFilter], area.x, area.y, area.w, bh, false);
+        area.y += bh + 3.0;
+        area.h -= bh + 3.0;
+    }
     if let Some(t) = chart_title(chart, &data) {
         let size = TITLE_SIZE.min(h * 0.12).max(4.0);
         let t = ctx.fit(&t, size, area.w);
@@ -298,6 +370,27 @@ fn layout<'a>(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &'a dyn Measur
             area.y += used;
             area.h -= used;
         }
+    }
+    // Value field buttons at the top left of the plot; legend field buttons above a legend at the
+    // side or top, at its right; axis field buttons at the bottom left, beside the legend field
+    // buttons of a legend at the bottom.
+    let legend_below = chart.legend == gridcraft_model::LegendPos::Bottom;
+    let legend_buttons = legend_shown && !buttons.legend.is_empty();
+    if (!buttons.value.is_empty() || (legend_buttons && !legend_below)) && area.ok() {
+        field_button_row(&mut ctx, &buttons, &[FieldButtonKind::Value], area.x, area.y, area.w, bh, false);
+        if legend_buttons && !legend_below {
+            field_button_row(&mut ctx, &buttons, &[FieldButtonKind::Legend], area.x, area.y, area.w, bh, true);
+        }
+        area.y += bh + 3.0;
+        area.h -= bh + 3.0;
+    }
+    if (!buttons.axis.is_empty() || (legend_buttons && legend_below)) && area.ok() {
+        let y = area.bottom() - bh;
+        field_button_row(&mut ctx, &buttons, &[FieldButtonKind::Axis], area.x, y, area.w, bh, false);
+        if legend_buttons && legend_below {
+            field_button_row(&mut ctx, &buttons, &[FieldButtonKind::Legend], area.x, y, area.w, bh, true);
+        }
+        area.h -= bh + 3.0;
     }
     let entries = legend_entries(chart, &data);
     if !entries.is_empty() && area.ok() {
