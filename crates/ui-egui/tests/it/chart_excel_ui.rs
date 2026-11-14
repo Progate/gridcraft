@@ -95,6 +95,39 @@ fn add_chart_element_adds_one_axis_title_and_places_the_chart_title() {
 }
 
 #[test]
+fn data_labels_lists_excels_positions_for_the_chart_type() {
+    let (mut h, _) = selected_chart_harness();
+    h.get_by_label("Add Chart Element").click();
+    h.run_steps(3);
+    h.get_by_label("Data Labels").click();
+    h.run_steps(3);
+    for label in ["None", "Center", "Inside End", "Inside Base", "Outside End", "Data Callout"] {
+        assert!(h.query_by_label(label).is_some(), "{label} is offered on a clustered column");
+    }
+    assert!(h.query_by_label("Show").is_none() && h.query_by_label("Best Fit").is_none());
+    h.get_by_label("Outside End").click();
+    h.run_steps(3);
+    let c = chart(&h);
+    assert!(c.data_labels);
+    assert_eq!(c.label_position(), Some(gridcraft_engine::model::LabelPos::OutsideEnd));
+    let ja = gridcraft_ui_egui::i18n::Language::Ja;
+    assert_eq!(
+        [
+            "Data Labels|Center",
+            "Inside End",
+            "Inside Base",
+            "Outside End",
+            "Data Callout",
+            "Pie Labels|Inside End",
+            "Pie Labels|Outside End",
+            "Best Fit"
+        ]
+        .map(|l| ja.tr(l)),
+        ["中央", "内側終点", "内側軸寄り", "外側終点", "データの吹き出し", "内部外側", "外部", "自動調整"]
+    );
+}
+
+#[test]
 fn clicking_the_title_selects_it_and_a_second_click_edits_it_in_place() {
     let (s, id) = chart_session();
     let mut h = crate::support::harness(s, 4);

@@ -66,7 +66,7 @@ pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
                     }
                 }
             }
-            "dataLabels" => c.data_labels = on,
+            "dataLabels" => set_data_labels(c, on, pos.as_deref())?,
             "dataTable" => crate::cmd::insert::update_data_table(c, p, Some(on))?,
             "gridlines" => c.gridlines = on,
             "axisTitles" => {
@@ -590,6 +590,44 @@ pub(super) fn set_as_total(s: &mut Session, p: &Json) -> Result<Json> {
         }
         Ok(())
     })
+}
+
+/// Add Chart Element ▸ Data Labels: None turns the labels off; Show (or no position) turns them on
+/// at the chart type's default place; a position (Center, Inside End, Outside End, Left…) must be
+/// one the chart type's menu offers ([`gridcraft_model::label_positions`]); Data Callout shows the
+/// category name and value in a callout box, as Excel's does.
+fn set_data_labels(c: &mut Chart, on: bool, pos: Option<&str>) -> Result<()> {
+    if !on || pos == Some("none") {
+        c.data_labels = false;
+        return Ok(());
+    }
+    if !c.data_labels {
+        c.label_parts = Default::default();
+    }
+    match pos {
+        None | Some("show") => {
+            c.label_parts.position = None;
+            c.label_parts.callout = false;
+        }
+        Some("callout") => {
+            if !gridcraft_model::supports_label_callout(c.kind) {
+                return Err(bad("chart.addElement", "this chart type has no Data Callout"));
+            }
+            c.label_parts.callout = true;
+            c.label_parts.category_name = true;
+            c.label_parts.value = true;
+        }
+        Some(p) => {
+            let at = gridcraft_model::LabelPos::from_id(p).ok_or_else(|| bad("chart.addElement", format!("no data label position `{p}`")))?;
+            if !gridcraft_model::label_positions(c.kind).contains(&at) {
+                return Err(bad("chart.addElement", format!("this chart type's data labels can't be placed at `{p}`")));
+            }
+            c.label_parts.position = Some(at);
+            c.label_parts.callout = false;
+        }
+    }
+    c.data_labels = true;
+    Ok(())
 }
 
 /// Format Data Labels ▸ Label Contains: the parts each data label shows. At least one of series

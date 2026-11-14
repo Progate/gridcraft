@@ -1812,3 +1812,77 @@ fn an_automatic_title_reads_the_one_series_name_or_the_placeholder() {
     c.title = Some(String::new());
     assert_eq!(title_text(&c, &two), None, "a deleted title");
 }
+
+/// The `(x, y, align)` of everything drawn with `text`; data labels come after the axis labels.
+fn label_at(prims: &[Prim], text: &str) -> Vec<(f32, f32, HAlign, VAlign)> {
+    prims
+        .iter()
+        .filter_map(|p| if let Prim::Text { text: t, x, y, align, valign, .. } = p { (t == text).then_some((*x, *y, *align, *valign)) } else { None })
+        .collect()
+}
+
+#[test]
+fn column_data_labels_follow_the_label_position() {
+    let mut c = chart(ChartKind::ColumnClustered);
+    c.title = None;
+    c.legend = LegendPos::None;
+    c.data_labels = true;
+    let mut d = sample(ChartKind::ColumnClustered);
+    d.series = vec![series("S", &[40.0, 80.0], [1, 2, 3, 255], ChartKind::ColumnClustered)];
+    d.categories.truncate(2);
+    let place = |c: &Chart| label_at(&render(c, &d, 400.0, 300.0, &ApproxMeasure), "$80").last().copied().unwrap();
+    let outside = place(&c);
+    assert_eq!(outside.3, VAlign::Bottom, "Outside End by default: above the bar's top");
+    c.label_parts.position = Some(gridcraft_model::LabelPos::InsideEnd);
+    let inside = place(&c);
+    assert_eq!(inside.3, VAlign::Top, "Inside End hangs below the top");
+    assert!(inside.1 > outside.1);
+    c.label_parts.position = Some(gridcraft_model::LabelPos::InsideBase);
+    let base = place(&c);
+    assert_eq!(base.3, VAlign::Bottom);
+    assert!(base.1 > inside.1 + 50.0, "Inside Base sits at the axis: {base:?} {inside:?}");
+    c.label_parts.position = Some(gridcraft_model::LabelPos::Center);
+    let center = place(&c);
+    assert!(center.1 > inside.1 && center.1 < base.1 && center.3 == VAlign::Middle);
+    // A position the type doesn't offer (Left on a column) draws at the default.
+    c.label_parts.position = Some(gridcraft_model::LabelPos::Left);
+    assert_eq!(place(&c), outside);
+}
+
+#[test]
+fn line_labels_sit_around_the_point_and_callouts_get_a_box() {
+    let mut c = chart(ChartKind::LineMarkers);
+    c.title = None;
+    c.legend = LegendPos::None;
+    c.data_labels = true;
+    let mut d = sample(ChartKind::LineMarkers);
+    d.series = vec![series("S", &[40.0, 80.0], [1, 2, 3, 255], ChartKind::LineMarkers)];
+    d.categories.truncate(2);
+    c.label_parts.position = Some(gridcraft_model::LabelPos::Right);
+    let prims = render(&c, &d, 400.0, 300.0, &ApproxMeasure);
+    assert_eq!(label_at(&prims, "$80").last().copied().unwrap().2, HAlign::Left, "Right: the text starts right of the point");
+    c.label_parts.position = Some(gridcraft_model::LabelPos::Below);
+    assert_eq!(label_at(&render(&c, &d, 400.0, 300.0, &ApproxMeasure), "$80").last().copied().unwrap().3, VAlign::Top);
+    let rects = |prims: &[Prim]| prims.iter().filter(|p| matches!(p, Prim::Rect { fill: Some(f), .. } if *f == [0xFF; 4])).count();
+    let plain = rects(&render(&c, &d, 400.0, 300.0, &ApproxMeasure));
+    c.label_parts.callout = true;
+    let boxed = render(&c, &d, 400.0, 300.0, &ApproxMeasure);
+    assert_eq!(rects(&boxed), plain + 2, "one callout box per label");
+}
+
+#[test]
+fn pie_labels_go_outside_at_outside_end() {
+    let mut c = chart(ChartKind::Pie);
+    c.title = None;
+    c.legend = LegendPos::None;
+    c.data_labels = true;
+    let mut d = sample(ChartKind::Pie);
+    d.series = vec![series("S", &[50.0, 50.0], [1, 2, 3, 255], ChartKind::Pie)];
+    d.categories.truncate(2);
+    // The second slice runs clockwise from 6 o'clock, so its label is left of the centre.
+    let x = |c: &Chart| label_at(&render(c, &d, 400.0, 300.0, &ApproxMeasure), "$50").last().copied().unwrap();
+    let inside = x(&c);
+    c.label_parts.position = Some(gridcraft_model::LabelPos::OutsideEnd);
+    let outside = x(&c);
+    assert!(outside.0 < inside.0 - 30.0 && outside.2 == HAlign::Right, "{inside:?} {outside:?}");
+}

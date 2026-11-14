@@ -125,6 +125,24 @@ struct ChartState {
     title: bool,
     overlay: bool,
     data_table: bool,
+    /// The data labels while they're on: their chosen position and whether they're callouts.
+    labels: Option<(Option<gridcraft_engine::model::LabelPos>, bool)>,
+    /// Where the chart type puts data labels when no position is chosen.
+    default_label_pos: Option<gridcraft_engine::model::LabelPos>,
+}
+
+/// Where GridCraft draws a chart type's data labels when no position is chosen (Excel's defaults:
+/// Outside End on a clustered column, Center on a stacked one, Best Fit on a pie; line and
+/// scatter labels sit above the point).
+fn default_label_position(kind: gridcraft_engine::model::ChartKind) -> Option<gridcraft_engine::model::LabelPos> {
+    use gridcraft_engine::model::{ChartKind as K, LabelPos as P};
+    match kind {
+        K::ColumnClustered | K::BarClustered => Some(P::OutsideEnd),
+        K::ColumnStacked | K::ColumnStacked100 | K::BarStacked | K::BarStacked100 => Some(P::Center),
+        K::Pie => Some(P::BestFit),
+        K::Line | K::LineMarkers | K::LineStacked | K::Scatter | K::ScatterLines | K::Bubble => Some(P::Above),
+        _ => None,
+    }
 }
 
 fn chart_state(app: &SheetApp) -> Option<ChartState> {
@@ -146,7 +164,45 @@ fn chart_state(app: &SheetApp) -> Option<ChartState> {
         title: shown.is_some(),
         overlay: c.title_overlay,
         data_table: c.supports_data_table(),
+        labels: c.data_labels.then(|| (c.label_position(), c.label_callout())),
+        default_label_pos: default_label_position(c.kind),
     })
+}
+
+/// Add Chart Element ▸ Data Labels as Excel lists it for the chart type, as `(label, position,
+/// chosen)`: None, then the positions the type offers (or Show when it has none), then Data
+/// Callout. A pie's Inside End and Outside End carry their own Japanese names.
+fn data_label_choices(c: &ChartState) -> Vec<(&'static str, &'static str, bool)> {
+    use gridcraft_engine::model::LabelPos;
+    let pie = c.kind == gridcraft_engine::model::ChartKind::Pie;
+    let shown = |p: Option<LabelPos>| c.labels.is_some_and(|(at, callout)| !callout && at == p);
+    let mut v = vec![("None", "none", c.labels.is_none())];
+    let positions = gridcraft_engine::model::label_positions(c.kind);
+    if positions.is_empty() {
+        v.push(("Show", "show", shown(None)));
+    }
+    for p in positions {
+        let label = match p {
+            LabelPos::Center => "Data Labels|Center",
+            LabelPos::InsideEnd if pie => "Pie Labels|Inside End",
+            LabelPos::InsideEnd => "Inside End",
+            LabelPos::InsideBase => "Inside Base",
+            LabelPos::OutsideEnd if pie => "Pie Labels|Outside End",
+            LabelPos::OutsideEnd => "Outside End",
+            LabelPos::BestFit => "Best Fit",
+            LabelPos::Left => "Data Labels|Left",
+            LabelPos::Right => "Data Labels|Right",
+            LabelPos::Above => "Data Labels|Above",
+            LabelPos::Below => "Data Labels|Below",
+        };
+        // The type's default position is the one shown while none was chosen.
+        let on = shown(Some(*p)) || (c.default_label_pos == Some(*p) && shown(None));
+        v.push((label, p.id(), on));
+    }
+    if gridcraft_engine::model::supports_label_callout(c.kind) {
+        v.push(("Data Callout", "callout", c.labels.is_some_and(|(_, callout)| callout)));
+    }
+    v
 }
 
 /// A menu item shown selected while its choice is the chart's, as Excel highlights it.
@@ -187,11 +243,12 @@ fn add_chart_element_menu(app: &mut SheetApp, ui: &mut Ui, c: &ChartState) {
         }
     });
     ui.menu_button(lang.tr("Data Labels"), |ui| {
-        menu_items(
-            app,
-            ui,
-            &[("None", "chart.set", json!({"chart": id, "dataLabels": false})), ("Show", "chart.set", json!({"chart": id, "dataLabels": true}))],
-        );
+        for (label, position, on) in data_label_choices(c) {
+            if check_item(app, ui, label, on) {
+                act(app, "chart.addElement", json!({"chart": id, "element": "dataLabels", "position": position}));
+                ui.close();
+            }
+        }
     });
     if c.data_table {
         ui.menu_button(lang.tr("Data Table"), |ui| {

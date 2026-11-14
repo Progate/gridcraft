@@ -256,6 +256,14 @@ pub fn read_chart(root: &El) -> Option<Chart> {
             value: bool_val(d, "showVal"),
             percentage: bool_val(d, "showPercent"),
             leader_lines: d.child("showLeaderLines").is_none_or(|_| bool_val(d, "showLeaderLines")),
+            position: d.child_val("dLblPos").and_then(gridcraft_model::LabelPos::from_xml),
+            // Data Callout is the label shape (`c15:spPr`) Excel writes in the extension list.
+            callout: d.path(&["extLst"]).is_some_and(|x| {
+                x.kids("ext")
+                    .filter_map(|e| e.child("spPr"))
+                    .filter_map(|sp| sp.child("prstGeom"))
+                    .any(|g| matches!(g.attr("prst"), Some("wedgeRectCallout" | "wedgeRoundRectCallout" | "wedgeEllipseCallout")))
+            }),
         })
         .unwrap_or_default();
     let val_axes: Vec<&El> = plot.kids("valAx").collect();
@@ -700,8 +708,24 @@ fn dlbls(ch: &Chart, pie: bool) -> String {
     let p = &ch.label_parts;
     let on = |b: bool| u8::from(ch.data_labels && b);
     let leader = if pie && ch.data_labels { format!("<c:showLeaderLines val=\"{}\"/>", u8::from(p.leader_lines)) } else { String::new() };
+    // Data Callout: a white box with a grey outline (`c:spPr`) whose shape is a rectangular callout
+    // (`c15:spPr`), as Excel writes it.
+    let callout = ch.label_callout();
+    let box_pr = if callout {
+        "<c:spPr><a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill><a:ln><a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"25000\"/><a:lumOff val=\"75000\"/></a:schemeClr></a:solidFill></a:ln></c:spPr>"
+    } else {
+        ""
+    };
+    // The type's default position is left unsaved, as Excel does; one the type doesn't offer would
+    // make Excel repair the file, so `label_position` drops it.
+    let pos = ch.label_position().filter(|_| ch.data_labels).map(|p| format!("<c:dLblPos val=\"{}\"/>", p.xml())).unwrap_or_default();
+    let ext = if callout {
+        "<c:extLst><c:ext uri=\"{CE6537A1-D6FC-4f65-9D91-7224C49458BB}\" xmlns:c15=\"http://schemas.microsoft.com/office/drawing/2012/chart\"><c15:spPr xmlns:c15=\"http://schemas.microsoft.com/office/drawing/2012/chart\"><a:prstGeom prst=\"wedgeRectCallout\"><a:avLst/></a:prstGeom><a:noAutofit/></c15:spPr></c:ext></c:extLst>"
+    } else {
+        ""
+    };
     format!(
-        "<c:dLbls><c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"{}\"/><c:showSerName val=\"{}\"/><c:showPercent val=\"{}\"/><c:showBubbleSize val=\"0\"/>{leader}</c:dLbls>",
+        "<c:dLbls>{box_pr}{pos}<c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"{}\"/><c:showSerName val=\"{}\"/><c:showPercent val=\"{}\"/><c:showBubbleSize val=\"0\"/>{leader}{ext}</c:dLbls>",
         on(p.value),
         on(p.category_name),
         on(p.series_name),

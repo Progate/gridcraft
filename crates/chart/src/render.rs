@@ -117,6 +117,39 @@ impl Ctx<'_> {
         }
         self.out.push(Prim::Text { x, y, text: s.to_string(), size, color, bold: false, align, valign, rotation: 0.0 });
     }
+    /// A data label: plain text, or with `callout` Excel's Data Callout, the text in a white box
+    /// with a grey outline and a pointer toward `point` (the data point it labels).
+    fn data_label(&mut self, x: f32, y: f32, s: &str, color: Rgba, align: (HAlign, VAlign), callout: Option<[f32; 2]>) {
+        let Some(point) = callout else {
+            self.text(x, y, s, LABEL_SIZE, color, align);
+            return;
+        };
+        if s.is_empty() {
+            return;
+        }
+        let lines = s.lines().count().max(1) as f32;
+        let (w, h) = (self.tw(s, LABEL_SIZE) + 6.0, LABEL_SIZE * 1.25 * lines + 4.0);
+        let left = match align.0 {
+            HAlign::Left => x - 3.0,
+            HAlign::Center => x - w / 2.0,
+            HAlign::Right => x - w + 3.0,
+        };
+        let top = match align.1 {
+            VAlign::Top => y - 2.0,
+            VAlign::Middle => y - h / 2.0,
+            VAlign::Bottom => y - h + 2.0,
+        };
+        // The pointer: a narrow triangle from the box's centre to the point, under the box.
+        let (cx, cy) = (left + w / 2.0, top + h / 2.0);
+        let (dx, dy) = (point[0] - cx, point[1] - cy);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len > 1.0 && len.is_finite() {
+            let (nx, ny) = (-dy / len * 3.0, dx / len * 3.0);
+            self.out.push(Prim::Polygon { pts: vec![[cx + nx, cy + ny], [cx - nx, cy - ny], point], fill: WHITE, stroke: Some((AXIS, 0.75)) });
+        }
+        self.rect(left, top, w, h, WHITE, Some((AXIS, 0.75)));
+        self.text(left + w / 2.0, top + h / 2.0, s, LABEL_SIZE, DARK_TEXT, (HAlign::Center, VAlign::Middle));
+    }
     fn rect(&mut self, x: f32, y: f32, w: f32, h: f32, fill: Rgba, stroke: Option<(Rgba, f32)>) {
         self.out.push(Prim::Rect { x, y, w, h, fill: Some(fill), stroke, radius: 0.0 });
     }

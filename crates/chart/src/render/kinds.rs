@@ -1,3 +1,5 @@
+use gridcraft_model::LabelPos;
+
 use super::frame::{Bx, CatAxis, ValAxis, frame, on, value_range};
 use super::legend::{cat_label, point_color};
 use super::{
@@ -281,6 +283,10 @@ pub(super) fn pie(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, inne
     let f = Fmt::new(&s.number_format);
     let mut a = (chart.first_slice_angle % 360) as f32 * TAU / 360.0;
     let mut labels = Vec::new();
+    // Label Position: Center, Inside End and Outside End place every label; Best Fit (the default)
+    // keeps a label inside its slice when it fits there and moves it outside when it doesn't.
+    let at = if names { None } else { chart.label_position() };
+    let callout = !names && chart.label_callout();
     for (j, v) in vals.iter().enumerate() {
         let sweep = (*v / total) as f32 * TAU;
         if sweep > 1e-4 {
@@ -289,17 +295,47 @@ pub(super) fn pie(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx, inne
             if (chart.data_labels || names) && vals.len() <= MAX_LABELS {
                 let t = if names { cat_label(data, j) } else { pie_label(chart, data, s, &f, j, *v / total) };
                 let mid = a + sweep / 2.0;
-                let rr = if ri > 0.0 { (r + ri) / 2.0 } else { r * 0.65 };
+                let rr = match at {
+                    Some(LabelPos::Center) => (r + ri) / 2.0,
+                    Some(LabelPos::InsideEnd) => r * 0.8,
+                    _ if ri > 0.0 => (r + ri) / 2.0,
+                    _ => r * 0.65,
+                };
                 let room = sweep * rr;
-                if ctx.tw(&t, LABEL_SIZE) <= room.max(r - ri) && room >= LABEL_SIZE {
-                    labels.push((cx + rr * mid.sin(), cy - rr * mid.cos(), t, on(fill)));
+                let fits = ctx.tw(&t, LABEL_SIZE) <= room.max(r - ri) && room >= LABEL_SIZE;
+                let outside = at == Some(LabelPos::OutsideEnd)
+                    || (callout && at.is_none())
+                    || (!fits && !names && matches!(at, None | Some(LabelPos::BestFit)));
+                let rim = [cx + r * mid.sin(), cy - r * mid.cos()];
+                if outside {
+                    // Outside End: just past the rim, the text running away from the pie.
+                    let ro = r + if callout { 14.0 } else { 4.0 };
+                    let (x, y) = (cx + ro * mid.sin(), cy - ro * mid.cos());
+                    let h = if mid.sin() > 0.2 {
+                        HAlign::Left
+                    } else if mid.sin() < -0.2 {
+                        HAlign::Right
+                    } else {
+                        HAlign::Center
+                    };
+                    let v = if mid.cos() > 0.2 {
+                        VAlign::Bottom
+                    } else if mid.cos() < -0.2 {
+                        VAlign::Top
+                    } else {
+                        VAlign::Middle
+                    };
+                    labels.push((x, y, t, TEXT, (h, v), callout.then_some(rim)));
+                } else if fits || at.is_some() {
+                    let (x, y) = (cx + rr * mid.sin(), cy - rr * mid.cos());
+                    labels.push((x, y, t, if callout { TEXT } else { on(fill) }, (HAlign::Center, VAlign::Middle), callout.then_some([x, y])));
                 }
             }
         }
         a += sweep;
     }
-    for (x, y, t, c) in labels {
-        ctx.text(x, y, &t, LABEL_SIZE, c, (HAlign::Center, VAlign::Middle));
+    for (x, y, t, c, align, callout) in labels {
+        ctx.data_label(x, y, &t, c, align, callout);
     }
 }
 

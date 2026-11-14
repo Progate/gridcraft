@@ -2107,6 +2107,40 @@ mod tests {
     }
 
     #[test]
+    fn data_labels_take_the_positions_the_chart_type_offers() {
+        use gridcraft_model::LabelPos;
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("range.setValues", json!({"range": "A1", "values": [["Q", "Sales"], ["Q1", 10], ["Q2", 20]]})).unwrap();
+        s.execute("insert.chart", json!({"range": "A1:B3", "type": "column"})).unwrap();
+        let get = |s: &Session| s.active().unwrap().wb.active().unwrap().charts[0].clone();
+        s.execute("chart.addElement", json!({"element": "dataLabels", "position": "outsideEnd"})).unwrap();
+        assert!(get(&s).data_labels);
+        assert_eq!(get(&s).label_position(), Some(LabelPos::OutsideEnd));
+        s.execute("chart.addElement", json!({"element": "dataLabels", "position": "insideBase"})).unwrap();
+        assert_eq!(get(&s).label_position(), Some(LabelPos::InsideBase));
+        // Left is a line chart's, Best Fit a pie's.
+        assert!(s.execute("chart.addElement", json!({"element": "dataLabels", "position": "left"})).is_err());
+        assert!(s.execute("chart.addElement", json!({"element": "dataLabels", "position": "bestFit"})).is_err());
+        assert!(s.execute("chart.addElement", json!({"element": "dataLabels", "position": "middle"})).is_err());
+        s.execute("chart.addElement", json!({"element": "dataLabels", "position": "callout"})).unwrap();
+        let c = get(&s);
+        assert!(c.label_callout() && c.label_parts.category_name && c.label_parts.value);
+        s.execute("chart.addElement", json!({"element": "dataLabels", "position": "none"})).unwrap();
+        assert!(!get(&s).data_labels);
+        // On a stacked column Outside End isn't offered; after a change of type a kept one falls back.
+        s.execute("chart.addElement", json!({"element": "dataLabels", "position": "outsideEnd"})).unwrap();
+        s.execute("chart.set", json!({"type": "column", "subtype": "stacked"})).unwrap();
+        assert_eq!(get(&s).label_position(), None);
+        assert!(s.execute("chart.addElement", json!({"element": "dataLabels", "position": "outsideEnd"})).is_err());
+        s.execute("chart.set", json!({"type": "line"})).unwrap();
+        s.execute("chart.addElement", json!({"element": "dataLabels", "position": "right"})).unwrap();
+        assert_eq!(get(&s).label_position(), Some(LabelPos::Right));
+        s.execute("edit.undo", json!({})).unwrap();
+        assert_ne!(get(&s).label_position(), Some(LabelPos::Right));
+    }
+
+    #[test]
     fn chart_data_table_refuses_unsupported_types_without_changing_history() {
         let mut s = Session::new();
         s.new_workbook();

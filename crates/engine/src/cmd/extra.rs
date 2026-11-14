@@ -40,7 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Chart Element",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{chart?, element: title|legend|dataLabels|dataTable|gridlines|axisTitles|axisTitle|smooth|trendline, on?: bool, position?: bottom|top|left|right (legend) | above|overlay (title: Above Chart, Centered Overlay); axisTitle: axis: horizontal|vertical|secondaryVertical (Axis Titles ▸ Primary Horizontal / Primary Vertical / Secondary Vertical); dataTable: dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool; trendline: series?: index (default all), type?: linear|exponential|linearForecast|movingAverage|logarithmic|power|polynomial, order?: 2..6, period?: 2..255, forward?, backward?, displayEquation?, displayRSquared?}",
+            "{chart?, element: title|legend|dataLabels|dataTable|gridlines|axisTitles|axisTitle|smooth|trendline, on?: bool, position?: bottom|top|left|right (legend) | above|overlay (title: Above Chart, Centered Overlay) | show|center|insideEnd|insideBase|outsideEnd|bestFit|left|right|above|below|callout (dataLabels: Excel's Data Labels menu for the chart type; callout is Data Callout); axisTitle: axis: horizontal|vertical|secondaryVertical (Axis Titles ▸ Primary Horizontal / Primary Vertical / Secondary Vertical); dataTable: dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool; trendline: series?: index (default all), type?: linear|exponential|linearForecast|movingAverage|logarithmic|power|polynomial, order?: 2..6, period?: 2..255, forward?, backward?, displayEquation?, displayRSquared?}",
             has_doc,
             add_element
         ),

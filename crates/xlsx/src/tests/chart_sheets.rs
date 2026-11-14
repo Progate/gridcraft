@@ -203,3 +203,38 @@ fn high_and_low_points_are_saved_with_their_colours() {
     let sp = &back.sheet(0).unwrap().sparklines[0];
     assert!(sp.high && sp.low && sp.markers);
 }
+
+#[test]
+fn data_label_position_and_callout_are_written_and_read_back() {
+    let mut ch = chart(ChartKind::ColumnClustered);
+    ch.anchor = Anchor { cell: CellRef::new(0, 3), width: 480.0, height: 288.0, ..Anchor::default() };
+    ch.data_labels = true;
+    ch.label_parts.position = Some(gridcraft_model::LabelPos::InsideEnd);
+    let mut data = data_sheet();
+    data.charts.push(ch.clone());
+    let bytes = write_xlsx(&Workbook { sheets: vec![Arc::new(data)], ..Default::default() }).unwrap();
+    let x = part(&bytes, "xl/charts/chart1.xml");
+    assert!(x.contains(r#"<c:dLbls><c:dLblPos val="inEnd"/><c:showLegendKey val="0"/>"#), "{x}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    assert_eq!(back.sheet(0).unwrap().charts[0].label_parts.position, Some(gridcraft_model::LabelPos::InsideEnd));
+
+    // A Data Callout is the c15 label shape; it reads back as one.
+    ch.label_parts = gridcraft_model::LabelParts { category_name: true, callout: true, ..Default::default() };
+    let mut data = data_sheet();
+    data.charts.push(ch.clone());
+    let bytes = write_xlsx(&Workbook { sheets: vec![Arc::new(data)], ..Default::default() }).unwrap();
+    let x = part(&bytes, "xl/charts/chart1.xml");
+    assert!(x.contains(r#"<a:prstGeom prst="wedgeRectCallout">"#) && !x.contains("dLblPos"), "{x}");
+    let (back, _) = read_xlsx(&bytes).unwrap();
+    let parts = back.sheet(0).unwrap().charts[0].label_parts;
+    assert!(parts.callout && parts.category_name && parts.value);
+
+    // A position the chart type doesn't offer (Outside End on a stacked column) is not written:
+    // Excel would repair the file.
+    ch.kind = ChartKind::ColumnStacked;
+    ch.label_parts = gridcraft_model::LabelParts { position: Some(gridcraft_model::LabelPos::OutsideEnd), ..Default::default() };
+    let mut data = data_sheet();
+    data.charts.push(ch);
+    let bytes = write_xlsx(&Workbook { sheets: vec![Arc::new(data)], ..Default::default() }).unwrap();
+    assert!(!part(&bytes, "xl/charts/chart1.xml").contains("dLblPos"));
+}

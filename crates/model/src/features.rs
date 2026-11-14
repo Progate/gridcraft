@@ -676,9 +676,10 @@ impl HistogramBins {
     pub const MAX_COUNT: u32 = 1000;
 }
 
-/// Format Data Labels ▸ Label Options ▸ Label Contains: the parts of a data label (`c:dLbls`
-/// `showSerName`, `showCatName`, `showVal`, `showPercent`, `showLeaderLines`). The default is
-/// the value alone, with leader lines.
+/// Format Data Labels ▸ Label Options: the parts of a data label (`c:dLbls` `showSerName`,
+/// `showCatName`, `showVal`, `showPercent`, `showLeaderLines`), where it sits (`c:dLblPos`) and
+/// whether it is drawn as Excel's Data Callout. The default is the value alone, with leader lines,
+/// at the chart type's default position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LabelParts {
@@ -688,12 +689,129 @@ pub struct LabelParts {
     /// Pie and doughnut charts: each point's share of the total.
     pub percentage: bool,
     pub leader_lines: bool,
+    /// Label Position (`c:dLblPos`); `None` is the chart type's default, which Excel leaves unsaved.
+    pub position: Option<LabelPos>,
+    /// Add Chart Element ▸ Data Labels ▸ Data Callout (データの吹き出し): each label in a callout
+    /// box pointing at its point (`c15:spPr` with a `wedgeRectCallout` shape).
+    pub callout: bool,
 }
 
 impl Default for LabelParts {
     fn default() -> Self {
-        LabelParts { series_name: false, category_name: false, value: true, percentage: false, leader_lines: true }
+        LabelParts { series_name: false, category_name: false, value: true, percentage: false, leader_lines: true, position: None, callout: false }
     }
+}
+
+/// A data label's position (`c:dLblPos`, ST_DLblPos). Which ones a chart type offers is
+/// [`label_positions`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LabelPos {
+    /// 中央 (`ctr`)
+    Center,
+    /// 内側終点 / pie 内部外側 (`inEnd`)
+    InsideEnd,
+    /// 内側軸寄り (`inBase`)
+    InsideBase,
+    /// 外側終点 / pie 外部 (`outEnd`)
+    OutsideEnd,
+    /// 自動調整 (`bestFit`)
+    BestFit,
+    /// 左 (`l`)
+    Left,
+    /// 右 (`r`)
+    Right,
+    /// 上 (`t`)
+    Above,
+    /// 下 (`b`)
+    Below,
+}
+
+impl LabelPos {
+    /// Every position, in the order Excel's menus list them.
+    pub const ALL: [LabelPos; 9] = [
+        LabelPos::Center,
+        LabelPos::InsideEnd,
+        LabelPos::InsideBase,
+        LabelPos::OutsideEnd,
+        LabelPos::BestFit,
+        LabelPos::Left,
+        LabelPos::Right,
+        LabelPos::Above,
+        LabelPos::Below,
+    ];
+
+    /// The `c:dLblPos` value.
+    pub fn xml(self) -> &'static str {
+        match self {
+            LabelPos::Center => "ctr",
+            LabelPos::InsideEnd => "inEnd",
+            LabelPos::InsideBase => "inBase",
+            LabelPos::OutsideEnd => "outEnd",
+            LabelPos::BestFit => "bestFit",
+            LabelPos::Left => "l",
+            LabelPos::Right => "r",
+            LabelPos::Above => "t",
+            LabelPos::Below => "b",
+        }
+    }
+
+    pub fn from_xml(v: &str) -> Option<LabelPos> {
+        LabelPos::ALL.into_iter().find(|p| p.xml() == v.trim())
+    }
+
+    /// The command parameter name (`center`, `insideEnd`, …).
+    pub fn id(self) -> &'static str {
+        match self {
+            LabelPos::Center => "center",
+            LabelPos::InsideEnd => "insideEnd",
+            LabelPos::InsideBase => "insideBase",
+            LabelPos::OutsideEnd => "outsideEnd",
+            LabelPos::BestFit => "bestFit",
+            LabelPos::Left => "left",
+            LabelPos::Right => "right",
+            LabelPos::Above => "above",
+            LabelPos::Below => "below",
+        }
+    }
+
+    pub fn from_id(v: &str) -> Option<LabelPos> {
+        LabelPos::ALL.into_iter().find(|p| p.id() == v)
+    }
+}
+
+/// The label positions Add Chart Element ▸ Data Labels offers for a chart type, as Excel's menu
+/// does: a clustered column or bar has Outside End, a stacked one does not; lines, scatter and
+/// bubble charts place labels around the point; pies add Best Fit. Types whose labels have one
+/// place (area, doughnut, radar, the newer chart types, combos) offer none: they show or hide,
+/// and Excel rejects a `c:dLblPos` on them.
+pub fn label_positions(kind: ChartKind) -> &'static [LabelPos] {
+    use LabelPos::*;
+    match kind {
+        ChartKind::ColumnClustered | ChartKind::BarClustered => &[Center, InsideEnd, InsideBase, OutsideEnd],
+        ChartKind::ColumnStacked | ChartKind::ColumnStacked100 | ChartKind::BarStacked | ChartKind::BarStacked100 => &[Center, InsideEnd, InsideBase],
+        ChartKind::Line | ChartKind::LineMarkers | ChartKind::LineStacked | ChartKind::Scatter | ChartKind::ScatterLines | ChartKind::Bubble => {
+            &[Center, Left, Right, Above, Below]
+        }
+        ChartKind::Pie => &[Center, InsideEnd, OutsideEnd, BestFit],
+        _ => &[],
+    }
+}
+
+/// Whether Add Chart Element ▸ Data Labels offers Data Callout (データの吹き出し) for a chart type:
+/// the classic chart types, not the newer ones (waterfall, funnel, treemap…) or a stock chart.
+pub fn supports_label_callout(kind: ChartKind) -> bool {
+    !matches!(
+        kind,
+        ChartKind::Histogram
+            | ChartKind::Waterfall
+            | ChartKind::Funnel
+            | ChartKind::Treemap
+            | ChartKind::Sunburst
+            | ChartKind::BoxWhisker
+            | ChartKind::Stock
+            | ChartKind::Combo
+    )
 }
 
 /// Alternative text of a drawing object (Excel's Alt Text pane), stored on the object's
@@ -765,6 +883,17 @@ impl Chart {
     /// The chart style id saved in the chart's style part: the chosen one, or the type's Style 1.
     pub fn chart_style_id(&self) -> Option<u32> {
         self.chart_style.or_else(|| chart_style_family(self.kind).map(|(first, _)| first))
+    }
+
+    /// The data labels' position while it is one the chart type offers: a position kept from
+    /// another chart type (after Change Chart Type) falls back to the type's default.
+    pub fn label_position(&self) -> Option<LabelPos> {
+        self.label_parts.position.filter(|p| label_positions(self.kind).contains(p))
+    }
+
+    /// Whether the data labels are drawn as Data Callouts.
+    pub fn label_callout(&self) -> bool {
+        self.data_labels && self.label_parts.callout && supports_label_callout(self.kind)
     }
 
     /// Data tables belong to category-axis column, bar, line and area charts.

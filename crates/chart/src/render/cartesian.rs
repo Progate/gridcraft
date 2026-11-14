@@ -1,10 +1,12 @@
+use gridcraft_model::LabelPos;
+
 use super::frame::{Bx, CatAxis, ValAxis, frame, on, value_range};
 use super::legend::{cat_label, plot_kind};
 use super::lines::{decimate_area, draw_markers, draw_runs};
 use super::trend::{draw_trend_labels, draw_trendlines, max_backward, max_forward, max_forward_slots, supports_trendline};
 use super::{
-    Chart, ChartData, ChartKind, Ctx, Fmt, HAlign, LABEL_SIZE, MAX_CATS, MAX_LABELS, MAX_LINE_PTS, MAX_MARKERS, MIN_BAR_PX, Prim, Rgba, Scale,
-    SeriesData, TEXT, VAlign, WHITE, clean, nice_scale,
+    Chart, ChartData, ChartKind, Ctx, Fmt, HAlign, MAX_CATS, MAX_LABELS, MAX_LINE_PTS, MAX_MARKERS, MIN_BAR_PX, Prim, Rgba, Scale, SeriesData, TEXT,
+    VAlign, WHITE, clean, nice_scale,
 };
 
 // ---------------------------------------------------------------- cartesian (column/bar/line/area/combo)
@@ -153,6 +155,61 @@ impl BarSink {
             m.draw(ctx, self.bw, self.horizontal, self.color, band);
         }
     }
+}
+
+/// A column or bar's data label at `at` (Center, Inside End, Inside Base or Outside End). `ends`
+/// are the bar's base and tip along the value axis in pixels, `cross` its centre across it; the
+/// tip is the end away from the axis, so a negative value's labels mirror a positive one's.
+#[allow(clippy::too_many_arguments)]
+fn bar_label(ctx: &mut Ctx, horizontal: bool, cross: f32, (base, tip): (f32, f32), t: &str, at: LabelPos, fill: Rgba, callout: bool) {
+    // +1 when the bar grows toward larger pixel coordinates (rightward, or downward on a column).
+    let dir = if tip >= base { 1.0 } else { -1.0 };
+    // Where the label sits along the bar and which way its text runs from there.
+    let (along, run, inside) = match at {
+        LabelPos::Center => ((base + tip) / 2.0, 0.0, true),
+        LabelPos::InsideEnd => (tip - dir * 2.0, -dir, true),
+        LabelPos::InsideBase => (base + dir * 2.0, dir, true),
+        _ => (tip + dir * 3.0, dir, false),
+    };
+    let color = if inside && !callout { on(fill) } else { TEXT };
+    let (x, y, align) = if horizontal {
+        let h = if run > 0.0 {
+            HAlign::Left
+        } else if run < 0.0 {
+            HAlign::Right
+        } else {
+            HAlign::Center
+        };
+        (along, cross, (h, VAlign::Middle))
+    } else {
+        let v = if run > 0.0 {
+            VAlign::Top
+        } else if run < 0.0 {
+            VAlign::Bottom
+        } else {
+            VAlign::Middle
+        };
+        (cross, along, (HAlign::Center, v))
+    };
+    let point = if horizontal { [tip, cross] } else { [cross, tip] };
+    // A callout outside the bar points back at the bar's end; one inside has nowhere to point.
+    let callout = callout.then_some(if inside { [x, y] } else { point });
+    ctx.data_label(x, y, t, color, align, callout);
+}
+
+/// A line, scatter or bubble point's data label at `at` (Center, Left, Right, Above or Below; any
+/// other is Above, GridCraft's default for these). `gap` is the room the marker takes.
+fn point_label(ctx: &mut Ctx, p: [f32; 2], t: &str, at: LabelPos, callout: bool, gap: f32) {
+    let (x, y, align) = match at {
+        LabelPos::Center => (p[0], p[1], (HAlign::Center, VAlign::Middle)),
+        LabelPos::Left => (p[0] - gap, p[1], (HAlign::Right, VAlign::Middle)),
+        LabelPos::Right => (p[0] + gap, p[1], (HAlign::Left, VAlign::Middle)),
+        LabelPos::Below => (p[0], p[1] + gap, (HAlign::Center, VAlign::Top)),
+        _ => (p[0], p[1] - gap, (HAlign::Center, VAlign::Bottom)),
+    };
+    // A callout stands off a little further, so its pointer shows.
+    let (x, y) = if callout && at != LabelPos::Center { (x + (x - p[0]) * 1.5, y + (y - p[1]) * 1.5) } else { (x, y) };
+    ctx.data_label(x, y, t, TEXT, align, callout.then_some(p));
 }
 
 fn series_spans(data: &ChartData, fams: &[Fam], sec: &[bool], ncat: usize) -> Vec<Vec<Option<(f64, f64)>>> {
@@ -395,27 +452,11 @@ pub(super) fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx
                         sink.bar(ctx, cull, c, lo, len);
                         if labels_on && let Some(v) = s.values.get(j).copied().flatten() {
                             let t = fmt.format(v, None);
-                            let stacked = fam != Fam::Col;
-                            let mid = (pb + pt) / 2.0;
-                            if horizontal {
-                                let y = c + nslots * bw / 2.0 - (k + 0.5) * bw;
-                                if stacked {
-                                    ctx.text(mid, y, &t, LABEL_SIZE, on(s.color), (HAlign::Center, VAlign::Middle));
-                                } else if v >= 0.0 {
-                                    ctx.text(pb.max(pt) + 3.0, y, &t, LABEL_SIZE, TEXT, (HAlign::Left, VAlign::Middle));
-                                } else {
-                                    ctx.text(lo - 3.0, y, &t, LABEL_SIZE, TEXT, (HAlign::Right, VAlign::Middle));
-                                }
-                            } else {
-                                let x = c - nslots * bw / 2.0 + (k + 0.5) * bw;
-                                if stacked {
-                                    ctx.text(x, mid, &t, LABEL_SIZE, on(s.color), (HAlign::Center, VAlign::Middle));
-                                } else if v >= 0.0 {
-                                    ctx.text(x, lo - 2.0, &t, LABEL_SIZE, TEXT, (HAlign::Center, VAlign::Bottom));
-                                } else {
-                                    ctx.text(x, lo + len + 2.0, &t, LABEL_SIZE, TEXT, (HAlign::Center, VAlign::Top));
-                                }
-                            }
+                            // Excel's defaults: Outside End on a clustered column, Center on a stacked one.
+                            let default = if fam == Fam::Col { LabelPos::OutsideEnd } else { LabelPos::Center };
+                            let at = chart.label_position().unwrap_or(default);
+                            let cross = if horizontal { c + nslots * bw / 2.0 - (k + 0.5) * bw } else { c - nslots * bw / 2.0 + (k + 0.5) * bw };
+                            bar_label(ctx, horizontal, cross, (pb, pt), &t, at, s.color, chart.label_callout());
                         }
                     }
                     sink.finish(ctx);
@@ -428,9 +469,10 @@ pub(super) fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx
                         draw_markers(ctx, pts.iter().flatten().copied(), 3.5, s.color);
                     }
                     if labels_on {
+                        let at = chart.label_position().unwrap_or(LabelPos::Above);
                         for (j, p) in pts.iter().enumerate() {
                             if let (Some(p), Some(v)) = (p, s.values.get(j).copied().flatten()) {
-                                ctx.text(p[0], p[1] - 5.0, &fmt.format(v, None), LABEL_SIZE, TEXT, (HAlign::Center, VAlign::Bottom));
+                                point_label(ctx, *p, &fmt.format(v, None), at, chart.label_callout(), 5.0);
                             }
                         }
                     }
@@ -438,7 +480,9 @@ pub(super) fn cartesian(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx
             }
         }
         for (x, y, t) in area_labels.drain(..) {
-            ctx.text(x, y, &t, LABEL_SIZE, TEXT, (HAlign::Center, VAlign::Bottom));
+            let callout = chart.label_callout().then_some([x, y + 5.0]);
+            let y = if callout.is_some() { y - 8.0 } else { y };
+            ctx.data_label(x, y, &t, TEXT, (HAlign::Center, VAlign::Bottom), callout);
         }
     }
     // Trendlines on top: x is the category number 1..n.
@@ -537,9 +581,10 @@ pub(super) fn scatter(ctx: &mut Ctx, chart: &Chart, data: &ChartData, area: Bx) 
             }
         }
         if chart.data_labels && pts.len() <= MAX_LABELS {
+            let at = chart.label_position().unwrap_or(LabelPos::Above);
             for (p, raw) in px.iter().zip(pts) {
                 if let (Some(p), Some((_, y))) = (p, raw) {
-                    ctx.text(p[0], p[1] - 6.0, &fy.format(*y, None), LABEL_SIZE, TEXT, (HAlign::Center, VAlign::Bottom));
+                    point_label(ctx, *p, &fy.format(*y, None), at, chart.label_callout(), 6.0);
                 }
             }
         }
