@@ -354,7 +354,7 @@ fn handle_column_header_press(app: &mut SheetApp, input: &InteractionInput<'_>, 
             app.grid.filter_menu = Some((c, h.header_row, geo.mirror_pos(p)));
             return;
         }
-        if point_header(app, wb, sh, RangeRef::cols(c, c), mods.shift, mods.command) {
+        if point_header(app, wb, RangeRef::cols(c, c), mods.shift, mods.command) {
             point_header_first_move(app, input);
             return;
         }
@@ -386,7 +386,7 @@ fn handle_row_header_press(app: &mut SheetApp, input: &InteractionInput<'_>, p: 
             return;
         }
         let r = geo.row_at(sh, p.y);
-        if point_header(app, wb, sh, RangeRef::rows(r, r), mods.shift, mods.command) {
+        if point_header(app, wb, RangeRef::rows(r, r), mods.shift, mods.command) {
             point_header_first_move(app, input);
             return;
         }
@@ -480,11 +480,7 @@ fn handle_press(app: &mut SheetApp, input: &InteractionInput<'_>) {
         };
         let range = RangeRef::new(anchor, c);
         let text = if range.is_single() { c.a1() } else { range.a1() };
-        let sheet_name = (ed.sheet != wb.active_sheet()).then(|| sh.name.clone());
-        let r = match sheet_name {
-            Some(n) => format!("{}!{text}", gridcraft_engine::formula::quote_sheet(&n)),
-            None => text,
-        };
+        let r = format!("{}{text}", ed.ref_prefix(wb));
         if mods.command && !mods.shift {
             ed.append_ref(&r);
         } else {
@@ -850,7 +846,7 @@ fn format_painter_apply(app: &mut SheetApp) {
 
 /// Point mode on a header: inserts a whole-row or whole-column reference instead of selecting,
 /// and dragging on from there extends it.
-fn point_header(app: &mut SheetApp, wb: &Workbook, sh: &Sheet, range: RangeRef, extend: bool, add: bool) -> bool {
+fn point_header(app: &mut SheetApp, wb: &Workbook, range: RangeRef, extend: bool, add: bool) -> bool {
     let Some(ed) = app.editor.as_mut().filter(|ed| ed.can_point()) else { return false };
     let edit_sheet = ed.sheet;
     let active_sheet = wb.active_sheet();
@@ -875,7 +871,7 @@ fn point_header(app: &mut SheetApp, wb: &Workbook, sh: &Sheet, range: RangeRef, 
     } else {
         range
     };
-    let reference = header_reference(ed, wb, sh, range);
+    let reference = header_reference(ed, wb, range);
     if add {
         ed.append_ref(&reference);
     } else {
@@ -893,9 +889,8 @@ fn point_header(app: &mut SheetApp, wb: &Workbook, sh: &Sheet, range: RangeRef, 
     true
 }
 
-fn header_reference(ed: &EditState, wb: &Workbook, sh: &Sheet, range: RangeRef) -> String {
-    let reference = range.a1();
-    if ed.sheet != wb.active_sheet() { format!("{}!{reference}", gridcraft_engine::formula::quote_sheet(&sh.name)) } else { reference }
+fn header_reference(ed: &EditState, wb: &Workbook, range: RangeRef) -> String {
+    format!("{}{}", ed.ref_prefix(wb), range.a1())
 }
 
 /// The frame that starts a drag reports no `dragged()`, so its movement is applied here.
@@ -925,7 +920,7 @@ fn point_header_to(app: &mut SheetApp, geo: &Geo, sh: &Sheet, wb: &Workbook, dra
         _ => return,
     };
     let Some(ed) = app.editor.as_mut().filter(|ed| ed.point_at_caret()) else { return };
-    let reference = header_reference(ed, wb, sh, range);
+    let reference = header_reference(ed, wb, range);
     ed.insert_ref(&reference);
     ed.point_cell = Some(pointer);
     ed.point_anchor = Some((wb.active_sheet(), opposite));
@@ -944,7 +939,7 @@ fn select_to_pointer(app: &mut SheetApp, geo: &Geo, sh: &Sheet, wb: &Workbook, p
         if let Some(start) = ed.point_anchor.filter(|(sheet, _)| *sheet == wb.active_sheet()).map(|(_, cell)| cell).or(ed.point_cell) {
             let range = RangeRef::new(start, cell);
             let text = if range.is_single() { range.start.a1() } else { range.a1() };
-            let text = if ed.sheet != wb.active_sheet() { format!("{}!{text}", gridcraft_engine::formula::quote_sheet(&sh.name)) } else { text };
+            let text = format!("{}{text}", ed.ref_prefix(wb));
             ed.insert_ref(&text);
             ed.point_cell = Some(cell);
             ed.point_anchor = Some((wb.active_sheet(), start));
@@ -1180,7 +1175,7 @@ pub fn point_move(app: &mut SheetApp, ed: &mut EditState, dr: i64, dc: i64, exte
         to
     };
     let text = if extend { RangeRef::new(anchor, to).a1() } else { to.a1() };
-    let text = if ed.sheet != d.wb.active_sheet() { format!("{}!{text}", gridcraft_engine::formula::quote_sheet(&sheet.name)) } else { text };
+    let text = format!("{}{text}", ed.ref_prefix(&d.wb));
     let sheet = d.wb.active_sheet();
     ed.insert_ref(&text);
     ed.point_cell = Some(to);

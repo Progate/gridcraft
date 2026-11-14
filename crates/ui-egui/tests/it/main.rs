@@ -116,6 +116,7 @@ mod selection_fill;
 mod selection_glide;
 mod selection_scroll;
 mod sheet_navigator;
+mod sheet_span_pointing;
 mod sheet_tab_rename;
 mod sheet_tabs;
 mod show_objects;

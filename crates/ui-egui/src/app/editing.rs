@@ -265,6 +265,7 @@ impl SheetApp {
             ed.sheet = sheet;
             ed.sheet_order = order;
             ed.point_anchor = None;
+            ed.point_span = None;
         }
     }
 

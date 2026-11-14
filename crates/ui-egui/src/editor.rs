@@ -44,6 +44,9 @@ pub struct EditState {
     pub point_cell: Option<CellRef>,
     /// The fixed range anchor and its sheet while pointing with the mouse or keyboard.
     pub point_anchor: Option<(usize, CellRef)>,
+    /// A 3-D span of sheets (first and last sheet index) chosen by Shift-clicking a sheet tab while
+    /// pointing, as in Excel: the references pointed at next read `First:Last!B2`.
+    pub point_span: Option<(usize, usize)>,
     pub autocomplete: Vec<String>,
     pub ac_index: usize,
     pub request_focus: bool,
@@ -91,6 +94,7 @@ impl EditState {
             point: None,
             point_cell: None,
             point_anchor: None,
+            point_span: None,
             autocomplete: vec![],
             ac_index: 0,
             request_focus: true,
@@ -148,6 +152,7 @@ impl EditState {
         self.point = None;
         self.point_cell = None;
         self.point_anchor = None;
+        self.point_span = None;
         self.autocomplete.clear();
         self.completion = None;
         self.caret = self.text.chars().count();
@@ -194,6 +199,25 @@ impl EditState {
 
     pub fn point_at_caret(&self) -> bool {
         self.point.is_some_and(|(start, end)| end == self.byte_caret() && self.text.get(start..end).is_some())
+    }
+
+    /// The sheet part a reference pointed at on the active sheet starts with: `First:Last!` while
+    /// a 3-D span is chosen, the active sheet's name when it isn't the draft's own sheet, else
+    /// nothing. Quoted as Excel quotes it.
+    pub fn ref_prefix(&self, wb: &gridcraft_engine::model::Workbook) -> String {
+        let active = wb.active_sheet();
+        if let Some((a, b)) = self.point_span
+            && a != b
+            && let (Some(first), Some(last)) = (wb.sheet(a), wb.sheet(b))
+        {
+            let quote = gridcraft_engine::core::sheet_needs_quotes;
+            let joined = format!("{}:{}", first.name, last.name);
+            return if quote(&first.name) || quote(&last.name) { format!("'{}'!", joined.replace('\'', "''")) } else { format!("{joined}!") };
+        }
+        match wb.sheet(active) {
+            Some(sh) if self.sheet != active => format!("{}!", gridcraft_engine::formula::quote_sheet(&sh.name)),
+            _ => String::new(),
+        }
     }
 
     /// Inserts (or replaces the last pointed) reference text at the caret.

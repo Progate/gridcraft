@@ -31,13 +31,36 @@ fn edge_sheet(sheets: &[Arc<Sheet>], last: bool) -> Option<usize> {
 /// Switch to sheet `i` from the tab strip or the navigator. In point mode the formula being typed keeps going on the
 /// other sheet; otherwise the edit is committed first.
 fn activate_sheet(app: &mut SheetApp, i: usize) {
-    if app.editor.as_ref().is_some_and(|e| e.can_point()) {
+    if let Some(ed) = app.editor.as_mut().filter(|e| e.can_point()) {
+        // A plain click leaves a 3-D span: the next reference names this one sheet.
+        ed.point_span = None;
         let _ = app.session.run("sheet.activate", json!({"sheet": i}));
     } else {
         if app.editor.is_some() && !app.commit_edit(0, 0, false, false) {
             return;
         }
         app.run_or_alert("sheet.activate", json!({"sheet": i}));
+    }
+}
+
+/// Shift-clicking tab `i` while a formula points at references, as Excel does: instead of grouping
+/// the sheets it spans them, from the active sheet to `i` in tab order, so the reference pointed
+/// at reads `First:Last!B2` (a 3-D reference). A reference already pointed at takes the span.
+fn point_sheet_span(app: &mut SheetApp, i: usize) {
+    let Some(d) = app.session.active() else { return };
+    let active = d.wb.active_sheet();
+    let span = (active.min(i), active.max(i));
+    let Some(ed) = app.editor.as_mut() else { return };
+    ed.point_span = Some(span);
+    ed.request_focus = true;
+    if ed.point_at_caret()
+        && let Some(cell) = ed.point_cell
+    {
+        let anchor = ed.point_anchor.filter(|(sheet, _)| *sheet == active).map_or(cell, |(_, a)| a);
+        let range = gridcraft_engine::core::RangeRef::new(anchor, cell);
+        let text = if range.is_single() { cell.a1() } else { range.a1() };
+        let reference = format!("{}{text}", ed.ref_prefix(&d.wb));
+        ed.insert_ref(&reference);
     }
 }
 
@@ -309,7 +332,10 @@ pub fn sheet_tabs(app: &mut SheetApp, ui: &mut Ui) {
                                     // A right-click activates the tab too, as in Excel, so the menu's sheet commands (Protect
                                     // Sheet, Select All Sheets) act on the sheet that was clicked rather than the one that was active.
                                     let mods = ui.input(|inp| inp.modifiers);
-                                    if resp.clicked() && (mods.command || mods.shift) {
+                                    let pointing = app.editor.as_ref().is_some_and(|e| e.can_point());
+                                    if resp.clicked() && mods.shift && !mods.command && pointing {
+                                        point_sheet_span(app, i);
+                                    } else if resp.clicked() && (mods.command || mods.shift) {
                                         if let Some(params) = tab_selection_click(&selected, &visible, active_index, i, mods.shift)
                                             && (app.editor.is_none() || app.commit_edit(0, 0, false, false))
                                         {
