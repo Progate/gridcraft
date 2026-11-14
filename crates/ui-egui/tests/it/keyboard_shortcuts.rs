@@ -405,3 +405,16 @@ fn f4_while_editing_a_formula_still_cycles_the_reference() {
     key(&mut h, Key::F4, Modifiers::NONE);
     assert_eq!(editor_text(&h).as_deref(), Some("=$A$1"));
 }
+
+#[test]
+fn ctrl_t_and_ctrl_l_open_create_table_on_the_current_region_and_ok_makes_the_table() {
+    for k in [Key::T, Key::L] {
+        let mut h = harness(book("A2"));
+        key(&mut h, k, CTRL);
+        let d = h.state().dialog.as_ref().expect("Create Table opens");
+        assert_eq!(d.name, "createTable", "Ctrl+{k:?}");
+        assert_eq!(d.values["range"], "=$A$1:$C$3", "Ctrl+{k:?} fills in the current region, as Excel shows it");
+        key(&mut h, Key::Enter, Modifiers::NONE);
+        assert_eq!(h.state().session.active().unwrap().wb.active().unwrap().tables.len(), 1, "Ctrl+{k:?} then Enter");
+    }
+}

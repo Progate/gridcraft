@@ -23,6 +23,14 @@ This branch builds GridCraft for [BrowserOS](https://github.com/Progate/packages
   out on WASI as on the web. BrowserOS gets new builds through `@progate/browser-sheet`.
 - **The community link can be turned off** (`Chrome::community_links`): the Discord link in the About dialog.
 
+## Shortcuts the browser keeps
+
+Keys reach GridCraft through the page's `keydown` events, so a shortcut the browser reserves never arrives. Chrome
+and Edge on Windows and Linux keep Ctrl+T (new tab), Ctrl+N and Ctrl+W, whatever the page does; Ctrl+L does arrive
+(the page stops its default, focusing the address bar). So Create Table is **Ctrl+L** there, which Excel also
+accepts; Ctrl+T works on macOS, where the browser's own shortcut is ⌘T, and in the native app. GridCraft binds
+both, as Excel does (`crates/ui-egui/src/keymap.rs`, `ribbon/shortcuts.rs`).
+
 ## Keeping up with upstream
 
 The branch is upstream `main` plus these changes as one commit, then Progate's own feature commits. To move to a
