@@ -1295,7 +1295,7 @@ fn keytip_nq_() {
 #[test]
 fn keytip_nr_() {
     let mut h = harness(blank());
-    // The dialog previews chart types for the selected data, so the sheet needs some.
+    // The dialog works on a block of selected data (Recommended Charts previews it; Group asks for its rows or columns).
     h.state_mut()
         .session
         .execute("range.setValues", serde_json::json!({"range": "A1", "values": [["Fruit", "Sales"], ["Apples", 5], ["Pears", 3]]}))
@@ -2043,8 +2043,14 @@ fn keytip_aga_() {
 #[test]
 fn keytip_agg_() {
     let mut h = harness(blank());
+    // The dialog works on a block of selected data (Recommended Charts previews it; Group asks for its rows or columns).
+    h.state_mut()
+        .session
+        .execute("range.setValues", serde_json::json!({"range": "A1", "values": [["Fruit", "Sales"], ["Apples", 5], ["Pears", 3]]}))
+        .unwrap();
+    h.state_mut().session.execute("selection.set", serde_json::json!({"range": "A1:B3"})).unwrap();
     sequence(&mut h, "AGG", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.group"), "AGG must journal data.group");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("groupLines"), "AGG must open the groupLines dialog");
 }
 
 #[test]
@@ -2296,8 +2302,14 @@ fn keytip_auc_() {
 #[test]
 fn keytip_auu_() {
     let mut h = harness(blank());
+    // The dialog works on a block of selected data (Recommended Charts previews it; Group asks for its rows or columns).
+    h.state_mut()
+        .session
+        .execute("range.setValues", serde_json::json!({"range": "A1", "values": [["Fruit", "Sales"], ["Apples", 5], ["Pears", 3]]}))
+        .unwrap();
+    h.state_mut().session.execute("selection.set", serde_json::json!({"range": "A1:B3"})).unwrap();
     sequence(&mut h, "AUU", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.ungroup"), "AUU must journal data.ungroup");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("ungroupLines"), "AUU must open the ungroupLines dialog");
 }
 
 #[test]
@@ -2982,15 +2994,27 @@ fn keytip_ds_() {
 #[test]
 fn keytip_dgg_() {
     let mut h = harness(blank());
+    // The dialog works on a block of selected data (Recommended Charts previews it; Group asks for its rows or columns).
+    h.state_mut()
+        .session
+        .execute("range.setValues", serde_json::json!({"range": "A1", "values": [["Fruit", "Sales"], ["Apples", 5], ["Pears", 3]]}))
+        .unwrap();
+    h.state_mut().session.execute("selection.set", serde_json::json!({"range": "A1:B3"})).unwrap();
     sequence(&mut h, "DGG", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.group"), "DGG must journal data.group");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("groupLines"), "DGG must open the groupLines dialog");
 }
 
 #[test]
 fn keytip_dgu_() {
     let mut h = harness(blank());
+    // The dialog works on a block of selected data (Recommended Charts previews it; Group asks for its rows or columns).
+    h.state_mut()
+        .session
+        .execute("range.setValues", serde_json::json!({"range": "A1", "values": [["Fruit", "Sales"], ["Apples", 5], ["Pears", 3]]}))
+        .unwrap();
+    h.state_mut().session.execute("selection.set", serde_json::json!({"range": "A1:B3"})).unwrap();
     sequence(&mut h, "DGU", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "data.ungroup"), "DGU must journal data.ungroup");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("ungroupLines"), "DGU must open the ungroupLines dialog");
 }
 
 #[test]

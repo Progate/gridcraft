@@ -117,6 +117,7 @@ mod show_objects;
 mod shrink_to_fit;
 mod sort_dialog_columns;
 mod status_bar_menu;
+mod subtotal_dialog;
 mod support;
 mod symbol_glyphs;
 mod system_theme;

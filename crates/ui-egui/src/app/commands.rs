@@ -138,6 +138,17 @@ impl SheetApp {
         if id == "data.consolidate" && params.get("sources").is_none_or(Json::is_null) {
             return self.open_dialog("consolidate", params);
         }
+        // Group / Ungroup on a block of cells (not whole rows or columns) ask whether to group its
+        // rows or its columns, as Excel's dialog does; programmatic callers of `run` group rows.
+        if matches!(id, "data.group" | "data.ungroup")
+            && ["rows", "cols", "by", "sheet"].iter().all(|k| params.get(*k).is_none_or(Json::is_null))
+            && self.session.active().is_some_and(|d| {
+                let r = d.selection.current();
+                d.selection.ranges.len() == 1 && !r.is_full_rows() && !r.is_full_cols()
+            })
+        {
+            return self.open_dialog(if id == "data.group" { "groupLines" } else { "ungroupLines" }, json!({}));
+        }
         // Switch Windows with no window named (key tip, command search) opens the View tab's
         // list to choose from; programmatic callers of `run` get the list back.
         if id == "view.switchWindows" && ["window", "doc"].iter().all(|k| params.get(*k).is_none_or(Json::is_null)) {

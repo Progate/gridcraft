@@ -677,9 +677,7 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Chart", "グラフ"),
     ("Line chart", "折れ線グラフ"),
     ("Column chart", "縦棒グラフ"),
-    ("At each change in (column letter):", "基準 (列記号):"),
     ("Use function", "集計の方法"),
-    ("Add subtotal to (columns, e.g. C,D):", "集計するフィールド (列、例: C,D):"),
     ("Magnification", "倍率"),
     ("Custom (%):", "ユーザー設定 (%):"),
     ("Scope (Workbook or sheet name):", "範囲 (ブックまたはシート名):"),
@@ -2332,6 +2330,35 @@ const CONSOLIDATE: &[(&str, &str)] = &[
     ("Add the ranges to consolidate to All references.", "統合する範囲を [統合元] に追加してください。"),
 ];
 
+/// Data ▸ Outline as Japanese Excel words it: the Subtotal dialog (集計の設定) and the Group /
+/// Ungroup question on a block of cells.
+const OUTLINE: &[(&str, &str)] = &[
+    ("Subtotal|Subtotal", "集計の設定"),
+    ("Subtotal|At each change in:", "グループの基準:"),
+    ("Subtotal|Use function:", "集計の方法:"),
+    ("Subtotal|Add subtotal to:", "集計するフィールド:"),
+    ("Subtotal|Replace current subtotals", "現在の小計をすべて置き換える"),
+    ("Subtotal|Page break between groups", "グループごとに改ページを挿入する"),
+    ("Subtotal|Summary below data", "集計行をデータの下に挿入する"),
+    ("Subtotal|Remove All", "すべて削除"),
+    ("Subtotal|Sum", "合計"),
+    ("Subtotal|Count", "データの個数"),
+    ("Subtotal|Average", "平均"),
+    ("Subtotal|Max", "最大値"),
+    ("Subtotal|Min", "最小値"),
+    ("Subtotal|Product", "積"),
+    ("Subtotal|Count Numbers", "数値の個数"),
+    ("Subtotal|StdDev", "標本標準偏差"),
+    ("Subtotal|StdDevp", "標準偏差"),
+    ("Subtotal|Var", "標本分散"),
+    ("Subtotal|Varp", "分散"),
+    ("Choose at least one column to add a subtotal to.", "集計するフィールドを 1 つ以上選んでください。"),
+    ("Group|Group", "グループ化"),
+    ("Ungroup|Ungroup", "グループ解除"),
+    ("Group|Rows", "行"),
+    ("Group|Columns", "列"),
+];
+
 /// Engine messages with one varying part, `{}`: the part is translated by the catalog when it
 /// knows it, else kept.
 const MESSAGE_TEMPLATES: &[(&str, &str)] = &[
@@ -2370,6 +2397,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         .chain(CONDITIONAL_FORMATTING)
         .chain(FORMAT_CELLS)
         .chain(CONSOLIDATE)
+        .chain(OUTLINE)
         .find(|(english, _)| *english == text)
         .map(|(_, translated)| *translated)
 }
@@ -2460,10 +2488,24 @@ mod tests {
     #[test]
     fn consolidate_labels_are_their_own() {
         let others: HashSet<&str> = catalog_keys()
-            .chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).chain(FORMAT_CELLS).map(|(english, _)| *english))
+            .chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).chain(FORMAT_CELLS).chain(OUTLINE).map(|(english, _)| *english))
             .collect();
         let mut seen = HashSet::new();
         for (english, japanese) in CONSOLIDATE {
+            assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
+            assert!(!others.contains(english), "{english:?} is already in another list");
+            assert!(seen.insert(*english), "duplicate key: {english:?}");
+            assert_eq!(translate(english), Some(*japanese));
+        }
+    }
+
+    #[test]
+    fn outline_labels_are_their_own() {
+        let others: HashSet<&str> = catalog_keys()
+            .chain(EXTRA.iter().chain(AUTOFILTER).chain(CONDITIONAL_FORMATTING).chain(FORMAT_CELLS).chain(CONSOLIDATE).map(|(english, _)| *english))
+            .collect();
+        let mut seen = HashSet::new();
+        for (english, japanese) in OUTLINE {
             assert!(!japanese.trim().is_empty(), "empty translation for {english:?}");
             assert!(!others.contains(english), "{english:?} is already in another list");
             assert!(seen.insert(*english), "duplicate key: {english:?}");

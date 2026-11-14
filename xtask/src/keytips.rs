@@ -20,7 +20,8 @@ const ENV_SENSITIVE: &[&str] = &["review.spelling"];
 
 /// Commands that the UI turns into a dialog when invoked menu-style with no params (the engine
 /// command itself errors without them). Never probed; their tests assert the dialog opens.
-const UI_DIALOG_COMMANDS: &[(&str, &str)] = &[("insert.recommendedCharts", "recommendedCharts")];
+const UI_DIALOG_COMMANDS: &[(&str, &str)] =
+    &[("insert.recommendedCharts", "recommendedCharts"), ("data.group", "groupLines"), ("data.ungroup", "ungroupLines")];
 
 /// Format generated source through `rustfmt` so the checked-in file matches
 /// the emitter byte-for-byte.
@@ -305,7 +306,7 @@ fn render_tests(entries: &[Entry], probe: &Probe) -> String {
             "command" if UI_DIALOG_COMMANDS.iter().any(|(c, _)| *c == e.target) => {
                 let dialog = UI_DIALOG_COMMANDS.iter().find(|(c, _)| *c == e.target).map_or("", |(_, d)| d);
                 format!(
-                    "// The dialog previews chart types for the selected data, so the sheet needs some.\n    h.state_mut().session.execute(\"range.setValues\", serde_json::json!({{\"range\": \"A1\", \"values\": [[\"Fruit\", \"Sales\"], [\"Apples\", 5], [\"Pears\", 3]]}})).unwrap();\n    h.state_mut().session.execute(\"selection.set\", serde_json::json!({{\"range\": \"A1:B3\"}})).unwrap();\n    sequence(&mut h, {seq:?}, false);\n    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some({dialog:?}), \"{seq} must open the {dialog} dialog\");",
+                    "// The dialog works on a block of selected data (Recommended Charts previews it; Group asks for its rows or columns).\n    h.state_mut().session.execute(\"range.setValues\", serde_json::json!({{\"range\": \"A1\", \"values\": [[\"Fruit\", \"Sales\"], [\"Apples\", 5], [\"Pears\", 3]]}})).unwrap();\n    h.state_mut().session.execute(\"selection.set\", serde_json::json!({{\"range\": \"A1:B3\"}})).unwrap();\n    sequence(&mut h, {seq:?}, false);\n    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some({dialog:?}), \"{seq} must open the {dialog} dialog\");",
                     seq = e.seq,
                 )
             }
