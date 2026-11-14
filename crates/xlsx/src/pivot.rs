@@ -18,8 +18,8 @@ use gridcraft_core::date::datetime_from_serial;
 use gridcraft_core::{CellRef, DateSystem, RangeRef, Value, number_to_text};
 use gridcraft_formula::quote_sheet;
 use gridcraft_model::{
-    PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotRangeGroup, PivotShowAs, PivotSort, PivotTable, PivotValue,
-    RangeBins, Workbook, date_group_items,
+    PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLabelFilter, PivotLabelOp, PivotLayout, PivotRangeGroup, PivotShowAs,
+    PivotSort, PivotTable, PivotTopBy, PivotValue, PivotValueFilter, PivotValueOp, RangeBins, Workbook, date_group_items,
 };
 
 use crate::IoError;

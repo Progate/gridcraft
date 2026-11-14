@@ -392,7 +392,26 @@ fn read_sheet_slicers(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet) -> Resu
                 continue;
             };
             let Some((table_id, column_id)) = cache.table else {
-                cx.warn(format!("slicer \"{}\" filters a PivotTable, which is not supported; it was skipped", sl.name));
+                let (Some((tab, pivot)), Some(anchor)) =
+                    (cache.pivot.clone(), frames.iter().find(|(n, _)| n.eq_ignore_ascii_case(&sl.name)).map(|(_, a)| *a))
+                else {
+                    cx.warn(format!("slicer \"{}\" has no PivotTable or isn't on the sheet's drawing; it was skipped", sl.name));
+                    continue;
+                };
+                // Connected to its PivotTable once every sheet is read (`read::connect_pivot_slicers`);
+                // the selection is the PivotTable field's hidden items.
+                let id = cx.next_object_id();
+                cx.pivot_slicers.push((id, tab, pivot));
+                sheet.slicers.push(gridcraft_model::Slicer {
+                    id,
+                    table: String::new(),
+                    caption: sl.caption.unwrap_or_else(|| cache.source.clone()),
+                    column: cache.source.clone(),
+                    anchor,
+                    selected: None,
+                    columns: sl.columns,
+                    pivot: None,
+                });
                 continue;
             };
             let found = tables.iter().find(|(id, _, _)| *id == table_id).and_then(|(_, ti, ids)| {
@@ -428,6 +447,7 @@ fn read_sheet_slicers(cx: &mut Ctx<'_>, rels: &[Rel], sheet: &mut Sheet) -> Resu
                 anchor,
                 selected,
                 columns: sl.columns,
+                pivot: None,
             });
         }
     }

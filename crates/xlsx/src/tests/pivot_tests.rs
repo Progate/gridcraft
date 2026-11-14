@@ -105,7 +105,7 @@ fn workbook() -> Workbook {
                 ..PivotValue::default()
             },
         ],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]) }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: Some(vec!["Online".into()]), hidden_only: false }],
         layout: PivotLayout::Tabular,
         enable_show_details: false,
         grand_totals_rows: false,
@@ -119,6 +119,9 @@ fn workbook() -> Workbook {
         values_on_rows: false,
         values_position: None,
         lang: String::new(),
+        blank_rows: false,
+        repeat_labels: false,
+        show_expand_buttons: true,
     };
     // Pivot 2: table source, date grouping on two levels, show-values-as, multi-select page
     // filter and a hidden-items filter on a column field.
@@ -170,8 +173,8 @@ fn workbook() -> Workbook {
             },
         ],
         filters: vec![
-            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]) },
-            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]) },
+            PivotFilter { source_col: "Region".into(), selected: Some(vec!["East".into(), "North".into()]), hidden_only: false },
+            PivotFilter { source_col: "Product".into(), selected: Some(vec!["A".into(), "B".into()]), hidden_only: false },
         ],
         layout: PivotLayout::Outline,
         enable_show_details: true,
@@ -186,6 +189,9 @@ fn workbook() -> Workbook {
         values_on_rows: false,
         values_position: None,
         lang: String::new(),
+        blank_rows: false,
+        repeat_labels: false,
+        show_expand_buttons: true,
     };
     // Pivot 3: defaults, defined-name source, compact.
     let p3 = PivotTable {
@@ -195,7 +201,7 @@ fn workbook() -> Workbook {
         anchor: at("AB1"),
         rows: vec![field("Product")],
         values: vec![PivotValue { source_col: "Units".into(), func: PivotFunc::Product, name: "Product of Units".into(), ..PivotValue::default() }],
-        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None }],
+        filters: vec![PivotFilter { source_col: "Channel".into(), selected: None, hidden_only: false }],
         last_range: Some(rr("AB1:AC6")),
         ..PivotTable::default()
     };

@@ -19,6 +19,7 @@ use crate::pivot_calc::CalcSet;
 
 mod charts;
 mod compute;
+mod filters;
 mod items;
 mod output;
 
@@ -32,7 +33,7 @@ pub use items::{
 };
 #[cfg(test)]
 use output::data_cols_exceed_sheet;
-pub use output::{CellKind, OutCell, Output, RowKind};
+pub use output::{ButtonArea, CellKind, OutCell, Output, PivotButton, RowKind};
 use output::{cell_style, look};
 
 /// Largest source block read (cells).
@@ -255,6 +256,15 @@ pub fn read_source(wb: &Workbook, text: &str, default_sheet: usize) -> Result<So
 pub fn compute(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Result<Output, String> {
     let src = read_source(wb, &pt.source, pivot_sheet)?;
     compute_from(wb, pt, &src, None)
+}
+
+/// The buttons of a report on its sheet: the top-left of its last written area and the field
+/// and +/- buttons there (relative to it). `None` when it isn't written or doesn't compute.
+pub fn report_buttons(wb: &Workbook, sheet: usize, idx: usize) -> Option<(CellRef, Vec<PivotButton>)> {
+    let pt = wb.sheet(sheet)?.pivots.get(idx)?;
+    let at = pt.last_range?.start;
+    let out = compute(wb, pt, sheet).ok()?;
+    Some((at, out.buttons))
 }
 
 /// Recomputes a pivot and writes its report. With `replace` false, refuses when the target area

@@ -1,6 +1,7 @@
 use super::{
-    CellRef, Ctx, DateSystem, El, HashMap, IoError, MAX_FIELDS, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout,
-    PivotRangeGroup, PivotShowAs, PivotSort, PivotTable, PivotValue, RangeRef, abs_range, func_caption, func_from, number_to_text, quote_sheet, same,
+    CellRef, Ctx, DateSystem, El, HashMap, IoError, MAX_FIELDS, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLabelFilter,
+    PivotLabelOp, PivotLayout, PivotRangeGroup, PivotShowAs, PivotSort, PivotTable, PivotTopBy, PivotValue, PivotValueFilter, PivotValueOp, RangeRef,
+    abs_range, func_caption, func_from, number_to_text, quote_sheet, same,
 };
 
 // ================================================================ reading
@@ -285,9 +286,19 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     pt.show_headers = x.flag("showHeaders", true);
     pt.enable_show_details = x.flag("enableDrill", true);
     pt.style = x.child("pivotTableStyleInfo").and_then(|s| s.attr("name")).unwrap_or("").to_string();
-    if x.child("calculatedItems").is_some() || x.path(&["filters", "filter"]).is_some() {
-        cx.warn(format!("PivotTable \"{}\": calculated items and label/value filters are not supported", pt.name));
+    if x.child("calculatedItems").is_some() {
+        cx.warn(format!("PivotTable \"{}\": calculated items are not supported", pt.name));
     }
+    pt.show_expand_buttons = x.flag("showDrill", true);
+    pt.blank_rows = pfs.iter().any(|f| f.flag("insertBlankRow", false));
+    pt.repeat_labels = pfs.iter().any(|f| {
+        f.child("extLst").into_iter().flat_map(|l| l.kids("ext")).filter_map(|e| e.child("pivotField")).any(|e| e.flag("fillDownLabels", false))
+    });
+    // Data field captions, which a Value Filter names by position (`iMeasureFld`).
+    let data_names: Vec<String> =
+        x.child("dataFields").map(|d| d.kids("dataField").map(|e| e.attr("name").unwrap_or_default().to_string()).collect()).unwrap_or_default();
+    let field_filters: Vec<(usize, &El)> =
+        x.child("filters").map(|f| f.kids("filter").filter_map(|e| Some((e.attr_u32("fld")? as usize, e))).collect()).unwrap_or_default();
 
     let mut filters: Vec<PivotFilter> = Vec::new();
 
@@ -313,6 +324,9 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 Some(GroupBy::Range(g)) => f.range_group = Some(g),
                 None => {}
             }
+            for (_, e) in field_filters.iter().filter(|(fld, _)| *fld == i) {
+                read_field_filter(e, &data_names, &mut f);
+            }
             if let Some(e) = pf(i) {
                 f.sort = match e.attr("sortType") {
                     Some("ascending") => PivotSort::Asc,
@@ -325,7 +339,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 if items.iter().any(|it| it.flag("h", false)) {
                     let shown: Vec<String> = items.iter().filter(|it| !it.flag("h", false)).filter_map(|it| lab(it)).collect();
                     if !filters.iter().any(|ff| same(&ff.source_col, &name)) {
-                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown) });
+                        filters.push(PivotFilter { source_col: name.clone(), selected: Some(shown), hidden_only: false });
                     }
                 }
             }
@@ -352,7 +366,7 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
                 })
             })
         };
-        page_filters.push(PivotFilter { source_col: name, selected });
+        page_filters.push(PivotFilter { source_col: name, selected, hidden_only: false });
     }
     let mut axis_filters = Vec::new();
     let (rows, rows_values) = axis(cx, &row_x, &mut axis_filters);
@@ -375,6 +389,24 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
         if pt.values_on_rows { rows_values.or_else(|| x.attr_u32("dataPosition").map(|p| p as usize)).filter(|p| *p < pt.rows.len()) } else { None };
     filters.extend(page_filters);
     filters.extend(axis_filters);
+    // A field in no area with hidden items: a slicer's selection.
+    for (i, e) in pfs.iter().enumerate() {
+        let i64i = i as i64;
+        if row_x.contains(&i64i) || col_x.contains(&i64i) || pages.iter().any(|p| p.attr_i64("fld") == Some(i64i)) {
+            continue;
+        }
+        let items = items_of(e);
+        if !items.iter().any(|it| it.flag("h", false)) {
+            continue;
+        }
+        let Some(f) = cache.fields.get(i).filter(|f| f.database && f.group.is_none() && f.formula.is_none()) else { continue };
+        let labels = f.labels();
+        let shown: Vec<String> =
+            items.iter().filter(|it| !it.flag("h", false)).filter_map(|it| it.attr_u32("x").and_then(|k| labels.get(k as usize)).cloned()).collect();
+        if !filters.iter().any(|ff| same(&ff.source_col, &f.name)) {
+            filters.push(PivotFilter { source_col: f.name.clone(), selected: Some(shown), hidden_only: true });
+        }
+    }
     pt.filters = filters;
 
     // Values.
@@ -441,4 +473,34 @@ fn read_table(cx: &mut Ctx<'_>, x: &El, cache: &CacheIn, id: u32) -> Option<Pivo
     let above = if pages.is_empty() { 0 } else { pages.len() as u32 + 1 };
     pt.last_range = Some(RangeRef::new(CellRef::new(loc.start.row.saturating_sub(above), loc.start.col), loc.end));
     Some(pt)
+}
+
+/// A Label or Value Filter of an axis field (`<filter>` of the PivotTable's `<filters>`).
+fn read_field_filter(e: &El, data_names: &[String], f: &mut PivotField) {
+    let ty = e.attr("type").unwrap_or_default();
+    let column = e.path(&["autoFilter", "filterColumn"]);
+    let customs: Vec<&El> = column.and_then(|c| c.child("customFilters")).map(|c| c.kids("customFilter").collect()).unwrap_or_default();
+    let num = |k: usize| customs.get(k).and_then(|c| c.attr("val")).and_then(|v| v.trim().parse::<f64>().ok()).unwrap_or(0.0);
+    if let Some(op) = ty.strip_prefix("caption").and_then(PivotLabelOp::from_name) {
+        let value = e.attr("stringValue1").unwrap_or_default().to_string();
+        let value2 = e.attr("stringValue2").unwrap_or_default().to_string();
+        f.label_filter = Some(PivotLabelFilter { op, value, value2 });
+        return;
+    }
+    let measure = e.attr_u32("iMeasureFld").and_then(|m| data_names.get(m as usize)).cloned().unwrap_or_default();
+    let top = matches!(ty, "count" | "percent" | "sum");
+    let op = if top { Some(PivotValueOp::Top10) } else { ty.strip_prefix("value").and_then(PivotValueOp::from_name) };
+    let Some(op) = op else { return };
+    let mut vf = PivotValueFilter { op, value_field: measure, value: num(0), value2: num(1), ..PivotValueFilter::default() };
+    if top {
+        let t = column.and_then(|c| c.child("top10"));
+        vf.value = t.and_then(|t| t.attr_f64("val")).unwrap_or(10.0);
+        vf.bottom = !t.is_some_and(|t| t.flag("top", true));
+        vf.top_by = match ty {
+            "percent" => PivotTopBy::Percent,
+            "sum" => PivotTopBy::Sum,
+            _ => PivotTopBy::Items,
+        };
+    }
+    f.value_filter = Some(vf);
 }

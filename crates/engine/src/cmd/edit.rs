@@ -14,7 +14,7 @@ use crate::{Clipboard, Session};
 mod cell;
 mod clipboard;
 mod fill;
-mod find;
+pub(crate) mod find;
 mod go_to;
 mod paste_special;
 mod repeat;

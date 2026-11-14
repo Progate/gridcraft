@@ -1,6 +1,8 @@
+use super::filters::{Exclusion, ExclusionInput, label_matches, value_exclusions};
 use super::items::{Acc, Captions, FieldItems, Grouping, build_tree, captions, collect_siblings, field_grouping, is_collapsed, item_label};
 use super::output::{
-    AggMap, CellKind, ColKind, ColSpec, Ctx, Grid, Line, LineKind, Output, RowKind, ValSrc, caption, data_cols_exceed_sheet, flatten_cols,
+    AggMap, ButtonArea, CellKind, ColKind, ColSpec, Ctx, Grid, Line, LineKind, Output, PivotButton, RowKind, ValSrc, caption, data_cols_exceed_sheet,
+    flatten_cols,
 };
 use super::{
     CalcSet, CellError, CellRef, HashMap, HashSet, MAX_AXIS_FIELDS, MAX_COLS, MAX_VALUE_FIELDS, PivotDateGroup, PivotField, PivotFilter, PivotFunc,
@@ -86,6 +88,36 @@ struct AggregateInput<'a> {
     row_fmts: &'a [String],
     col_fmts: &'a [String],
     empty: bool,
+    /// Items the Value Filters drop.
+    exclusions: &'a [Exclusion],
+}
+
+/// Whether a record gets past the report filters (and hidden items).
+fn passes_report_filters(wb: &Workbook, filters: &[ReportFilter<'_>], fmts: &[String], sets: &[Option<HashSet<String>>], rec: &[Value]) -> bool {
+    for (((c, _, group, _), fmt), selected) in filters.iter().zip(fmts).zip(sets) {
+        if let Some(selected) = selected {
+            let label = item_label(wb, rec.get(*c).unwrap_or(&Value::Empty), *group, fmt);
+            if !selected.contains(&label.to_ascii_lowercase()) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Whether a record's items on `axis` meet their fields' Label Filters.
+fn passes_label_filters(wb: &Workbook, axis: &[(usize, &PivotField)], groups: &[Grouping], fmts: &[String], rec: &[Value]) -> bool {
+    let coll = gridcraft_core::Collation::for_region(wb.region);
+    axis.iter().zip(groups).zip(fmts).all(|(((c, f), g), fmt)| match &f.label_filter {
+        None => true,
+        Some(lf) => {
+            let v = rec.get(*c).unwrap_or(&Value::Empty);
+            let label = item_label(wb, v, *g, fmt);
+            // A grouped item (2025年, 0-9) is matched as the caption it shows.
+            let shown = if matches!(g, Grouping::None) { v.scalar() } else { Value::text(label.as_str()) };
+            label_matches(lf, &label, &shown, coll)
+        }
+    })
 }
 
 #[derive(Default)]
@@ -109,16 +141,30 @@ fn aggregate_record(
     ri: usize,
     rec: &[Value],
 ) -> Result<(), String> {
-    for (((c, _, group, _), fmt), selected) in input.filters.iter().zip(input.filter_fmts).zip(input.filter_sets) {
-        if let Some(selected) = selected {
-            let label = item_label(input.wb, rec.get(*c).unwrap_or(&Value::Empty), *group, fmt);
-            if !selected.contains(&label.to_ascii_lowercase()) {
-                return Ok(());
-            }
-        }
+    if !passes_report_filters(input.wb, input.filters, input.filter_fmts, input.filter_sets, rec) {
+        return Ok(());
     }
     if input.empty {
         return Ok(());
+    }
+    if !passes_label_filters(input.wb, input.rows, input.row_groups, input.row_fmts, rec)
+        || !passes_label_filters(input.wb, input.cols, input.col_groups, input.col_fmts, rec)
+    {
+        return Ok(());
+    }
+    for ex in input.exclusions {
+        let (axis, groups, fmts) =
+            if ex.rows { (input.rows, input.row_groups, input.row_fmts) } else { (input.cols, input.col_groups, input.col_fmts) };
+        let key: Vec<String> = axis
+            .iter()
+            .zip(groups)
+            .zip(fmts)
+            .take(ex.level + 1)
+            .map(|(((c, _), g), fmt)| item_label(input.wb, rec.get(*c).unwrap_or(&Value::Empty), *g, fmt).to_lowercase())
+            .collect();
+        if ex.dropped.contains(&key) {
+            return Ok(());
+        }
     }
     let mut row_path = Vec::with_capacity(input.rows.len());
     for ((((column, _), items), fmt), group) in input.rows.iter().zip(data.row_items.iter_mut()).zip(input.row_fmts).zip(input.row_groups) {
@@ -526,7 +572,8 @@ fn report_filters<'a>(wb: &Workbook, pt: &'a PivotTable, src: &Source) -> (Vec<R
         .filter_map(|filter| {
             let column = src.col(&filter.source_col)?;
             let group = axis_group(&filter.source_col, column);
-            Some((column, filter, group.unwrap_or_default(), group.is_none()))
+            // A field in no area (a slicer's) filters without showing above the report.
+            Some((column, filter, group.unwrap_or_default(), group.is_none() && !filter.hidden_only))
         })
         .collect();
     let shown = filters.iter().copied().filter(|filter| filter.3).collect();
@@ -616,6 +663,17 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
     let col_fmts: Vec<String> = cols.iter().map(|(c, _)| fmt_of(*c)).collect();
     let row_groups: Vec<Grouping> = rows.iter().map(|(c, f)| field_grouping(wb, pt, src, *c, f)).collect();
     let col_groups: Vec<Grouping> = cols.iter().map(|(c, f)| field_grouping(wb, pt, src, *c, f)).collect();
+    let exclusions = if rows.iter().chain(cols.iter()).any(|(_, f)| f.value_filter.is_some()) {
+        let keep = |rec: &[Value]| {
+            passes_report_filters(wb, &filters, &filter_fmts, &filter_sets, rec)
+                && passes_label_filters(wb, &rows, &row_groups, &row_fmts, rec)
+                && passes_label_filters(wb, &cols, &col_groups, &col_fmts, rec)
+        };
+        let input = ExclusionInput { wb, src, rows: &rows, cols: &cols, row_groups: &row_groups, col_groups: &col_groups, vals: &vals };
+        value_exclusions(&input, &keep)
+    } else {
+        Vec::new()
+    };
     let aggregate = aggregate_source(
         AggregateInput {
             wb,
@@ -633,6 +691,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
             row_fmts: &row_fmts,
             col_fmts: &col_fmts,
             empty,
+            exclusions: &exclusions,
         },
         &mut probe,
     )?;
@@ -653,7 +712,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
     let ctx = Ctx { pt, rows: row_fields.clone(), row_items, row_fmts: row_fmts.clone(), vpos, val_names: val_names.clone(), cap };
     let mut lines: Vec<Line> = Vec::new();
     if row_levels == 0 {
-        lines.push(Line { kind: LineKind::Item(false), leaf: true, path: vec![], values: true, labels: vec![], vi: None });
+        lines.push(Line { toggles: vec![], kind: LineKind::Item(false), leaf: true, path: vec![], values: true, labels: vec![], vi: None });
     } else {
         if pt.layout == PivotLayout::Tabular {
             ctx.flatten_tabular(&row_tree, 0, None, &mut Vec::new(), &[], &mut lines);
@@ -663,6 +722,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
         // With only Σ Values in Rows its items are the totals already.
         if pt.grand_totals_cols && !rows.is_empty() {
             let grand = |text: String, vi: Option<usize>| Line {
+                toggles: vec![],
                 kind: LineKind::Grand,
                 leaf: false,
                 path: vec![],
@@ -706,14 +766,16 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
     let width = width.max(1);
     let mut g = Grid { rows: vec![], kinds: vec![], width };
 
+    let mut buttons: Vec<PivotButton> = Vec::new();
     // ---- report filters
     for (c, f, _, _) in &shown_filters {
         let r = g.push_row(RowKind::Filter)?;
         let name = src.headers.get(*c).cloned().unwrap_or_default();
+        buttons.push(PivotButton::Field { row: r as u32, col: 1, area: ButtonArea::Filters, fields: vec![name.clone()] });
         let shown = match &f.selected {
-            None => "(All)".to_string(),
+            None => cap.all.to_string(),
             Some(v) if v.len() == 1 => v.first().cloned().unwrap_or_default(),
-            Some(_) => "(Multiple Items)".to_string(),
+            Some(_) => cap.multiple.to_string(),
         };
         g.set(r, 0, Value::text(name), CellKind::Filter, 0, None);
         g.set(r, 1, Value::text(shown), CellKind::Filter, 0, None);
@@ -734,6 +796,7 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
             chart_rows: vec![],
             chart_cols: vec![],
             label_col: None,
+            buttons,
         });
     }
 
@@ -760,6 +823,28 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
         },
     )?;
     let val_name = |vi: usize| vals.get(vi).map(|(_, value)| value.name.clone()).unwrap_or_default();
+    let row_caps: Vec<String> = row_fields.iter().map(|f| super::field_caption(wb, pt, f)).collect();
+    // The ▼ of the headers, which Field Headers (フィールドの見出し) hides with them.
+    if pt.show_headers {
+        let last = g.rows.len().saturating_sub(1) as u32;
+        if compact && !row_caps.is_empty() {
+            buttons.push(PivotButton::Field { row: last, col: 0, area: ButtonArea::Rows, fields: row_caps.clone() });
+        } else if !compact {
+            // One header per row field; Σ Values (its own column at `vpos`) has no menu.
+            let mut col = 0u32;
+            for (i, cap) in row_caps.iter().enumerate() {
+                if vpos == Some(i) {
+                    col += 1;
+                }
+                buttons.push(PivotButton::Field { row: last, col, area: ButtonArea::Rows, fields: vec![cap.clone()] });
+                col += 1;
+            }
+        }
+        if !col_fields.is_empty() {
+            let fields = col_fields.iter().map(|f| super::field_caption(wb, pt, f)).collect();
+            buttons.push(PivotButton::Field { row: body_offset, col: l as u32, area: ButtonArea::Columns, fields });
+        }
+    }
 
     // ---- body
     let data_fmt: Vec<Option<String>> = vals
@@ -820,15 +905,23 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
             LineKind::Item(b) => RowKind::Item(b),
             LineKind::Subtotal => RowKind::Subtotal,
             LineKind::Grand => RowKind::Grand,
+            LineKind::Blank => RowKind::Blank,
         };
         let ck = match line.kind {
             LineKind::Item(_) => (CellKind::RowLabel, CellKind::Data),
             LineKind::Subtotal => (CellKind::Subtotal, CellKind::Subtotal),
             LineKind::Grand => (CellKind::GrandTotal, CellKind::GrandTotal),
+            LineKind::Blank => (CellKind::Empty, CellKind::Empty),
         };
         let r = g.push_row(rk)?;
         if line.leaf && k > 0 {
             chart_rows.push(r as u32);
+        }
+        if pt.show_expand_buttons {
+            for (col, depth, item, collapsed) in &line.toggles {
+                let field = row_caps.get(*depth).cloned().unwrap_or_default();
+                buttons.push(PivotButton::Expand { row: r as u32, col: *col as u32, field, item: item.clone(), collapsed: *collapsed });
+            }
         }
         for (c, v, indent, fmt) in &line.labels {
             g.set(r, *c, v.clone(), ck.0, *indent, fmt.clone());
@@ -856,5 +949,5 @@ pub(super) fn compute_from(wb: &Workbook, pt: &PivotTable, src: &Source, mut pro
             g.set(r, l + j, shown, ck.1, 0, data_fmt.get(*vi).cloned().flatten());
         }
     }
-    Ok(Output { width: g.width as u32, grid: g.rows, row_kinds: g.kinds, body_offset, chart_rows, chart_cols, label_col })
+    Ok(Output { width: g.width as u32, grid: g.rows, row_kinds: g.kinds, body_offset, chart_rows, chart_cols, label_col, buttons })
 }

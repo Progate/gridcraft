@@ -50,6 +50,9 @@ pub struct Ctx<'a> {
     pub slicer_caches: Vec<crate::slicer::CacheIn>,
     /// Slicer frames of the worksheet being read: name and anchor, from its drawing.
     pub slicer_frames: Vec<(String, gridcraft_model::Anchor)>,
+    /// PivotTable slicers read, to connect once every sheet's PivotTables are: (slicer id, the
+    /// `sheetId` of the PivotTable's sheet, the PivotTable's name).
+    pub pivot_slicers: Vec<(u32, u32, String)>,
     /// Tables of the worksheet being read: file id, model index and `tableColumn` ids.
     pub table_file_ids: Vec<(u32, usize, Vec<u32>)>,
 }
@@ -284,6 +287,7 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
         python: Default::default(),
         slicer_caches: vec![],
         slicer_frames: vec![],
+        pivot_slicers: vec![],
         table_file_ids: vec![],
     };
     let root_rels = cx.pkg.rels("")?;
@@ -404,6 +408,7 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
         wb.sheets.push(Arc::new(Sheet::new("Sheet1")));
     }
     wb.set_active_sheet(file_to_model.get(active_tab).copied().flatten().unwrap_or(0));
+    connect_pivot_slicers(&mut cx, &mut wb);
 
     // Defined names. Chartex parts refer to their data through hidden `_xlchart.*` names.
     let mut chart_names: Vec<(String, String)> = vec![];
@@ -638,4 +643,47 @@ fn read_chart_sheet(cx: &mut Ctx<'_>, part: &str, name: &str) -> Result<Option<S
     cx.slicer_frames.clear();
     sheet.chart_sheet = true;
     Ok(Some(sheet))
+}
+
+/// Connects the PivotTable slicers read to their PivotTables (by the PivotTable's sheet id and
+/// name); a slicer whose PivotTable wasn't read is dropped with a warning.
+fn connect_pivot_slicers(cx: &mut Ctx<'_>, wb: &mut Workbook) {
+    let pending = std::mem::take(&mut cx.pivot_slicers);
+    if pending.is_empty() {
+        return;
+    }
+    let ids: Vec<(u32, u32)> = pending
+        .iter()
+        .map(|(slicer, tab, name)| {
+            let pid = wb
+                .sheets
+                .iter()
+                .filter(|sh| sh.file_id == *tab)
+                .flat_map(|sh| sh.pivots.iter())
+                .find(|p| p.name.eq_ignore_ascii_case(name))
+                .map_or(0, |p| p.id);
+            (*slicer, pid)
+        })
+        .collect();
+    for sh in wb.sheets.iter_mut() {
+        if !sh.slicers.iter().any(|s| ids.iter().any(|(id, _)| *id == s.id)) {
+            continue;
+        }
+        let sh = std::sync::Arc::make_mut(sh);
+        let mut dropped = Vec::new();
+        sh.slicers.retain_mut(|s| match ids.iter().find(|(id, _)| *id == s.id) {
+            Some((_, 0)) => {
+                dropped.push(s.caption.clone());
+                false
+            }
+            Some((_, pid)) => {
+                s.pivot = Some(*pid);
+                true
+            }
+            None => true,
+        });
+        for d in dropped {
+            cx.warn(format!("slicer \"{d}\" filters a PivotTable that wasn't read; it was skipped"));
+        }
+    }
 }

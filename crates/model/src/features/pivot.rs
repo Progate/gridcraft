@@ -143,6 +143,168 @@ pub struct PivotField {
     pub date_end: Option<f64>,
     /// Grouping › Number of days, for Days grouping (0 or 1 = one item per day of the year).
     pub date_days: u32,
+    /// Label Filters (ラベル フィルター): keeps the items whose caption meets a condition.
+    pub label_filter: Option<PivotLabelFilter>,
+    /// Value Filters (値フィルター): keeps the items whose total of a value field meets a
+    /// condition, or the top/bottom ones (トップテン).
+    pub value_filter: Option<PivotValueFilter>,
+}
+
+/// The condition of a Label Filter, as Excel's Label Filter dialog lists them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PivotLabelOp {
+    #[default]
+    Equal,
+    NotEqual,
+    BeginsWith,
+    NotBeginsWith,
+    EndsWith,
+    NotEndsWith,
+    Contains,
+    NotContains,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    Between,
+    NotBetween,
+}
+
+impl PivotLabelOp {
+    pub const ALL: [PivotLabelOp; 14] = [
+        PivotLabelOp::Equal,
+        PivotLabelOp::NotEqual,
+        PivotLabelOp::BeginsWith,
+        PivotLabelOp::NotBeginsWith,
+        PivotLabelOp::EndsWith,
+        PivotLabelOp::NotEndsWith,
+        PivotLabelOp::Contains,
+        PivotLabelOp::NotContains,
+        PivotLabelOp::GreaterThan,
+        PivotLabelOp::GreaterThanOrEqual,
+        PivotLabelOp::LessThan,
+        PivotLabelOp::LessThanOrEqual,
+        PivotLabelOp::Between,
+        PivotLabelOp::NotBetween,
+    ];
+
+    /// The command name and the `filter type` of a PivotTable file (`captionEqual`).
+    pub fn name(self) -> &'static str {
+        match self {
+            PivotLabelOp::Equal => "equal",
+            PivotLabelOp::NotEqual => "notEqual",
+            PivotLabelOp::BeginsWith => "beginsWith",
+            PivotLabelOp::NotBeginsWith => "notBeginsWith",
+            PivotLabelOp::EndsWith => "endsWith",
+            PivotLabelOp::NotEndsWith => "notEndsWith",
+            PivotLabelOp::Contains => "contains",
+            PivotLabelOp::NotContains => "notContains",
+            PivotLabelOp::GreaterThan => "greaterThan",
+            PivotLabelOp::GreaterThanOrEqual => "greaterThanOrEqual",
+            PivotLabelOp::LessThan => "lessThan",
+            PivotLabelOp::LessThanOrEqual => "lessThanOrEqual",
+            PivotLabelOp::Between => "between",
+            PivotLabelOp::NotBetween => "notBetween",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let s = s.strip_prefix("caption").unwrap_or(s);
+        Self::ALL.iter().copied().find(|o| o.name().eq_ignore_ascii_case(s))
+    }
+
+    /// Whether the condition takes a second value (Between, Not Between).
+    pub fn two_values(self) -> bool {
+        matches!(self, PivotLabelOp::Between | PivotLabelOp::NotBetween)
+    }
+}
+
+/// A Label Filter: the condition and its one or two values, as typed.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotLabelFilter {
+    pub op: PivotLabelOp,
+    pub value: String,
+    pub value2: String,
+}
+
+/// The condition of a Value Filter, as Excel's Value Filter dialog lists them, plus Top 10.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PivotValueOp {
+    #[default]
+    Equal,
+    NotEqual,
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    Between,
+    NotBetween,
+    /// Top 10: the `value` largest (or, with `bottom`, smallest) items, by `top_by`.
+    Top10,
+}
+
+impl PivotValueOp {
+    pub const ALL: [PivotValueOp; 9] = [
+        PivotValueOp::Equal,
+        PivotValueOp::NotEqual,
+        PivotValueOp::GreaterThan,
+        PivotValueOp::GreaterThanOrEqual,
+        PivotValueOp::LessThan,
+        PivotValueOp::LessThanOrEqual,
+        PivotValueOp::Between,
+        PivotValueOp::NotBetween,
+        PivotValueOp::Top10,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            PivotValueOp::Equal => "equal",
+            PivotValueOp::NotEqual => "notEqual",
+            PivotValueOp::GreaterThan => "greaterThan",
+            PivotValueOp::GreaterThanOrEqual => "greaterThanOrEqual",
+            PivotValueOp::LessThan => "lessThan",
+            PivotValueOp::LessThanOrEqual => "lessThanOrEqual",
+            PivotValueOp::Between => "between",
+            PivotValueOp::NotBetween => "notBetween",
+            PivotValueOp::Top10 => "top10",
+        }
+    }
+
+    pub fn from_name(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let s = s.strip_prefix("value").unwrap_or(s);
+        Self::ALL.iter().copied().find(|o| o.name().eq_ignore_ascii_case(s))
+    }
+
+    pub fn two_values(self) -> bool {
+        matches!(self, PivotValueOp::Between | PivotValueOp::NotBetween)
+    }
+}
+
+/// What a Top 10 filter counts: items, a percent of the total, or a running sum.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PivotTopBy {
+    #[default]
+    Items,
+    Percent,
+    Sum,
+}
+
+/// A Value Filter on an axis field.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PivotValueFilter {
+    pub op: PivotValueOp,
+    /// The value field's caption (`合計 / 金額`).
+    pub value_field: String,
+    pub value: f64,
+    pub value2: f64,
+    /// Top 10 only: the bottom items rather than the top ones.
+    pub bottom: bool,
+    /// Top 10 only.
+    pub top_by: PivotTopBy,
 }
 
 /// Summarize-values-by function.
@@ -205,6 +367,9 @@ pub struct PivotFilter {
     pub source_col: String,
     /// Item labels shown; `None` = all.
     pub selected: Option<Vec<String>>,
+    /// The field is in no area (not even Filters) and only hides items, as a slicer on a field
+    /// that isn't in the report filters it in Excel.
+    pub hidden_only: bool,
 }
 
 /// A PivotTable: its definition plus where its output was last written. The output itself is
@@ -249,6 +414,14 @@ pub struct PivotTable {
     /// 四半期; otherwise Excel's English: 2025, Qtr1, Jan, Years, Quarters), as the Excel that
     /// grouped the field names them.
     pub lang: String,
+    /// Design › Blank Rows › Insert Blank Line after Each Item (空白行を挿入する).
+    pub blank_rows: bool,
+    /// Design › Report Layout › Repeat All Item Labels (アイテムのラベルをすべて繰り返す), in
+    /// the Outline and Tabular layouts.
+    pub repeat_labels: bool,
+    /// PivotTable Analyze › +/- Buttons (＋/－ボタン): the expand and collapse buttons beside
+    /// the row items that have items below them.
+    pub show_expand_buttons: bool,
 }
 
 /// A calculated field: a formula over other fields (`=Sales*0.1`, `='Unit Price'*Units`). As in
@@ -285,6 +458,9 @@ impl Default for PivotTable {
             values_on_rows: false,
             values_position: None,
             lang: String::new(),
+            blank_rows: false,
+            repeat_labels: false,
+            show_expand_buttons: true,
         }
     }
 }
@@ -405,7 +581,7 @@ fn hour_caption(h: u32, ja: bool) -> String {
     if ja {
         return format!("{h}時");
     }
-    let h12 = if h % 12 == 0 { 12 } else { h % 12 };
+    let h12 = if h.is_multiple_of(12) { 12 } else { h % 12 };
     format!("{h12} {}", if h < 12 { "AM" } else { "PM" })
 }
 

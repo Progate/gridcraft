@@ -20,17 +20,22 @@ use super::{
 use crate::pivot as pv;
 use crate::selection::current_region;
 
+mod analyze;
 mod charts;
 mod create;
 mod fields;
 mod layout;
 mod params;
+mod slicers;
 
+use analyze::{blank_rows, buttons, clear_filter, expand_buttons, field_headers, field_settings, items, label_filter, repeat_labels, value_filter};
 pub(crate) use charts::insert_pivot_chart;
 use charts::recommended;
 use create::{insert_pivot, options, show_details, summarize_table};
 use fields::{add_field, calculated_field, fields, list, move_field, remove_field, value_settings};
 use layout::{change_source, collapse, delete, filter, grand_totals, group, layout, refresh, refresh_all, sort};
+pub use slicers::pivot_slicer_items;
+pub(crate) use slicers::{insert_slicer as insert_pivot_slicer, set_pivot_slicer};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -87,7 +92,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Field",
             [],
             None,
-            "{pivot?, field, area: rows|columns|values|filters, func?: sum|count|average|max|min|product|countNumbers|stdDev|stdDevP|var|varP, name?, position?: index, replace?}",
+            "{pivot?, field, area: rows|columns|values|filters, func?: sum|count|average|max|min|product|countNumbers|stdDev|stdDevP|var|varP, name?, position?: index, autoGroup?: true (a date field new to Rows/Columns groups as Excel 365 does: over several years Years › Quarters › months with the years collapsed, within a year by months; false keeps the dates), replace?}",
             has_doc,
             add_field
         ),
@@ -120,6 +125,97 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("pivot.filter", "Filter Items", [], None, "{pivot?, field, selected: [\"East\", ..] | null (all), replace?}", has_doc, filter),
         cmd!("pivot.sort", "Sort Field", [], None, "{pivot?, field, order: asc|desc|none, replace?}", has_doc, sort),
+        cmd!(
+            query "pivot.items",
+            "Field Items",
+            [],
+            None,
+            "{pivot?, field (a row, column or filter field, or a date level such as 年)} → {field, area, items: [{label, selected}], filtered, labelFilter, valueFilter, sort, valueFields}: what the ▼ of 行ラベル / 列ラベル lists",
+            has_doc,
+            items
+        ),
+        cmd!(
+            "pivot.labelFilter",
+            "Label Filters",
+            [],
+            None,
+            "{pivot?, field, op: equal|notEqual|beginsWith|notBeginsWith|endsWith|notEndsWith|contains|notContains|greaterThan|greaterThanOrEqual|lessThan|lessThanOrEqual|between|notBetween, value, value2? (between), clear?: true} keeps the row or column items whose caption meets the condition (* and ? wildcards); it replaces the field's Value Filter",
+            has_doc,
+            label_filter
+        ),
+        cmd!(
+            "pivot.valueFilter",
+            "Value Filters",
+            [],
+            None,
+            "{pivot?, field, op: equal|notEqual|greaterThan|greaterThanOrEqual|lessThan|lessThanOrEqual|between|notBetween|top10, valueField?: caption (default: the first value field), value, value2? (between), order?: top|bottom (top10), by?: items|percent|sum (top10), clear?: true} keeps the row or column items whose total meets the condition; it replaces the field's Label Filter",
+            has_doc,
+            value_filter
+        ),
+        cmd!(
+            "pivot.clearFilter",
+            "Clear Filter",
+            ["PivotTable Analyze", "Actions"],
+            None,
+            "{pivot?, field?} clears a field's checked items, Label and Value Filters (all fields when `field` is left out)",
+            has_doc,
+            clear_filter
+        ),
+        cmd!(
+            "pivot.insertSlicer",
+            "Insert Slicer",
+            ["PivotTable Analyze", "Filter"],
+            None,
+            "{pivot?, field: \"店舗\" | fields: [..], at?: \"H3\" (default: right of the report), columns?: 1, width?, height?} adds a slicer per field that filters the PivotTable (its selection is the field's filter; slicer.toggle / slicer.clear click it); without a field opens Insert Slicers → {slicers, slicer}",
+            has_doc,
+            insert_pivot_slicer
+        ),
+        cmd!(
+            "pivot.fieldSettings",
+            "Field Settings",
+            ["PivotTable Analyze", "Active Field"],
+            None,
+            "{pivot?, field? (default: the field of the active cell)} opens Value Field Settings for a value field, else Field Settings",
+            has_doc,
+            field_settings
+        ),
+        cmd!(
+            "pivot.expandButtons",
+            "+/- Buttons",
+            ["PivotTable Analyze", "Show"],
+            None,
+            "{pivot?, on?: bool (default: switch)} shows or hides the expand/collapse buttons of the row items",
+            has_doc,
+            expand_buttons
+        ),
+        cmd!(
+            "pivot.fieldHeaders",
+            "Field Headers",
+            ["PivotTable Analyze", "Show"],
+            None,
+            "{pivot?, on?: bool (default: switch)} shows or hides the 行ラベル / 列ラベル headers and their ▼ buttons",
+            has_doc,
+            field_headers
+        ),
+        cmd!(
+            "pivot.blankRows",
+            "Blank Rows",
+            ["PivotTable Design", "Layout"],
+            None,
+            "{pivot?, on?: bool (default: switch)} Insert Blank Line after Each Item (on) / Remove Blank Line after Each Item (off)",
+            has_doc,
+            blank_rows
+        ),
+        cmd!(
+            "pivot.repeatLabels",
+            "Repeat All Item Labels",
+            ["PivotTable Design", "Layout"],
+            None,
+            "{pivot?, on?: bool (default: switch)} Report Layout › Repeat All Item Labels (on) / Do Not Repeat Item Labels (off), in the Outline and Tabular layouts",
+            has_doc,
+            repeat_labels
+        ),
+        cmd!(query "pivot.buttons", "PivotTable Buttons", [], None, "{pivot?} → the report's buttons: [{kind: field|expand, cell, area, fields | field, item, collapsed}]", has_doc, buttons),
         cmd!(
             "pivot.group",
             "Group Field",
@@ -270,5 +366,7 @@ fn find_pivot(s: &Session, p: &Json) -> Result<(usize, usize)> {
     Err(EngineError::Disabled("pivot".into(), "select a cell in a PivotTable (or pass `pivot`)".into()))
 }
 
+#[cfg(test)]
+mod analyze_tests;
 #[cfg(test)]
 mod tests;

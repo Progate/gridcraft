@@ -1,8 +1,8 @@
 use super::create::pivot_json;
 use super::params::{area_param, func_name, func_param, position_param, show_as_name, show_as_param};
 use super::{
-    Json, PivotCalcField, PivotField, PivotFilter, PivotFunc, PivotShowAs, PivotTable, PivotValue, Result, Session, Workbook, bad, bool_param, edit,
-    find_pivot, json, ok, other, pv, str_param, u32_param,
+    Json, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotShowAs, PivotTable, PivotValue, Result, Session, Workbook, bad,
+    bool_param, edit, find_pivot, json, ok, other, pv, str_param, u32_param,
 };
 
 // ---------------------------------------------------------------- layout editing (pure)
@@ -157,10 +157,12 @@ pub(super) fn add_to_area(pt: &mut PivotTable, src: &pv::Source, placement: Area
         _ => {
             take_from_axes(pt, &field);
             let existing = pt.filters.iter().position(|f| f.source_col.eq_ignore_ascii_case(&field));
-            let entry = match existing {
+            let mut entry = match existing {
                 Some(i) => pt.filters.remove(i),
-                None => PivotFilter { source_col: field, selected: None },
+                None => PivotFilter { source_col: field, selected: None, hidden_only: false },
             };
+            // A slicer's selection on a field in no area now shows as the report filter.
+            entry.hidden_only = false;
             let at = position.unwrap_or(pt.filters.len()).min(pt.filters.len());
             pt.filters.insert(at, entry);
         }
@@ -199,7 +201,7 @@ fn remove_from_area(cmd: &str, pt: &mut PivotTable, field: &str, area: &str) -> 
             let i = pt
                 .filters
                 .iter()
-                .position(|f| f.source_col.eq_ignore_ascii_case(field) && !in_axes(pt, &f.source_col))
+                .position(|f| f.source_col.eq_ignore_ascii_case(field) && !in_axes(pt, &f.source_col) && !f.hidden_only)
                 .ok_or_else(|| bad(cmd, format!("`{field}` isn't in the filters area")))?;
             Ok(pt.filters.remove(i).source_col)
         }
@@ -254,7 +256,7 @@ pub(super) fn fields(s: &mut Session, p: &Json) -> Result<Json> {
                 if pt.values.iter().any(|f| f.source_col.eq_ignore_ascii_case(h)) {
                     areas.push("values");
                 }
-                if pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(h)) && !in_axes(pt, h) {
+                if pt.filters.iter().any(|f| f.source_col.eq_ignore_ascii_case(h) && !f.hidden_only) && !in_axes(pt, h) {
                     areas.push("filters");
                 }
                 json!({
@@ -308,10 +310,62 @@ pub(super) fn add_field(s: &mut Session, p: &Json) -> Result<Json> {
     };
     let name = str_param(p, "name").map(str::to_string);
     let pos = position_param(p);
-    update(s, p, |pt, src, _| {
+    let auto_group = bool_param(p, "autoGroup").unwrap_or(true);
+    update(s, p, |pt, src, wb| {
+        let canon = canonical_any(C, pt, src, &field)?;
+        let new_on_axis = matches!(area, "rows" | "columns") && !in_axes(pt, &canon);
         add_to_area(pt, src, AreaPlacement { cmd: C, field: &field, area, func, name: name.as_deref(), position: pos })?;
-        Ok(json!({"field": canonical_any(C, pt, src, &field)?, "area": area}))
+        let mut out = json!({"field": canon, "area": area});
+        if auto_group && new_on_axis {
+            let levels = auto_date_group(pt, src, wb, &canon);
+            if !levels.is_empty() {
+                out["grouped"] = json!(levels.iter().map(|g| g.name()).collect::<Vec<_>>());
+            }
+        }
+        Ok(out)
     })
+}
+
+/// Excel 365's automatic grouping of a date field newly placed in Rows or Columns: dates over
+/// more than one year become Years, Quarters and the field by months, showing the years
+/// collapsed; dates over several months of one year become months. Returns the levels made.
+/// (Excel's option "Disable automatic grouping of Date/Time columns in PivotTables" is
+/// `autoGroup: false`.)
+fn auto_date_group(pt: &mut PivotTable, src: &pv::Source, wb: &Workbook, field: &str) -> Vec<PivotDateGroup> {
+    use gridcraft_core::date::datetime_from_serial;
+    let Some(c) = src.col(field) else { return vec![] };
+    if !src.dates.get(c).copied().unwrap_or(false) {
+        return vec![];
+    }
+    let Some((lo, hi)) = pv::source_date_range(src, c) else { return vec![] };
+    let (Some(a), Some(b)) = (datetime_from_serial(wb.date_system, lo), datetime_from_serial(wb.date_system, hi)) else { return vec![] };
+    let levels = if a.year != b.year {
+        vec![PivotDateGroup::Years, PivotDateGroup::Quarters, PivotDateGroup::Months]
+    } else if a.month != b.month {
+        vec![PivotDateGroup::Months]
+    } else {
+        return vec![];
+    };
+    let Some((rows, i)) = pv::axis_position(pt, field) else { return vec![] };
+    super::layout::set_date_levels(pt, rows, i, &levels, (None, None, 0));
+    // The coarser levels start collapsed, so the report first shows the years.
+    let list = if rows { &mut pt.rows } else { &mut pt.columns };
+    let coarse: Vec<usize> = list
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.source_col.eq_ignore_ascii_case(field) && matches!(f.date_group, PivotDateGroup::Years | PivotDateGroup::Quarters))
+        .map(|(j, _)| j)
+        .collect();
+    let snapshot = pt.clone();
+    for j in coarse {
+        let list = if rows { &snapshot.rows } else { &snapshot.columns };
+        let Some(f) = list.get(j) else { continue };
+        let labels = pv::distinct_labels(wb, src, c, pv::field_grouping(wb, &snapshot, src, c, f), 100_000);
+        if let Some(slot) = (if rows { &mut pt.rows } else { &mut pt.columns }).get_mut(j) {
+            slot.collapsed_items = labels;
+        }
+    }
+    levels
 }
 
 pub(super) fn calculated_field(s: &mut Session, p: &Json) -> Result<Json> {

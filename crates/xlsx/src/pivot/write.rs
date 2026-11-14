@@ -114,6 +114,9 @@ pub struct PivotWriter {
     caches: Vec<(u32, String)>,
     pending: Vec<Pending>,
     tables: u32,
+    /// Model sheet index → the `sheetId` written, which a PivotTable slicer cache names its
+    /// PivotTable's sheet by.
+    sheet_ids: HashMap<usize, u32>,
 }
 
 struct Pending {
@@ -143,7 +146,9 @@ impl PivotWriter {
             } else {
                 None
             };
-            out.part(&cache_part, Some(CT_PIVOT_CACHE_DEF), cache_xml(&cache, rec_rid.as_deref(), wb.date_system).into_bytes());
+            // A slicer finds the cache it filters by this id (`x14:pivotCacheDefinition`).
+            let slicer_id = has_slicer(wb, pt.id).then_some(n);
+            out.part(&cache_part, Some(CT_PIVOT_CACHE_DEF), cache_xml(&cache, rec_rid.as_deref(), wb.date_system, slicer_id).into_bytes());
             self.caches.push((n, format!("pivotCache/pivotCacheDefinition{n}.xml")));
             self.tables += 1;
             let t = self.tables;
@@ -153,6 +158,37 @@ impl PivotWriter {
             out.part(&format!("xl/pivotTables/_rels/pivotTable{t}.xml.rels"), None, tr.xml().into_bytes());
             self.pending.push(Pending { part: format!("xl/pivotTables/pivotTable{t}.xml"), sheet: si, idx, cache_id: n, cache });
         }
+    }
+
+    /// Records the `sheetId` written for model sheet `si`.
+    pub fn note_sheet_id(&mut self, si: usize, id: u32) {
+        self.sheet_ids.insert(si, id);
+    }
+
+    /// Writes the PivotTable slicer caches the sheets planned (`out.slicer_names.pivot_written`)
+    /// and adds their workbook relationships; returns the relationship ids for the workbook's
+    /// `x14:slicerCaches` extension. A cache whose PivotTable wasn't written is left out.
+    pub fn write_slicer_caches(&self, wb: &Workbook, out: &mut Out, wb_rels: &mut Rels) -> Vec<String> {
+        let planned = std::mem::take(&mut out.slicer_names.pivot_written);
+        let mut rids = Vec::new();
+        for pc in &planned {
+            let found = self.pending.iter().find_map(|p| {
+                let pt = wb.sheet(p.sheet)?.pivots.get(p.idx)?;
+                (pt.id == pc.pivot).then_some((p, pt))
+            });
+            let Some((p, pt)) = found else { continue };
+            let Some(tab) = self.sheet_ids.get(&p.sheet) else { continue };
+            let Some(field) = p.cache.fields.iter().find(|f| f.col.is_some() && same(&f.name, &pc.field)) else { continue };
+            let selected = pt.filters.iter().find(|f| same(&f.source_col, &pc.field)).and_then(|f| f.selected.as_ref());
+            let items: Vec<(usize, bool)> =
+                field.item_labels().iter().enumerate().map(|(x, l)| (x, selected.is_none_or(|sel| sel.iter().any(|v| same(v, l))))).collect();
+            let name = if pt.name.trim().is_empty() { format!("PivotTable{}", p.idx + 1) } else { pt.name.clone() };
+            let xml = crate::slicer::pivot_cache_xml(&pc.name, &field.name, *tab, &name, p.cache_id, &items);
+            out.part(&format!("xl/{}", pc.part), Some(crate::slicer::CT_SLICER_CACHE), xml.into_bytes());
+            rids.push(wb_rels.add_uri(crate::slicer::REL_SLICER_CACHE, &pc.part));
+        }
+        out.slicer_names.pivot_written = planned;
+        rids
     }
 
     /// Adds the workbook relationships to the caches; returns the `<pivotCaches>` element (empty
@@ -399,6 +435,11 @@ fn group_cache_fields(fields: &mut Vec<CField>, axis: &[&PivotField], date_syste
     }
 }
 
+/// Whether a slicer of the workbook filters the PivotTable with id `id`.
+fn has_slicer(wb: &Workbook, id: u32) -> bool {
+    wb.sheets.iter().any(|sh| sh.slicers.iter().any(|s| s.pivot == Some(id)))
+}
+
 fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cache> {
     let (si, r, source_xml) = resolve_source(wb, &pt.source, pivot_sheet, 0)?;
     if r.count() > MAX_SOURCE_CELLS {
@@ -457,6 +498,15 @@ fn build_cache(wb: &Workbook, pt: &PivotTable, pivot_sheet: usize) -> Option<Cac
         if !on_axis
             && let Some(i) = find(&fields, &f.source_col)
             && let Some(cf) = fields.get_mut(i)
+        {
+            cf.itemized = true;
+        }
+    }
+    // A slicer's field lists its items in the slicer cache by their shared item index.
+    for sl in wb.sheets.iter().flat_map(|sh| sh.slicers.iter()).filter(|sl| sl.pivot == Some(pt.id)) {
+        if let Some(i) = find(&fields, &sl.column)
+            && let Some(cf) = fields.get_mut(i)
+            && cf.group.is_none()
         {
             cf.itemized = true;
         }
@@ -544,7 +594,7 @@ fn item_xml(v: &Value, sys: DateSystem, date: bool) -> String {
     }
 }
 
-fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
+fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem, slicer_id: Option<u32>) -> String {
     let mut s = format!("{XML_DECL}<pivotCacheDefinition xmlns=\"{NS_MAIN}\" xmlns:r=\"{NS_REL}\"");
     match (records_rid, &c.records) {
         (Some(rid), Some((count, _))) => {
@@ -645,7 +695,14 @@ fn cache_xml(c: &Cache, records_rid: Option<&str>, sys: DateSystem) -> String {
         }
         s.push_str("</cacheField>");
     }
-    s.push_str("</cacheFields></pivotCacheDefinition>");
+    s.push_str("</cacheFields>");
+    if let Some(id) = slicer_id {
+        let _ = write!(
+            s,
+            "<extLst><ext uri=\"{{725AE2AE-9491-48be-B2B4-4EB974FC3084}}\" xmlns:x14=\"{NS_X14}\"><x14:pivotCacheDefinition pivotCacheId=\"{id}\"/></ext></extLst>"
+        );
+    }
+    s.push_str("</pivotCacheDefinition>");
     s
 }
 
@@ -681,11 +738,12 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
                 }
             }
             None => {
-                if let Some(i) = find_db(&f.source_col)
-                    && !pages.iter().any(|(j, _)| *j == i)
-                {
-                    pages.push((i, f));
-                    hidden.insert(i, f);
+                if let Some(i) = find_db(&f.source_col) {
+                    // A slicer's field in no area hides items without being a page field.
+                    if !f.hidden_only && !pages.iter().any(|(j, _)| *j == i) {
+                        pages.push((i, f));
+                    }
+                    hidden.entry(i).or_insert(f);
                 }
             }
         }
@@ -715,6 +773,9 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
     }
     if !pt.enable_show_details {
         s.push_str(" enableDrill=\"0\"");
+    }
+    if !pt.show_expand_buttons {
+        s.push_str(" showDrill=\"0\"");
     }
     // `rowGrandTotals` is the grand total row below the report (Excel's "On for Columns"),
     // `colGrandTotals` the grand total column at its right ("On for Rows").
@@ -769,6 +830,7 @@ fn table_xml(pt: &PivotTable, idx: usize, cache_id: u32, c: &Cache, fmt_id: &dyn
         let _ = write!(s, " name=\"{}\"", esc_attr(&pt.style));
     }
     s.push_str(" showRowHeaders=\"1\" showColHeaders=\"1\" showRowStripes=\"0\" showColStripes=\"0\" showLastColumn=\"1\"/>");
+    write_filters(&mut s, pt, c, &layout);
     if hide_values_row {
         let _ = write!(
             s,
@@ -842,7 +904,18 @@ fn write_pivot_fields(s: &mut String, pt: &PivotTable, c: &Cache, layout: &Pivot
         if !pt.subtotals_top {
             s.push_str(" subtotalTop=\"0\"");
         }
-        if axis.is_some() {
+        let row_axis = axis == Some("axisRow");
+        if pt.blank_rows && row_axis {
+            s.push_str(" insertBlankRow=\"1\"");
+        }
+        if axis.is_none() && filter.is_some_and(|f| f.hidden_only) && !labels.is_empty() {
+            // A field in no area that a slicer filters: its items, the unselected ones hidden.
+            let _ = write!(s, "><items count=\"{}\">", labels.len() + 1);
+            for (x, _) in labels.iter().enumerate() {
+                let _ = write!(s, "<item x=\"{x}\"{}/>", if hide.get(x).copied().unwrap_or(false) { " h=\"1\"" } else { "" });
+            }
+            s.push_str("<item t=\"default\"/></items></pivotField>");
+        } else if axis.is_some() {
             let collapsed: &[String] = axis_field(pt, c, i).map(|f| f.collapsed_items.as_slice()).unwrap_or(&[]);
             let count = labels.len() + usize::from(pt.subtotals);
             let _ = write!(s, "><items count=\"{count}\">");
@@ -859,7 +932,14 @@ fn write_pivot_fields(s: &mut String, pt: &PivotTable, c: &Cache, layout: &Pivot
             if pt.subtotals {
                 s.push_str("<item t=\"default\"/>");
             }
-            s.push_str("</items></pivotField>");
+            s.push_str("</items>");
+            if pt.repeat_labels && axis != Some("axisPage") {
+                let _ = write!(
+                    s,
+                    "<extLst><ext uri=\"{EXT_X14_PIVOT_FIELD}\" xmlns:x14=\"{NS_X14}\"><x14:pivotField fillDownLabels=\"1\"/></ext></extLst>"
+                );
+            }
+            s.push_str("</pivotField>");
         } else {
             s.push_str("/>");
         }
@@ -966,4 +1046,130 @@ fn axis_fields_xml(s: &mut String, tag: &str, idx: &[usize], values_at: Option<u
         s.push_str("<field x=\"-2\"/>");
     }
     let _ = write!(s, "</{tag}>");
+}
+
+/// The `x14:pivotField` extension (Repeat All Item Labels is its `fillDownLabels`).
+pub(super) const EXT_X14_PIVOT_FIELD: &str = "{2946ED86-A175-432a-8AC1-64E0C546D7DE}";
+
+/// The `filter type` of a Label Filter (`captionBeginsWith`).
+pub(super) fn label_filter_type(op: PivotLabelOp) -> String {
+    let n = op.name();
+    let mut c = n.chars();
+    let first = c.next().map(|x| x.to_ascii_uppercase().to_string()).unwrap_or_default();
+    format!("caption{first}{}", c.as_str())
+}
+
+/// The `filter type` of a Value Filter (`valueGreaterThan`; Top 10 is `count`, `percent` or `sum`).
+pub(super) fn value_filter_type(f: &PivotValueFilter) -> String {
+    if f.op == PivotValueOp::Top10 {
+        return match f.top_by {
+            PivotTopBy::Items => "count",
+            PivotTopBy::Percent => "percent",
+            PivotTopBy::Sum => "sum",
+        }
+        .into();
+    }
+    let n = f.op.name();
+    let mut c = n.chars();
+    let first = c.next().map(|x| x.to_ascii_uppercase().to_string()).unwrap_or_default();
+    format!("value{first}{}", c.as_str())
+}
+
+/// A custom filter condition as an AutoFilter writes it (`operator` left out for equal).
+fn custom_filter(op: &str, val: &str) -> String {
+    if op.is_empty() {
+        format!("<customFilter val=\"{}\"/>", esc_attr(val))
+    } else {
+        format!("<customFilter operator=\"{op}\" val=\"{}\"/>", esc_attr(val))
+    }
+}
+
+/// The `<filterColumn>` content of a Label Filter: its condition as AutoFilter custom filters,
+/// with `*` wildcards for Begins With, Ends With and Contains.
+fn label_filter_column(f: &PivotLabelFilter) -> String {
+    let (a, b) = (f.value.as_str(), f.value2.as_str());
+    let one = |op: &str, v: String| format!("<customFilters>{}</customFilters>", custom_filter(op, &v));
+    match f.op {
+        PivotLabelOp::Equal => one("", a.into()),
+        PivotLabelOp::NotEqual => one("notEqual", a.into()),
+        PivotLabelOp::BeginsWith => one("", format!("{a}*")),
+        PivotLabelOp::NotBeginsWith => one("notEqual", format!("{a}*")),
+        PivotLabelOp::EndsWith => one("", format!("*{a}")),
+        PivotLabelOp::NotEndsWith => one("notEqual", format!("*{a}")),
+        PivotLabelOp::Contains => one("", format!("*{a}*")),
+        PivotLabelOp::NotContains => one("notEqual", format!("*{a}*")),
+        PivotLabelOp::GreaterThan => one("greaterThan", a.into()),
+        PivotLabelOp::GreaterThanOrEqual => one("greaterThanOrEqual", a.into()),
+        PivotLabelOp::LessThan => one("lessThan", a.into()),
+        PivotLabelOp::LessThanOrEqual => one("lessThanOrEqual", a.into()),
+        PivotLabelOp::Between => {
+            format!("<customFilters and=\"1\">{}{}</customFilters>", custom_filter("greaterThanOrEqual", a), custom_filter("lessThanOrEqual", b))
+        }
+        PivotLabelOp::NotBetween => format!("<customFilters>{}{}</customFilters>", custom_filter("lessThan", a), custom_filter("greaterThan", b)),
+    }
+}
+
+fn value_filter_column(f: &PivotValueFilter) -> String {
+    let num = |v: f64| gridcraft_core::number_to_text(v);
+    let one = |op: &str, v: f64| format!("<customFilters>{}</customFilters>", custom_filter(op, &num(v)));
+    match f.op {
+        PivotValueOp::Equal => one("", f.value),
+        PivotValueOp::NotEqual => one("notEqual", f.value),
+        PivotValueOp::GreaterThan => one("greaterThan", f.value),
+        PivotValueOp::GreaterThanOrEqual => one("greaterThanOrEqual", f.value),
+        PivotValueOp::LessThan => one("lessThan", f.value),
+        PivotValueOp::LessThanOrEqual => one("lessThanOrEqual", f.value),
+        PivotValueOp::Between => format!(
+            "<customFilters and=\"1\">{}{}</customFilters>",
+            custom_filter("greaterThanOrEqual", &num(f.value)),
+            custom_filter("lessThanOrEqual", &num(f.value2))
+        ),
+        PivotValueOp::NotBetween => {
+            format!("<customFilters>{}{}</customFilters>", custom_filter("lessThan", &num(f.value)), custom_filter("greaterThan", &num(f.value2)))
+        }
+        PivotValueOp::Top10 => format!(
+            "<top10{}{} val=\"{}\" filterVal=\"{}\"/>",
+            if f.bottom { " top=\"0\"" } else { "" },
+            if f.top_by == PivotTopBy::Percent { " percent=\"1\"" } else { "" },
+            num(f.value),
+            num(f.value)
+        ),
+    }
+}
+
+/// The Label and Value Filters of the axis fields (`<filters>`, after the style info).
+fn write_filters(s: &mut String, pt: &PivotTable, c: &Cache, layout: &PivotTableLayout<'_>) {
+    let mut body = String::new();
+    let mut n = 0u32;
+    for (p, af) in pt.rows.iter().chain(pt.columns.iter()).enumerate() {
+        let Some(Some(fld)) = c.axis_map.get(p) else { continue };
+        if let Some(lf) = &af.label_filter {
+            n += 1;
+            let _ = write!(
+                body,
+                "<filter fld=\"{fld}\" type=\"{}\" evalOrder=\"-1\" id=\"{n}\" stringValue1=\"{}\"",
+                label_filter_type(lf.op),
+                esc_attr(&lf.value)
+            );
+            if lf.op.two_values() {
+                let _ = write!(body, " stringValue2=\"{}\"", esc_attr(&lf.value2));
+            }
+            let _ =
+                write!(body, "><autoFilter ref=\"A1\"><filterColumn colId=\"0\">{}</filterColumn></autoFilter></filter>", label_filter_column(lf));
+        }
+        if let Some(vf) = &af.value_filter {
+            // The value field by its place among the data fields.
+            let Some(measure) = layout.values.iter().position(|(_, v)| same(&v.name, &vf.value_field)) else { continue };
+            n += 1;
+            let _ = write!(
+                body,
+                "<filter fld=\"{fld}\" type=\"{}\" evalOrder=\"-1\" id=\"{n}\" iMeasureFld=\"{measure}\"><autoFilter ref=\"A1\"><filterColumn colId=\"0\">{}</filterColumn></autoFilter></filter>",
+                value_filter_type(vf),
+                value_filter_column(vf)
+            );
+        }
+    }
+    if n > 0 {
+        let _ = write!(s, "<filters count=\"{n}\">{body}</filters>");
+    }
 }

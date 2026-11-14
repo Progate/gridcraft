@@ -52,6 +52,9 @@ pub(super) struct Item {
     first: usize,
     /// The value is a number shown with the source format.
     pub(super) formatted: bool,
+    /// How text items compare: Japanese Excel lists 駅前店 before 公園通り店 (JIS order), as its
+    /// Sort does, where code-point order would put it last.
+    coll: gridcraft_core::Collation,
 }
 
 #[derive(Default)]
@@ -61,12 +64,14 @@ pub(super) struct FieldItems {
 }
 
 fn cmp_items(a: &Item, b: &Item) -> Ordering {
-    a.class.cmp(&b.class).then(a.num.total_cmp(&b.num)).then_with(|| gridcraft_core::compare_text(&a.text, &b.text))
+    a.class.cmp(&b.class).then(a.num.total_cmp(&b.num)).then_with(|| a.coll.compare_text(&a.text, &b.text))
 }
 
 /// (identity key, item) for a source value under a field's grouping.
 fn make_item(wb: &Workbook, v: &Value, group: Grouping, fmt: &str, first: usize) -> (String, Item) {
+    let coll = gridcraft_core::Collation::for_region(wb.region);
     let it = |value: Value, label: String, class: u8, num: f64, formatted: bool| Item {
+        coll,
         text: label.to_lowercase(),
         value,
         label,
@@ -277,6 +282,10 @@ pub struct Captions {
     pub values: &'static str,
     /// Before a value field's name in its grand total row (`Total Sum of Sales`).
     pub total_of: &'static str,
+    /// A report filter that selects every item (`(All)`, `(すべて)`).
+    pub all: &'static str,
+    /// A report filter that selects some items (`(Multiple Items)`, `(複数のアイテム)`).
+    pub multiple: &'static str,
     pub japanese: bool,
 }
 
@@ -287,6 +296,8 @@ pub static CAPTIONS_EN: Captions = Captions {
     total: "Total",
     values: "Values",
     total_of: "Total",
+    all: "(All)",
+    multiple: "(Multiple Items)",
     japanese: false,
 };
 pub static CAPTIONS_JA: Captions = Captions {
@@ -296,6 +307,8 @@ pub static CAPTIONS_JA: Captions = Captions {
     total: "集計",
     values: "値",
     total_of: "全体の",
+    all: "(すべて)",
+    multiple: "(複数のアイテム)",
     japanese: true,
 };
 

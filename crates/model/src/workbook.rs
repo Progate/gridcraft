@@ -470,6 +470,13 @@ impl Workbook {
     pub fn is_grouped(&self) -> bool {
         self.selected_sheets().len() > 1
     }
+    /// The name Excel gives a sheet it adds for a PivotTable (or Show Details): `SheetN` with N one
+    /// more than the number of sheets, the next free one when that's taken. Excel counts the
+    /// sheets the workbook had when it was opened plus those added since; a book of 売上明細 and
+    /// 関数の集計 gets `Sheet3`, not the first free `Sheet1`.
+    pub fn excel_new_sheet_name(&self) -> String {
+        (self.sheets.len() + 1..).map(|n| format!("Sheet{n}")).find(|n| self.sheet_index(n).is_none()).unwrap_or_else(|| "Sheet".into())
+    }
     /// A fresh sheet name `SheetN` not in use.
     pub fn next_sheet_name(&self) -> String {
         (1..).map(|n| format!("Sheet{n}")).find(|n| self.sheet_index(n).is_none()).unwrap_or_else(|| "Sheet".into())

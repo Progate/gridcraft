@@ -47,6 +47,35 @@ impl OutCell {
     }
 }
 
+/// Which area a field button's field is in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonArea {
+    Rows,
+    Columns,
+    Filters,
+}
+
+/// A button the report shows on its cells: the ▼ of 行ラベル / 列ラベル (a field header in the
+/// Outline and Tabular layouts, a report filter's value), or the +/- of an item with items below.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PivotButton {
+    /// Filter and sort menu for the fields named (the captions the field list shows).
+    Field { row: u32, col: u32, area: ButtonArea, fields: Vec<String> },
+    /// Expand/collapse an item of a row field.
+    Expand { row: u32, col: u32, field: String, item: String, collapsed: bool },
+}
+
+impl PivotButton {
+    /// (row, column) of the button's cell, relative to the report's top-left.
+    pub fn cell(&self) -> (u32, u32) {
+        match self {
+            PivotButton::Field { row, col, .. } | PivotButton::Expand { row, col, .. } => (*row, *col),
+        }
+    }
+}
+
 /// A computed report: a dense grid relative to its top-left, with row kinds.
 #[derive(Clone, Debug)]
 pub struct Output {
@@ -61,6 +90,8 @@ pub struct Output {
     pub chart_cols: Vec<(u32, String)>,
     /// Grid column holding the innermost row labels (`None` without row fields).
     pub label_col: Option<u32>,
+    /// The field and +/- buttons on the report's cells.
+    pub buttons: Vec<PivotButton>,
 }
 
 impl Output {
@@ -100,6 +131,8 @@ pub(super) enum LineKind {
     Item(bool),
     Subtotal,
     Grand,
+    /// Design › Blank Rows: the empty line after an item's group.
+    Blank,
 }
 
 pub(super) struct Line {
@@ -112,6 +145,9 @@ pub(super) struct Line {
     pub(super) labels: Vec<(usize, Value, u8, Option<String>)>,
     /// The value field of the line when Σ Values sits in Rows (`None`: one per data column).
     pub(super) vi: Option<usize>,
+    /// Row items on this line that have items below them, for their +/- buttons: (column,
+    /// field depth, caption, collapsed).
+    pub(super) toggles: Vec<(usize, usize, String, bool)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -168,10 +204,34 @@ impl Ctx<'_> {
         vi.is_none() && self.vpos == Some(depth)
     }
 
+    /// Design › Repeat All Item Labels: the captions of an item's parents, in their own
+    /// columns, for a line of the Outline or Tabular layout (`depth` levels above it). Only
+    /// without Σ Values in Rows, whose level would sit among them.
+    fn parent_labels(&self, prefix: &[u32], depth: usize) -> Vec<(usize, Value, u8, Option<String>)> {
+        if !self.pt.repeat_labels || self.pt.layout == PivotLayout::Compact || self.vpos.is_some() {
+            return Vec::new();
+        }
+        (0..depth)
+            .filter_map(|d| {
+                let item = *prefix.get(d)?;
+                let (v, fmt, _) = self.label_cell(d, item);
+                Some((d, v, 0, fmt))
+            })
+            .collect()
+    }
+
+    /// Design › Blank Rows: an empty line after an item's group.
+    fn blank_line(&self, prefix: &[u32], out: &mut Vec<Line>) {
+        if self.pt.blank_rows {
+            out.push(Line { toggles: vec![], kind: LineKind::Blank, leaf: false, path: prefix.to_vec(), values: false, labels: vec![], vi: None });
+        }
+    }
+
     /// Per-value subtotal lines of an item with Σ Values below it ("East Sum of Sales").
     fn value_subtotals(&self, col: usize, indent: u8, label: &str, prefix: &[u32], out: &mut Vec<Line>) {
         for (vi, name) in self.val_names.iter().enumerate() {
             out.push(Line {
+                toggles: vec![],
                 kind: LineKind::Subtotal,
                 leaf: false,
                 path: prefix.to_vec(),
@@ -189,7 +249,7 @@ impl Ctx<'_> {
         for (vi, name) in self.val_names.iter().enumerate() {
             let labels = vec![(col, Value::text(name.as_str()), indent, None)];
             let leaf = nodes.is_empty();
-            out.push(Line { kind: LineKind::Item(!leaf), leaf, path: prefix.clone(), values: leaf, labels, vi: Some(vi) });
+            out.push(Line { toggles: vec![], kind: LineKind::Item(!leaf), leaf, path: prefix.clone(), values: leaf, labels, vi: Some(vi) });
             if !leaf {
                 self.flatten(nodes, depth, Some(vi), prefix, out);
             }
@@ -207,20 +267,18 @@ impl Ctx<'_> {
         let (col, indent) = self.level_cell(depth + usize::from(vi.is_some() && self.vpos.is_some()));
         for node in nodes {
             prefix.push(node.item);
+            let first = out.len();
             let (v, fmt, label) = self.label_cell(depth, node.item);
             let collapsed = depth + 1 < n && self.rows.get(depth).is_some_and(|f| is_collapsed(f, &label));
+            let toggle = (depth + 1 < n).then(|| (col, depth, label.clone(), collapsed));
             let leaf = depth + 1 >= n || collapsed || node.children.is_empty();
             if leaf && !values_below {
-                out.push(Line {
-                    kind: LineKind::Item(depth + 1 < n),
-                    leaf: true,
-                    path: prefix.clone(),
-                    values: true,
-                    labels: vec![(col, v, indent, fmt)],
-                    vi,
-                });
+                let mut labels = self.parent_labels(prefix, depth);
+                labels.push((col, v, indent, fmt));
+                out.push(Line { toggles: vec![], kind: LineKind::Item(depth + 1 < n), leaf: true, path: prefix.clone(), values: true, labels, vi });
             } else if leaf {
                 out.push(Line {
+                    toggles: vec![],
                     kind: LineKind::Item(true),
                     leaf: false,
                     path: prefix.clone(),
@@ -235,6 +293,7 @@ impl Ctx<'_> {
             } else if values_below {
                 // Subtotals per value field, below the group (one line can't hold them all).
                 out.push(Line {
+                    toggles: vec![],
                     kind: LineKind::Item(true),
                     leaf: false,
                     path: prefix.clone(),
@@ -246,19 +305,16 @@ impl Ctx<'_> {
                 if self.pt.subtotals {
                     self.value_subtotals(col, indent, &label, prefix, out);
                 }
+                self.blank_line(prefix, out);
             } else {
                 let top = self.pt.subtotals && self.pt.subtotals_top;
-                out.push(Line {
-                    kind: LineKind::Item(true),
-                    leaf: false,
-                    path: prefix.clone(),
-                    values: top,
-                    labels: vec![(col, v, indent, fmt)],
-                    vi,
-                });
+                let mut labels = self.parent_labels(prefix, depth);
+                labels.push((col, v, indent, fmt));
+                out.push(Line { toggles: vec![], kind: LineKind::Item(true), leaf: false, path: prefix.clone(), values: top, labels, vi });
                 self.flatten(&node.children, depth + 1, vi, prefix, out);
                 if self.pt.subtotals && !self.pt.subtotals_top {
                     out.push(Line {
+                        toggles: vec![],
                         kind: LineKind::Subtotal,
                         leaf: false,
                         path: prefix.clone(),
@@ -267,6 +323,10 @@ impl Ctx<'_> {
                         vi,
                     });
                 }
+                self.blank_line(prefix, out);
+            }
+            if let (Some(t), Some(line)) = (toggle, out.get_mut(first)) {
+                line.toggles.push(t);
             }
             prefix.pop();
         }
@@ -285,7 +345,7 @@ impl Ctx<'_> {
             let mut labels: Vec<(usize, Value, u8, Option<String>)> = if vi == 0 { pending.to_vec() } else { vec![] };
             labels.push((depth, Value::text(name.as_str()), 0, None));
             if nodes.is_empty() {
-                out.push(Line { kind: LineKind::Item(false), leaf: true, path: prefix.clone(), values: true, labels, vi: Some(vi) });
+                out.push(Line { toggles: vec![], kind: LineKind::Item(false), leaf: true, path: prefix.clone(), values: true, labels, vi: Some(vi) });
             } else {
                 self.flatten_tabular(nodes, depth, Some(vi), prefix, &labels, out);
             }
@@ -310,15 +370,16 @@ impl Ctx<'_> {
         let col = depth + usize::from(vi.is_some() && self.vpos.is_some());
         for (i, node) in nodes.iter().enumerate() {
             prefix.push(node.item);
+            let first = out.len();
             let (v, fmt, label) = self.label_cell(depth, node.item);
-            let mut labels: Vec<(usize, Value, u8, Option<String>)> = if i == 0 { pending.to_vec() } else { vec![] };
+            let mut labels: Vec<(usize, Value, u8, Option<String>)> = if i == 0 { pending.to_vec() } else { self.parent_labels(prefix, depth) };
             labels.push((col, v, 0, fmt));
             let collapsed = depth + 1 < n && self.rows.get(depth).is_some_and(|f| is_collapsed(f, &label));
             if depth + 1 >= n || collapsed || node.children.is_empty() {
                 if values_below {
                     self.flatten_tabular_values(&[], self.vpos.unwrap_or(depth + 1), prefix, &labels, out);
                 } else {
-                    out.push(Line { kind: LineKind::Item(false), leaf: true, path: prefix.clone(), values: true, labels, vi });
+                    out.push(Line { toggles: vec![], kind: LineKind::Item(false), leaf: true, path: prefix.clone(), values: true, labels, vi });
                 }
             } else {
                 self.flatten_tabular(&node.children, depth + 1, vi, prefix, &labels, out);
@@ -326,6 +387,7 @@ impl Ctx<'_> {
                     self.value_subtotals(col, 0, &label, prefix, out);
                 } else if self.pt.subtotals {
                     out.push(Line {
+                        toggles: vec![],
                         kind: LineKind::Subtotal,
                         leaf: false,
                         path: prefix.clone(),
@@ -334,6 +396,13 @@ impl Ctx<'_> {
                         vi,
                     });
                 }
+                self.blank_line(prefix, out);
+            }
+            if depth + 1 < n
+                && let Some(line) = out.get_mut(first)
+            {
+                let collapsed = self.rows.get(depth).is_some_and(|f| is_collapsed(f, &label));
+                line.toggles.push((col, depth, label.clone(), collapsed));
             }
             prefix.pop();
         }

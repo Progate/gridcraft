@@ -336,7 +336,7 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
 
     let mut names = write_defined_names(wb, &kept, &out.chart_names);
     // A slicer cache's name is also a workbook name, which Excel defines as #N/A.
-    for (cache, _) in &out.slicer_names.written {
+    for cache in out.slicer_names.written.iter().map(|(c, _)| c).chain(out.slicer_names.pivot_written.iter().map(|p| &p.name)) {
         let _ = write!(names, "<definedName name=\"{}\">#N/A</definedName>", esc_attr(cache));
     }
 
@@ -402,8 +402,11 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     }
     w.push_str("/>");
     w.push_str(&pivots.workbook_xml(&mut wb_rels));
+    let pivot_cache_rids = pivots.write_slicer_caches(wb, &mut out, &mut wb_rels);
     let cache_rids: Vec<String> = out.slicer_names.written.iter().map(|(_, part)| wb_rels.add_uri(crate::slicer::REL_SLICER_CACHE, part)).collect();
-    let exts = crate::slicer::workbook_ext(&cache_rids) + &crate::passthrough::workbook_elements(wb, "ext");
+    let exts = crate::slicer::pivot_workbook_ext(&pivot_cache_rids)
+        + &crate::slicer::workbook_ext(&cache_rids)
+        + &crate::passthrough::workbook_elements(wb, "ext");
     if !exts.is_empty() {
         let _ = write!(w, "<extLst>{exts}</extLst>");
     }
@@ -600,6 +603,7 @@ fn write_sheets(
         };
         let name: String = sheet.name.chars().take(31).collect();
         let sheet_id = ids.take(sheet.file_id);
+        pivots.note_sheet_id(i, sheet_id);
         let _ = write!(sheets_xml, "<sheet name=\"{}\" sheetId=\"{sheet_id}\"{state} r:id=\"{rid}\"/>", esc_attr(&name));
     }
     sheets_xml.push_str(&kept.sheet_entries(wb.sheets.len(), true, &mut ids));

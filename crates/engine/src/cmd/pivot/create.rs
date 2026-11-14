@@ -192,7 +192,7 @@ pub(super) fn insert_pivot(s: &mut Session, p: &Json) -> Result<Json> {
 /// Show Details sheet); returns its index.
 fn insert_sheet_before_active(cx: &mut Ctx) -> usize {
     let at = cx.wb.active_sheet().min(cx.wb.sheets.len());
-    let nm = cx.wb.next_sheet_name();
+    let nm = cx.wb.excel_new_sheet_name();
     cx.wb.sheets.insert(at, Arc::new(Sheet::new(nm)));
     for n in cx.wb.names.iter_mut() {
         if let Some(sc) = n.scope.as_mut()
@@ -397,6 +397,15 @@ fn axis_json(wb: &Workbook, pt: &PivotTable, f: &gridcraft_model::PivotField) ->
         m.insert("group".into(), json!("range"));
         m.insert("range".into(), json!({"start": g.start, "end": g.end, "interval": g.interval, "autoStart": g.auto_start, "autoEnd": g.auto_end}));
     }
+    if let (Some(l), Some(m)) = (&f.label_filter, j.as_object_mut()) {
+        m.insert("labelFilter".into(), json!({"op": l.op.name(), "value": l.value, "value2": l.value2}));
+    }
+    if let (Some(v), Some(m)) = (&f.value_filter, j.as_object_mut()) {
+        m.insert(
+            "valueFilter".into(),
+            json!({"op": v.op.name(), "valueField": v.value_field, "value": v.value, "value2": v.value2, "bottom": v.bottom}),
+        );
+    }
     j
 }
 
@@ -411,7 +420,7 @@ pub(super) fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "rows": pt.rows.iter().map(|f| axis_json(wb, pt, f)).collect::<Vec<_>>(),
         "columns": pt.columns.iter().map(|f| axis_json(wb, pt, f)).collect::<Vec<_>>(),
         "values": pt.values.iter().map(|v| json!({"field": v.source_col, "func": func_name(v.func), "name": v.name, "showAs": show_as_name(v.show_as), "numberFormat": v.number_format})).collect::<Vec<_>>(),
-        "filters": pt.filters.iter().map(|f| json!({"field": f.source_col, "selected": f.selected, "report": !in_axes(pt, &f.source_col)})).collect::<Vec<_>>(),
+        "filters": pt.filters.iter().map(|f| json!({"field": f.source_col, "selected": f.selected, "report": !in_axes(pt, &f.source_col) && !f.hidden_only})).collect::<Vec<_>>(),
         "layout": layout_name(pt.layout),
         "grandTotalsRows": pt.grand_totals_rows,
         "grandTotalsCols": pt.grand_totals_cols,
@@ -423,5 +432,8 @@ pub(super) fn pivot_json(wb: &Workbook, si: usize, pt: &PivotTable) -> Json {
         "valuesPosition": pt.values_position,
         "enableShowDetails": pt.enable_show_details,
         "lang": pt.lang,
+        "blankRows": pt.blank_rows,
+        "repeatLabels": pt.repeat_labels,
+        "expandButtons": pt.show_expand_buttons,
     })
 }

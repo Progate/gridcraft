@@ -47,7 +47,7 @@ pub(super) fn filter(s: &mut Session, p: &Json) -> Result<Json> {
                     f.selected = Some(sel);
                 }
             }
-            (None, Some(sel)) => pt.filters.push(PivotFilter { source_col: field.clone(), selected: Some(sel) }),
+            (None, Some(sel)) => pt.filters.push(PivotFilter { source_col: field.clone(), selected: Some(sel), hidden_only: false }),
             (None, None) => {}
         }
         Ok(json!({"field": field}))
@@ -159,6 +159,8 @@ pub(super) fn set_date_levels(pt: &mut PivotTable, rows: bool, i: usize, levels:
         date_end: if by == PivotDateGroup::None { None } else { end },
         date_days: if levels == [PivotDateGroup::Days] { days } else { 0 },
         range_group: None,
+        label_filter: None,
+        value_filter: None,
     };
     let fields: Vec<PivotField> = if levels.is_empty() { vec![make(PivotDateGroup::None)] } else { levels.iter().map(|g| make(*g)).collect() };
     for f in fields {
@@ -225,7 +227,7 @@ fn group_dates(s: &mut Session, p: &Json, field: String) -> Result<Json> {
 
 /// The row or column field whose item (or, in Outline and Tabular layouts, whose header) the active
 /// cell shows: what right-click ▸ Group… and Ungroup… act on.
-fn field_at_active_cell(s: &Session, p: &Json) -> Result<String> {
+pub(super) fn field_at_active_cell(s: &Session, p: &Json) -> Result<String> {
     const NOT_A_LABEL: &str = "Select a row or column label of the PivotTable to group.";
     let (si, pi) = find_pivot(s, p)?;
     let d = s.doc()?;

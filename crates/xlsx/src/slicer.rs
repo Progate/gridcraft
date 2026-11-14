@@ -24,12 +24,17 @@ const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main
 const EXT_WORKBOOK_TABLE_CACHES: &str = "{46BE6895-7355-4a93-B00E-2C351335B9C9}";
 /// Worksheet extension listing the slicer parts of table slicers.
 pub const EXT_SHEET_TABLE_SLICERS: &str = "{3A4CF648-6AED-40f4-86FF-DC5316D8AED3}";
+/// Workbook extension listing the PivotTable slicer caches (Excel 2010).
+const EXT_WORKBOOK_PIVOT_CACHES: &str = "{BBE1A952-AA13-448e-AADC-164F8A28A991}";
+/// Worksheet extension listing the slicer parts of PivotTable slicers (Excel 2010).
+pub const EXT_SHEET_PIVOT_SLICERS: &str = "{A8765BA9-456A-4dab-B4F3-ACF838C121DE}";
 /// Slicer cache extension naming the table and column.
 const EXT_TABLE_SLICER_CACHE: &str = "{2F2917AC-EB37-4324-AD4E-5DD8C200BD13}";
 /// Height of one slicer button, in EMUs (0.25 inch, Excel's default).
 const ROW_HEIGHT: u32 = 241_300;
 
 /// A slicer as written: its unique names and what its cache points at.
+#[derive(Clone)]
 pub struct Planned<'a> {
     pub slicer: &'a Slicer,
     /// The slicer's name (unique in the workbook), also the drawing frame's name.
@@ -39,6 +44,18 @@ pub struct Planned<'a> {
     pub table_id: u32,
     /// The `tableColumn` id of the filtered column (one-based position).
     pub column_id: u32,
+    /// For a PivotTable slicer, the PivotTable's id (then `table_id` and `column_id` are 0).
+    pub pivot: Option<u32>,
+}
+
+/// A PivotTable slicer cache to write once every sheet's id and PivotTable cache is known.
+pub struct PivotCacheOut {
+    pub name: String,
+    /// Workbook-relative part name.
+    pub part: String,
+    pub pivot: u32,
+    /// The source field filtered.
+    pub field: String,
 }
 
 /// Names used so far in the workbook being written: slicer names and cache names (which are also
@@ -49,11 +66,20 @@ pub struct Names {
     caches: HashSet<String>,
     /// Cache parts written, with their cache names, for the workbook's extension and names.
     pub written: Vec<(String, String)>,
+    /// PivotTable slicer caches, written after the sheets.
+    pub pivot_written: Vec<PivotCacheOut>,
+    /// Japanese Excel names a slicer cache スライサー_店舗 rather than Slicer_店舗.
+    japanese: bool,
 }
 
 impl Names {
     pub fn new(wb: &gridcraft_model::Workbook) -> Names {
-        Names { caches: wb.names.iter().map(|n| n.name.to_lowercase()).collect(), ..Names::default() }
+        Names { caches: wb.names.iter().map(|n| n.name.to_lowercase()).collect(), japanese: wb.region.is_japanese(), ..Names::default() }
+    }
+
+    /// The next slicer cache part's number (table and PivotTable caches share the numbering).
+    pub fn next_cache_part(&self) -> usize {
+        self.written.len() + self.pivot_written.len() + 1
     }
 
     fn slicer_name(&mut self, caption: &str) -> String {
@@ -69,7 +95,7 @@ impl Names {
 
     fn cache_name(&mut self, source: &str) -> String {
         let cleaned: String = source.chars().take(200).map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
-        let base = format!("Slicer_{cleaned}");
+        let base = if self.japanese { format!("スライサー_{cleaned}") } else { format!("Slicer_{cleaned}") };
         let mut name = base.clone();
         let mut k = 1;
         while !self.caches.insert(name.to_lowercase()) {
@@ -90,9 +116,61 @@ pub fn plan<'a>(slicers: &'a [Slicer], tables: &[(&str, u32, &[String])], names:
         let source = cols.get(ci).cloned().unwrap_or_default();
         let name = names.slicer_name(if sl.caption.is_empty() { &sl.column } else { &sl.caption });
         let cache = names.cache_name(&source);
-        out.push(Planned { slicer: sl, name, cache, table_id: *table_id, column_id: ci as u32 + 1 });
+        out.push(Planned { slicer: sl, name, cache, table_id: *table_id, column_id: ci as u32 + 1, pivot: None });
     }
     out
+}
+
+/// The sheet's PivotTable slicers that can be written: each filters a PivotTable of the workbook.
+pub fn plan_pivot<'a>(wb: &gridcraft_model::Workbook, slicers: &'a [Slicer], names: &mut Names) -> Vec<Planned<'a>> {
+    let mut out = Vec::new();
+    for sl in slicers {
+        let Some(id) = sl.pivot else { continue };
+        if !wb.sheets.iter().any(|sh| sh.pivots.iter().any(|p| p.id == id)) || sl.column.trim().is_empty() {
+            continue;
+        }
+        let name = names.slicer_name(if sl.caption.is_empty() { &sl.column } else { &sl.caption });
+        let cache = names.cache_name(&sl.column);
+        out.push(Planned { slicer: sl, name, cache, table_id: 0, column_id: 0, pivot: Some(id) });
+    }
+    out
+}
+
+/// A PivotTable slicer's cache part (Excel 2010's `x14` form): the PivotTable it filters (by its
+/// sheet's `sheetId` and its name), the cache the PivotTable reads (`pivotCacheId`) and the
+/// field's items (`x`: shared item index) with the selected ones marked `s="1"`.
+pub fn pivot_cache_xml(name: &str, source: &str, tab_id: u32, pivot_name: &str, pivot_cache_id: u32, items: &[(usize, bool)]) -> String {
+    let mut s = format!(
+        "{}<slicerCacheDefinition xmlns=\"{NS_X14}\" xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\" mc:Ignorable=\"x\" xmlns:x=\"{NS_MAIN}\" name=\"{}\" sourceName=\"{}\"><pivotTables><pivotTable tabId=\"{tab_id}\" name=\"{}\"/></pivotTables><data><tabular pivotCacheId=\"{pivot_cache_id}\"><items count=\"{}\">",
+        crate::write::XML_DECL,
+        esc_attr(name),
+        esc_attr(source),
+        esc_attr(pivot_name),
+        items.len()
+    );
+    for (x, on) in items {
+        let _ = write!(s, "<i x=\"{x}\"{}/>", if *on { " s=\"1\"" } else { "" });
+    }
+    s.push_str("</items></tabular></data></slicerCacheDefinition>");
+    s
+}
+
+/// The worksheet `<ext>` naming the sheet's PivotTable slicer part (relationship `rid`).
+pub fn pivot_sheet_ext(rid: &str) -> String {
+    format!("<ext uri=\"{EXT_SHEET_PIVOT_SLICERS}\" xmlns:x14=\"{NS_X14}\"><x14:slicerList><x14:slicer r:id=\"{rid}\"/></x14:slicerList></ext>")
+}
+
+/// The workbook `<ext>` listing the PivotTable slicer caches by relationship id.
+pub fn pivot_workbook_ext(rids: &[String]) -> String {
+    if rids.is_empty() {
+        return String::new();
+    }
+    let mut s = format!("<ext uri=\"{EXT_WORKBOOK_PIVOT_CACHES}\" xmlns:x14=\"{NS_X14}\"><x14:slicerCaches>");
+    for rid in rids {
+        let _ = write!(s, "<x14:slicerCache r:id=\"{rid}\"/>");
+    }
+    s.push_str("</x14:slicerCaches></ext>");
+    s
 }
 
 /// The sheet's slicer part.
@@ -160,6 +238,11 @@ pub fn frame_xml(name: &str, id: usize, anchor: &Anchor, xfrm: &dyn Fn(&Anchor, 
 pub struct CacheIn {
     pub name: String,
     pub table: Option<(u32, u32)>,
+    /// For a PivotTable slicer: the `sheetId` of its first PivotTable's sheet and that
+    /// PivotTable's name.
+    pub pivot: Option<(u32, String)>,
+    /// The field filtered.
+    pub source: String,
 }
 
 /// Reads one slicer cache part.
@@ -171,7 +254,10 @@ pub fn read_cache(x: &El) -> Option<CacheIn> {
         .flat_map(|l| l.kids("ext"))
         .filter_map(|e| e.child("tableSlicerCache"))
         .find_map(|t| Some((t.attr_u32("tableId")?, t.attr_u32("column")?)));
-    Some(CacheIn { name, table })
+    let pivot =
+        x.child("pivotTables").and_then(|p| p.kids("pivotTable").next()).and_then(|p| Some((p.attr_u32("tabId")?, p.attr("name")?.to_string())));
+    let source = x.attr("sourceName").unwrap_or_default().to_string();
+    Some(CacheIn { name, table, pivot, source })
 }
 
 /// A slicer listed in a sheet's slicer part.

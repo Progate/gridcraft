@@ -20,7 +20,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Slicer",
             ["Insert", "Filters"],
             None,
-            "{table?, column?: \"Region\", columns?: 1, at?: \"H2\", width?, height?}",
+            "{table?, column?: \"Region\", columns?: 1, at?: \"H2\", width?, height?} — with a cell of a PivotTable selected (or `pivot` given): {pivot?, field | fields: [..], at?, columns?} makes PivotTable slicers (see pivot.insertSlicer)",
             has_doc,
             insert_slicer
         ),
@@ -65,6 +65,9 @@ pub fn column_values(wb: &Workbook, sheet: usize, table: &str, column: &str) -> 
 /// A slicer's tiles as `(value, selected)`, for the UI. `selected` is true for every tile when the
 /// slicer has no filter (`selected == None`).
 pub fn slicer_items(wb: &Workbook, sheet: usize, sl: &Slicer) -> Vec<(String, bool)> {
+    if sl.pivot.is_some() {
+        return super::pivot::pivot_slicer_items(wb, sl);
+    }
     column_values(wb, sheet, &sl.table, &sl.column)
         .into_iter()
         .map(|v| {
@@ -99,6 +102,11 @@ fn reapply_slicer(wb: &mut Workbook, sheet: usize, id: u32) {
 }
 
 fn insert_slicer(s: &mut Session, p: &Json) -> Result<Json> {
+    // With a cell of a PivotTable selected (and no table named), Insert › Slicer makes a
+    // slicer for the PivotTable, as in Excel.
+    if p.get("pivot").is_some_and(|v| !v.is_null()) || (str_param(p, "table").is_none() && pivot_at_active(s)) {
+        return super::pivot::insert_pivot_slicer(s, p);
+    }
     // A table named by `table` is found on any sheet, as the other table commands find it, and the slicer goes on that
     // table's sheet. Looked up on the active sheet only, a named table on another sheet gave "Select a cell inside a
     // table first, or pass `table`" although `table` was passed.
@@ -145,10 +153,19 @@ fn insert_slicer(s: &mut Session, p: &Json) -> Result<Json> {
         anchor: Anchor { cell: at, dx: 4.0, dy: 4.0, width, height, mode: AnchorMode::MoveOnly },
         selected: None,
         columns,
+        pivot: None,
     };
     edit(s, |cx| {
         cx.sheet_mut(sheet)?.slicers.push(slicer);
         Ok(json!({"slicer": id}))
+    })
+}
+
+/// Whether the active cell is in a PivotTable report and not in a table.
+fn pivot_at_active(s: &Session) -> bool {
+    s.doc().ok().is_some_and(|d| {
+        let at = d.selection.active;
+        d.wb.active().is_some_and(|sh| sh.table_at(at).is_none() && sh.pivots.iter().any(|pt| pt.last_range.is_some_and(|r| r.contains(at))))
     })
 }
 
@@ -168,12 +185,20 @@ fn slicer_toggle(s: &mut Session, p: &Json) -> Result<Json> {
     let value = str_param(p, "value").ok_or_else(|| bad("slicer.toggle", "missing `value`"))?.to_string();
     let multi = bool_param(p, "multi").unwrap_or(false);
     let sheet = s.doc()?.wb.active_sheet();
-    let (table, column, current) = {
-        let d = s.doc()?;
-        let sl = d.wb.active().and_then(|sh| sh.slicers.get(idx)).ok_or_else(|| bad("slicer.toggle", "no slicer"))?;
-        (sl.table.clone(), sl.column.clone(), sl.selected.clone())
+    let slicer = s.doc()?.wb.active().and_then(|sh| sh.slicers.get(idx)).cloned().ok_or_else(|| bad("slicer.toggle", "no slicer"))?;
+    let (table, column, current) = if slicer.pivot.is_some() {
+        // A pivot slicer's selection is its PivotTable's filter on the field.
+        let items = super::pivot::pivot_slicer_items(&s.doc()?.wb, &slicer);
+        let all_on = items.iter().all(|(_, on)| *on);
+        (String::new(), slicer.column.clone(), (!all_on).then(|| items.iter().filter(|(_, on)| *on).map(|(v, _)| v.clone()).collect()))
+    } else {
+        (slicer.table.clone(), slicer.column.clone(), slicer.selected.clone())
     };
-    let all = column_values(&s.doc()?.wb, sheet, &table, &column);
+    let all = if slicer.pivot.is_some() {
+        super::pivot::pivot_slicer_items(&s.doc()?.wb, &slicer).into_iter().map(|(v, _)| v).collect()
+    } else {
+        column_values(&s.doc()?.wb, sheet, &table, &column)
+    };
     if !all.iter().any(|v| v.eq_ignore_ascii_case(&value)) {
         return Err(bad("slicer.toggle", "value is not in the column"));
     }
@@ -194,6 +219,9 @@ fn slicer_toggle(s: &mut Session, p: &Json) -> Result<Json> {
             _ => Some(vec![value.clone()]),
         }
     };
+    if slicer.pivot.is_some() {
+        return super::pivot::set_pivot_slicer(s, &slicer, new_selected);
+    }
     edit(s, |cx| {
         if let Some(sl) = cx.sheet_mut(sheet)?.slicers.get_mut(idx) {
             sl.selected = new_selected;
@@ -207,6 +235,9 @@ fn slicer_toggle(s: &mut Session, p: &Json) -> Result<Json> {
 fn slicer_select_all(s: &mut Session, p: &Json) -> Result<Json> {
     let (idx, id) = find_slicer(s, p)?;
     let sheet = s.doc()?.wb.active_sheet();
+    if let Some(sl) = s.doc()?.wb.active().and_then(|sh| sh.slicers.get(idx)).filter(|sl| sl.pivot.is_some()).cloned() {
+        return super::pivot::set_pivot_slicer(s, &sl, None);
+    }
     edit(s, |cx| {
         if let Some(sl) = cx.sheet_mut(sheet)?.slicers.get_mut(idx) {
             sl.selected = None;
@@ -220,6 +251,14 @@ fn slicer_select_all(s: &mut Session, p: &Json) -> Result<Json> {
 fn slicer_delete(s: &mut Session, p: &Json) -> Result<Json> {
     let (idx, id) = find_slicer(s, p)?;
     let sheet = s.doc()?.wb.active_sheet();
+    // Deleting a pivot slicer leaves its PivotTable filtered, as Excel does.
+    if s.doc()?.wb.active().and_then(|sh| sh.slicers.get(idx)).is_some_and(|sl| sl.pivot.is_some()) {
+        return edit(s, |cx| {
+            cx.sheet_mut(sheet)?.slicers.retain(|x| x.id != id);
+            cx.structural = true;
+            Ok(Json::Null)
+        });
+    }
     // Absolute column of the slicer, so its filter criterion can be removed too.
     let abs_col = s.doc().ok().and_then(|d| {
         let sh = d.wb.active()?;

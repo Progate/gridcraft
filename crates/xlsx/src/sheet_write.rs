@@ -208,10 +208,17 @@ pub fn write_sheet(wb: &Workbook, si: usize, selected: bool, out: &mut Out) -> (
     let slicer_tables: Vec<(&str, u32, &[String])> =
         tables.iter().zip(&table_ids).map(|((t, cols), (_, id))| (t.name.as_str(), *id, cols.as_slice())).collect();
     let slicers = crate::slicer::plan(&sheet.slicers, &slicer_tables, &mut out.slicer_names);
+    let pivot_slicers = crate::slicer::plan_pivot(wb, &sheet.slicers, &mut out.slicer_names);
+    let all_slicers: Vec<crate::slicer::Planned<'_>> = slicers.iter().chain(pivot_slicers.iter()).cloned().collect();
 
-    write_sheet_drawing(&mut s, wb, si, sheet, &slicers, &mut rels, out);
+    write_sheet_drawing(&mut s, wb, si, sheet, &all_slicers, &mut rels, out);
     write_sheet_notes(&mut s, sheet, si, &kept, &mut rels, out);
-    let slicer_ext = write_sheet_slicers(&slicers, &mut rels, out);
+    // Excel 2010's PivotTable slicer list comes before Excel 2013's table slicer list.
+    let pivot_ext = write_sheet_pivot_slicers(&pivot_slicers, &mut rels, out);
+    let slicer_ext = match (pivot_ext, write_sheet_slicers(&slicers, &mut rels, out)) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or_default() + &b.unwrap_or_default()),
+    };
     // Tables.
     if !tables.is_empty() {
         let mut parts = String::new();
@@ -252,7 +259,7 @@ fn write_sheet_slicers(slicers: &[crate::slicer::Planned<'_>], rels: &mut Rels, 
     out.part(&format!("xl/slicers/slicer{n}.xml"), Some(crate::slicer::CT_SLICER), crate::slicer::slicers_xml(slicers).into_bytes());
     let rid = rels.add_uri(crate::slicer::REL_SLICER, &format!("../slicers/slicer{n}.xml"));
     for p in slicers {
-        let k = out.slicer_names.written.len() + 1;
+        let k = out.slicer_names.next_cache_part();
         out.part(
             &format!("xl/slicerCaches/slicerCache{k}.xml"),
             Some(crate::slicer::CT_SLICER_CACHE),
@@ -261,6 +268,29 @@ fn write_sheet_slicers(slicers: &[crate::slicer::Planned<'_>], rels: &mut Rels, 
         out.slicer_names.written.push((p.cache.clone(), format!("slicerCaches/slicerCache{k}.xml")));
     }
     Some(crate::slicer::sheet_ext(&rid))
+}
+
+/// The sheet's PivotTable slicer part; their cache parts are written after every sheet, when the
+/// PivotTables' sheet ids and caches are known (`PivotWriter::write_slicer_caches`). Returns the
+/// worksheet extension that names the slicer part.
+fn write_sheet_pivot_slicers(slicers: &[crate::slicer::Planned<'_>], rels: &mut Rels, out: &mut Out) -> Option<String> {
+    if slicers.is_empty() {
+        return None;
+    }
+    out.slicers += 1;
+    let n = out.slicers;
+    out.part(&format!("xl/slicers/slicer{n}.xml"), Some(crate::slicer::CT_SLICER), crate::slicer::slicers_xml(slicers).into_bytes());
+    let rid = rels.add_uri(crate::slicer::REL_SLICER, &format!("../slicers/slicer{n}.xml"));
+    for p in slicers {
+        let k = out.slicer_names.next_cache_part();
+        out.slicer_names.pivot_written.push(crate::slicer::PivotCacheOut {
+            name: p.cache.clone(),
+            part: format!("slicerCaches/slicerCache{k}.xml"),
+            pivot: p.pivot.unwrap_or(0),
+            field: p.slicer.column.clone(),
+        });
+    }
+    Some(crate::slicer::pivot_sheet_ext(&rid))
 }
 
 fn write_sheet_extensions(s: &mut String, sheet: &Sheet, prio: &[u32], slicers: Option<&str>) {

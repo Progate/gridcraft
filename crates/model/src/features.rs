@@ -13,8 +13,9 @@ mod scenarios;
 
 pub use error_rules::{ErrorRule, ErrorRules, IgnoredError};
 pub use pivot::{
-    MAX_RANGE_BINS, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLayout, PivotRangeGroup, PivotShowAs, PivotSort,
-    PivotTable, PivotValue, RangeBins, date_group_date, date_group_item, date_group_items,
+    MAX_RANGE_BINS, PivotCalcField, PivotDateGroup, PivotField, PivotFilter, PivotFunc, PivotLabelFilter, PivotLabelOp, PivotLayout, PivotRangeGroup,
+    PivotShowAs, PivotSort, PivotTable, PivotTopBy, PivotValue, PivotValueFilter, PivotValueOp, RangeBins, date_group_date, date_group_item,
+    date_group_items,
 };
 pub use print::{EditRange, HfPage, LineInfo, Orientation, PageOrder, PrintSettings, SheetProtection, password_hash};
 pub use scenarios::{ScenarioDef, ScenarioInput, Scenarios};
@@ -1363,6 +1364,11 @@ pub struct Slicer {
     pub selected: Option<Vec<String>>,
     /// Number of button columns in the layout (Excel default 1).
     pub columns: u32,
+    /// The id of the PivotTable this slicer filters, in place of a table: `column` is then
+    /// that PivotTable's source field, and the selection lives in the PivotTable's filter on
+    /// it (so `selected` is not used).
+    #[serde(default)]
+    pub pivot: Option<u32>,
 }
 
 #[cfg(test)]

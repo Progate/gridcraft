@@ -59,6 +59,7 @@ fn workbook(selected: Option<Vec<String>>) -> Workbook {
         anchor: Anchor { cell: at("E2"), dx: 4.0, dy: 4.0, width: 168.0, height: 200.0, mode: AnchorMode::MoveOnly },
         selected,
         columns: 2,
+        pivot: None,
     });
     s.slicers.push(Slicer {
         id: 3,
@@ -68,6 +69,7 @@ fn workbook(selected: Option<Vec<String>>) -> Workbook {
         anchor: Anchor { cell: at("H2"), dx: 4.0, dy: 4.0, width: 168.0, height: 200.0, mode: AnchorMode::MoveOnly },
         selected: None,
         columns: 1,
+        pivot: None,
     });
     wb.sheets = vec![Arc::new(wb.sheet(0).unwrap().clone())];
     wb
