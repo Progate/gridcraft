@@ -222,27 +222,20 @@ fn unmodelled_parts_survive_a_round_trip() {
 
 fn assert_kept_workbook_parts(u: &Unpacked) {
     // Every kept part is in the output byte for byte.
-    for d in [
-        PRINTER,
-        OLE,
-        EMF,
-        CUSTOM_XML.as_bytes(),
-        CUSTOM_PROPS.as_bytes(),
-        EXTERNAL_LINK.as_bytes(),
-        CONNECTIONS.as_bytes(),
-        QUERY_TABLE.as_bytes(),
-        CTRL_PROP.as_bytes(),
-    ] {
+    for d in [PRINTER, OLE, EMF, CUSTOM_XML.as_bytes(), CUSTOM_PROPS.as_bytes(), CONNECTIONS.as_bytes(), QUERY_TABLE.as_bytes(), CTRL_PROP.as_bytes()]
+    {
         assert_eq!(u.find(d).len(), 1, "kept part missing or duplicated: {}", String::from_utf8_lossy(d));
     }
     // Package root: custom properties.
     assert!(u.rels("").iter().any(|r| r.1.ends_with("/custom-properties") && u.parts.get(&r.2).is_some_and(|b| b == CUSTOM_PROPS.as_bytes())));
-    // Workbook: external link in <externalReferences>, its path kept as an external target.
+    // Workbook: the link to another workbook (modelled: its sheet names and cached values written
+    // again) in <externalReferences>, its path kept as an external target.
     let wbx = u.text("xl/workbook.xml");
     let link_id = attr_of(&wbx, "externalReference", "r:id");
     let (ty, link) = u.target("xl/workbook.xml", &link_id);
     assert!(ty.ends_with("/externalLink"));
-    assert_eq!(u.parts.get(&link).unwrap(), EXTERNAL_LINK.as_bytes());
+    let lx = u.text(&link);
+    assert!(lx.contains(r#"<sheetName val="Sheet1"/>"#) && lx.contains(r#"<cell r="A1"><v>7</v></cell>"#), "{lx}");
     let path = u.rels(&link);
     assert_eq!(path.len(), 1);
     assert_eq!((path[0].0.as_str(), path[0].2.as_str(), path[0].3), ("rId1", "file:///C:/never/opened/Book2.xlsx", true));
@@ -337,9 +330,11 @@ fn edited_workbooks_keep_consistent_relationships() {
     for d in [PRINTER, OLE, EMF, QUERY_TABLE.as_bytes(), CTRL_PROP.as_bytes()] {
         assert!(u.find(d).is_empty());
     }
-    for d in [CUSTOM_XML.as_bytes(), EXTERNAL_LINK.as_bytes(), CONNECTIONS.as_bytes(), CUSTOM_PROPS.as_bytes()] {
+    for d in [CUSTOM_XML.as_bytes(), CONNECTIONS.as_bytes(), CUSTOM_PROPS.as_bytes()] {
         assert_eq!(u.find(d).len(), 1);
     }
+    // The formulas that read the other workbook went with the sheet, and so does the link.
+    assert!(!u.text("xl/workbook.xml").contains("<externalReference "));
 }
 
 /// #324: an openpyxl-style workbook whose sheet carries printer settings.

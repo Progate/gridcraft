@@ -48,6 +48,8 @@ fn chart_sheet_entries<'a>(wb_xml: &'a xml::El, wb_rels: &[PreservedRel], file_t
 /// Collects kept content while a package is read.
 pub struct KeptReader {
     on: bool,
+    /// The links to other workbooks are modelled (`Workbook::external_links`), not kept.
+    external_modelled: bool,
     strict: bool,
     defaults: HashMap<String, String>,
     overrides: HashMap<String, String>,
@@ -58,6 +60,7 @@ pub struct KeptReader {
 impl KeptReader {
     pub fn new(cx: &mut Ctx<'_>) -> KeptReader {
         let mut k = KeptReader {
+            external_modelled: false,
             on: true,
             strict: false,
             defaults: HashMap::new(),
@@ -179,6 +182,11 @@ impl KeptReader {
         Ok(())
     }
 
+    /// The workbook's links to other workbooks were read into the model: they are not kept too.
+    pub fn model_external_links(&mut self) {
+        self.external_modelled = true;
+    }
+
     /// Package-root and workbook-level content.
     pub fn workbook(&mut self, cx: &mut Ctx<'_>, wb_part: &str, wb_xml: &xml::El, file_to_model: &[Option<usize>]) -> Option<Arc<Preserved>> {
         if !self.on {
@@ -236,7 +244,7 @@ impl KeptReader {
         // so they are kept all together or not at all.
         let ids: Vec<&str> =
             wb_xml.child("externalReferences").map(|e| e.kids("externalReference").filter_map(|x| x.attr("id")).collect()).unwrap_or_default();
-        if !ids.is_empty() {
+        if !ids.is_empty() && !self.external_modelled {
             let roots: Option<Vec<PreservedRel>> =
                 ids.iter().map(|id| wb_rels.iter().find(|r| r.id == *id && is_kind(r, &["externalLink"])).cloned()).collect();
             let kept = match roots {

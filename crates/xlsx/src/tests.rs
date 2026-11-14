@@ -17,6 +17,7 @@ mod doc_protection_tests;
 mod encrypted_tests;
 mod equation_tests;
 mod error_checking_tests;
+mod external_links;
 mod fixtures;
 mod google_sheets_dummy;
 mod ink_roundtrip;

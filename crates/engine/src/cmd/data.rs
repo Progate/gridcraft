@@ -172,6 +172,42 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             remove_subtotals
         ),
+        cmd!(
+            query "data.editLinks",
+            "Workbook Links",
+            ["Data", "Queries & Connections"],
+            None,
+            "{} → {links: [{link: 1, name: \"予算.xlsx\", folder, target, sheets, formulas, status}]}: the other workbooks this one's formulas read (=[予算.xlsx]予算!B3), as Excel's Workbook Links (Edit Links) lists them",
+            has_doc,
+            crate::workbook_links::list
+        ),
+        cmd!(
+            "data.updateLinks",
+            "Refresh Workbook Links",
+            ["Data", "Queries & Connections", "Workbook Links"],
+            None,
+            "{link?: 1 | \"予算.xlsx\"} (default: every link) reads the values again from the linked workbook, open in this session or its file beside this one (Excel's Update Values / Refresh) → {links}",
+            has_doc,
+            crate::workbook_links::update
+        ),
+        cmd!(
+            "data.changeLinkSource",
+            "Change Link Source",
+            ["Data", "Queries & Connections", "Workbook Links"],
+            None,
+            "{link: 1 | \"予算.xlsx\", source: \"予算2026.xlsx\" | \"C:\\会計\\予算.xlsx\"} points the formulas that read the link at another workbook and reads its values (Excel's Change Source) → {links}",
+            has_doc,
+            crate::workbook_links::change_source
+        ),
+        cmd!(
+            "data.breakLinks",
+            "Break Workbook Links",
+            ["Data", "Queries & Connections", "Workbook Links"],
+            None,
+            "{link?: 1 | \"予算.xlsx\"} (default: every link) turns the formulas that read the link into their values and removes the link (Excel's Break Link) → {cells, links}",
+            has_doc,
+            crate::workbook_links::break_links
+        ),
         cmd!("data.flashFill", "Flash Fill", ["Data", "Data Tools"], None, "{range?}", has_doc, |s, p| s.execute("edit.flashFill", p.clone())),
     ]
 }

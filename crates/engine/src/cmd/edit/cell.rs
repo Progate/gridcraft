@@ -258,6 +258,8 @@ pub(super) fn cell_set(s: &mut Session, p: &Json) -> Result<Json> {
         crate::tables::calculated_entry(cx, sheet, at);
         Ok(Json::Null)
     })?;
+    // A reference into another workbook (`=[予算.xlsx]予算!B3`) reads its values now.
+    crate::workbook_links::after_entry(s, sheet, RangeRef::cell(at))?;
     let v = s.doc()?.wb.sheet(sheet).map(|sh| sh.value(at)).unwrap_or_default();
     Ok(json!({"cell": at.a1(), "value": v.display()}))
 }
@@ -397,6 +399,14 @@ pub(super) fn range_set_values(s: &mut Session, p: &Json) -> Result<Json> {
         }
         Ok(())
     })?;
+    let width = rows.iter().map(|r| r.as_array().map_or(1, Vec::len)).max().unwrap_or(0);
+    if width > 0 && !rows.is_empty() {
+        let end = CellRef::new(
+            start.row.saturating_add(rows.len() as u32 - 1).min(MAX_ROWS - 1),
+            start.col.saturating_add(width.min(gridcraft_core::MAX_COLS as usize) as u32 - 1).min(gridcraft_core::MAX_COLS - 1),
+        );
+        crate::workbook_links::after_entry(s, sheet, RangeRef::new(start, end))?;
+    }
     let d = s.doc()?;
     let reported: Vec<Json> =
         d.wb.sheet(sheet)

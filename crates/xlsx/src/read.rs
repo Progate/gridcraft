@@ -502,7 +502,14 @@ pub fn read_xlsx<'a>(bytes: &'a [u8], opts: crate::ReadOptions<'a>) -> Result<(W
             Err(e) => cx.warn(format!("macros (VBA project) could not be read and were dropped: {e}")),
         }
     }
+    // Links to other workbooks are modelled (their cached values and file) when they are all
+    // workbook links; otherwise they are kept as they were.
+    if let Some(links) = crate::links::read(&mut cx, &wb_part, &wb_xml) {
+        wb.external_links = links;
+        kept.model_external_links();
+    }
     wb.preserved = kept.workbook(&mut cx, &wb_part, &wb_xml, &file_to_model);
+    crate::links::name_books(&mut wb);
     if let Some(w) = cx.python.warning() {
         cx.warn(w);
     }

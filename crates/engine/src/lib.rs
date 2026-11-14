@@ -28,6 +28,7 @@ pub mod selection;
 pub mod system_fonts;
 pub mod tables;
 pub mod windows;
+pub mod workbook_links;
 
 use std::sync::Arc;
 
