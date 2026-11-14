@@ -771,7 +771,7 @@ pub(super) const DIALOGS: &[(&str, &str)] = &[
     ("Create names from values in the:", "以下に含まれる値から名前を作成"),
     ("Top row", "上端行"),
     ("Left column", "左端列"),
-    ("Bottom row", "下端行"),
+    ("Bottom row", "最下行"),
     ("Right column", "右端列"),
     ("Replace existing definition of '{name}'?", "既存の名前 '{name}' を置き換えますか?"),
     ("Format cells that are (value):", "セルの値が次の値のとき書式設定する (値):"),

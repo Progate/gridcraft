@@ -29,6 +29,7 @@ mod consolidate_dialog;
 mod context_menu_stays_open;
 mod contextual_ribbon_tab;
 mod control_timeout;
+mod create_names_dialog;
 mod dialog_button_row;
 mod dialog_confirm;
 mod dialog_focus;
