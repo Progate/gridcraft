@@ -446,6 +446,11 @@ fn handle_press(app: &mut SheetApp, input: &InteractionInput<'_>) {
         app.grid.list_picker = Some(sel.active);
         return;
     }
+    // A PivotTable's ▼ (its menu opens on the press) and ＋/－ (acting on the click).
+    if let Some(b) = crate::pivot_ui::hit(app, geo, sh, p) {
+        crate::pivot_ui::press(app, &b, geo.mirror_pos(p), primary_clicked);
+        return;
+    }
     // Filter dropdown buttons.
     if is_filter_button(sh, geo, p) {
         app.grid.filter_menu = Some((c.col, c.row, geo.mirror_pos(p)));

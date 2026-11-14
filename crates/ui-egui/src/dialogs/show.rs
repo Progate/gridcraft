@@ -261,6 +261,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "selectData" => select_data(app, ui, &mut d, &mut confirm, &mut open),
                 "comboChart" => combo_chart(app, ui, &mut d, &mut confirm, &mut open),
                 "moveChart" => move_chart(app, ui, &mut d, &mut confirm, &mut open),
+                n if super::pivot::handles(n) => super::pivot::show(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "consolidate" => super::consolidate::consolidate(app, ui, &mut d, &mut confirm, &mut open),
                 "subtotal" => super::subtotal::subtotal(app, ui, &mut d, &mut confirm, &mut open),

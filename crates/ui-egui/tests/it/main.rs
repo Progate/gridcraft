@@ -97,6 +97,7 @@ mod pivot_group_menu;
 mod pivot_pane;
 mod pivot_show_details;
 mod pivot_show_details_menu;
+mod pivot_tabs_ui;
 mod popup_dismissal;
 mod protect_password;
 mod protected_cell;

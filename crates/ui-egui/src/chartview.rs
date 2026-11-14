@@ -446,6 +446,30 @@ pub fn slicer_layout(rect: Rect, z: f32, n: usize, columns: u32) -> SlicerLayout
     SlicerLayout { header, clear, tiles }
 }
 
+/// A slicer's tiles. A PivotTable slicer's come from reading the PivotTable's whole source, too
+/// slow to repeat every frame: they are kept until a sheet of the workbook changes.
+fn slicer_items(ctx: &egui::Context, wb: &Workbook, si: usize, sl: &gridcraft_engine::model::Slicer) -> Vec<(String, bool)> {
+    if sl.pivot.is_none() {
+        return gridcraft_engine::cmd::slicer::slicer_items(wb, si, sl);
+    }
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (sl.id, &sl.column, sl.pivot).hash(&mut h);
+    for sh in &wb.sheets {
+        (std::sync::Arc::as_ptr(sh) as usize).hash(&mut h);
+    }
+    let id = egui::Id::unique(("gridcraft.pivot_slicer_items", sl.id));
+    let key = h.finish();
+    if let Some((k, items)) = ctx.data(|d| d.get_temp::<(u64, std::sync::Arc<Vec<(String, bool)>>)>(id))
+        && k == key
+    {
+        return items.as_ref().clone();
+    }
+    let items = gridcraft_engine::cmd::slicer::slicer_items(wb, si, sl);
+    ctx.data_mut(|d| d.insert_temp(id, (key, std::sync::Arc::new(items.clone()))));
+    items
+}
+
 fn paint_slicers(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &Sheet) {
     let tk = theme::Tokens::get(p.ctx());
     for sl in &sh.slicers {
@@ -453,7 +477,7 @@ fn paint_slicers(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &Sheet) {
         if !r.intersects(p.clip_rect()) {
             continue;
         }
-        let items = gridcraft_engine::cmd::slicer::slicer_items(wb, si, sl);
+        let items = slicer_items(p.ctx(), wb, si, sl);
         let lay = slicer_layout(r, geo.z, items.len(), sl.columns);
         let radius = 4.0 * geo.z;
         // Card + soft shadow.

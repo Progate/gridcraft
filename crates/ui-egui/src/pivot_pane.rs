@@ -20,6 +20,10 @@ pub fn active_pivot(app: &SheetApp) -> Option<String> {
 /// Draws the PivotTable Fields pane: add/remove fields, move them between areas, sort/group/value settings, refresh, calculated field and report layout.
 pub fn show(app: &mut SheetApp, ui: &mut Ui) {
     let Some(name) = active_pivot(app) else { return };
+    // PivotTable Analyze › Field List is off.
+    if app.grid.pivot_list_hidden {
+        return;
+    }
     let t = Tokens::get(ui.ctx());
     let lang = i18n::current(ui.ctx());
     let Some(key) = app.session.active().map(|d| (d.uid, d.revision, name.clone())) else { return };
@@ -42,7 +46,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 let areas: Vec<String> =
                     f["areas"].as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default();
                 let mut on = !areas.is_empty();
-                let numeric = f["numeric"].as_bool().unwrap_or(false);
+                // Excel puts a ticked number field in Values, and text or dates in Rows.
+                let numeric = f["numeric"].as_bool().unwrap_or(false) && !f["date"].as_bool().unwrap_or(false);
                 let r = ui.checkbox(&mut on, egui::RichText::new(&fname).font(theme::ui_font(13.0)));
                 if r.changed() {
                     let res = if on {
@@ -67,6 +72,9 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 .or(info[key].as_array())
                 .map(|a| {
                     a.iter()
+                        // The filters list also holds hidden items of Rows and Columns fields and
+                        // slicers' filters: only report filters are in the Filters area.
+                        .filter(|x| key != "filters" || x["report"].as_bool().unwrap_or(true))
                         .filter_map(|x| x["name"].as_str().or(x["field"].as_str()).or(x["sourceCol"].as_str()).or(x.as_str()).map(str::to_string))
                         .collect()
                 })
@@ -84,20 +92,50 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             }
             v
         };
+        // Dragging a field moves it within its area or to another, at the place it is dropped.
+        let drag_id = egui::Id::unique("pivot_pane_drag");
+        let dragging: Option<(String, String)> = ui.ctx().data(|d| d.get_temp(drag_id));
+        let mut drop_areas: Vec<(&'static str, egui::Rect, Vec<egui::Rect>)> = Vec::new();
         ui.columns(2, |cols| {
             for (i, (key, label)) in [("filters", "Filters"), ("columns", "Columns"), ("rows", "Rows"), ("values", "Values")].iter().enumerate() {
                 let ui = &mut cols[i % 2];
                 ui.label(egui::RichText::new(lang.tr(label)).strong());
-                egui::Frame::NONE.fill(t.window).corner_radius(4.0).inner_margin(4.0).show(ui, |ui| {
+                let mut rects = Vec::new();
+                let frame = egui::Frame::NONE.fill(t.window).corner_radius(4.0).inner_margin(4.0).show(ui, |ui| {
                     ui.set_min_size(vec2(ui.available_width(), 60.0));
+                    let plain = area(key);
                     for f in area_with_values(key) {
                         let is_values = f == VALUES_FIELD;
-                        let b = ui.add(
-                            egui::Button::new(egui::RichText::new(format!("{f} ▾")).font(theme::ui_font(12.0)))
-                                .fill(t.ribbon)
-                                .min_size(vec2(ui.available_width(), 20.0)),
-                        );
+                        let b = ui
+                            .add(
+                                egui::Button::new(egui::RichText::new(format!("{f} ▾")).font(theme::ui_font(12.0)))
+                                    .fill(t.ribbon)
+                                    .min_size(vec2(ui.available_width(), 20.0)),
+                            )
+                            .interact(egui::Sense::click_and_drag());
+                        rects.push(b.rect);
+                        if b.drag_started() {
+                            ui.ctx().data_mut(|d| d.insert_temp(drag_id, (key.to_string(), f.clone())));
+                        }
+                        let at = plain.iter().position(|x| *x == f);
                         egui::Popup::menu(&b).show(|ui| {
+                            if let Some(i) = at.filter(|_| !is_values) {
+                                let last = plain.len().saturating_sub(1);
+                                for (l, to, on) in [
+                                    ("Move Up", i.saturating_sub(1), i > 0),
+                                    ("Move Down", i + 1, i < last),
+                                    ("Move to Beginning", 0, i > 0),
+                                    ("Move to End", last, i < last),
+                                ] {
+                                    if ui.add_enabled(on, egui::Button::new(lang.tr(l))).clicked() {
+                                        app.run_or_alert(
+                                            "pivot.moveField",
+                                            json!({"pivot": name, "field": f, "from": key, "to": key, "position": to}),
+                                        );
+                                    }
+                                }
+                                ui.separator();
+                            }
                             for (to, l) in [
                                 ("rows", "Move to Row Labels"),
                                 ("columns", "Move to Column Labels"),
@@ -173,8 +211,38 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                         });
                     }
                 });
+                drop_areas.push((key, frame.response.rect, rects));
             }
         });
+        if let Some((from, f)) = dragging {
+            let pointer = ui.ctx().pointer_latest_pos();
+            if let Some(p) = pointer {
+                egui::Area::new(egui::Id::unique("pivot_pane_ghost")).fixed_pos(p + vec2(8.0, 4.0)).order(egui::Order::Tooltip).show(
+                    ui.ctx(),
+                    |ui| {
+                        egui::Frame::popup(ui.style()).show(ui, |ui| ui.label(f.as_str()));
+                    },
+                );
+            }
+            if ui.ctx().input(|i| i.pointer.any_released()) {
+                ui.ctx().data_mut(|d| d.remove::<(String, String)>(drag_id));
+                let target = pointer.and_then(|p| {
+                    drop_areas.iter().find(|(_, r, _)| r.contains(p)).map(|(k, _, rects)| (*k, rects.iter().filter(|r| r.center().y < p.y).count()))
+                });
+                if let Some((to, mut position)) = target {
+                    // The slots counted include the field itself while it is still in place.
+                    if to == from
+                        && drop_areas.iter().find(|(k, _, _)| *k == from).is_some_and(|(_, _, rects)| {
+                            rects.iter().filter(|r| pointer.is_some_and(|p| r.center().y < p.y)).count()
+                                > area(&from).iter().position(|x| *x == f).unwrap_or(usize::MAX)
+                        })
+                    {
+                        position = position.saturating_sub(1);
+                    }
+                    app.run_or_alert("pivot.moveField", json!({"pivot": name, "field": f, "from": from, "to": to, "position": position}));
+                }
+            }
+        }
         ui.separator();
         ui.horizontal(|ui| {
             if ui.button(lang.tr("Refresh")).clicked() {
@@ -186,7 +254,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             craft_ui::ComboBox::from_id_salt("pv_layout")
                 .selected_text(lang.tr("Report Layout"))
                 .show_ui(ui, |ui| {
-                    for (l, v) in [("Compact", "compact"), ("Outline", "outline"), ("Tabular", "tabular")] {
+                    for (l, v) in [("Compact", "compact"), ("Outline Form", "outline"), ("Tabular", "tabular")] {
                         if ui.button(lang.tr(l)).clicked() {
                             app.run_or_alert("pivot.layout", json!({"pivot": name, "layout": v}));
                         }

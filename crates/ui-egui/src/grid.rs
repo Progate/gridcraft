@@ -42,10 +42,10 @@ pub(crate) use cell_paint::paint_cf_icon;
 pub(crate) use cell_paint::{cell_text_y, rotated_text_pos, wrapped_cell_text_y};
 #[cfg(test)]
 use cell_paint::{center_across_end, display_text, look, numfmt_color, painted_halign};
-pub(crate) use editor::totals_cell;
 pub use editor::validation_arrow;
 #[cfg(test)]
 use editor::{editor_slack, editor_width, list_picker_height};
+pub(crate) use editor::{popup_dismissed, totals_cell};
 pub use geo::Geo;
 pub use interact::{follow_link, freeze_handles, point_move};
 pub(crate) use menus::run_error_fix;
@@ -300,6 +300,12 @@ pub struct GridState {
     /// The PivotTable Fields pane's `pivot.fields` answer, cached per (doc uid, revision, pivot):
     /// it scans the whole source list, far too slow to repeat every frame (#2113).
     pub pivot_fields: Option<((u64, u64, String), serde_json::Value)>,
+    /// The PivotTable buttons (▼, ＋/－) of the active sheet, cached per revision.
+    pub pivot_buttons: Option<crate::pivot_ui::ButtonsCache>,
+    /// The open ▼ menu of a PivotTable field.
+    pub pivot_menu: Option<crate::pivot_ui::PivotMenu>,
+    /// PivotTable Analyze › Field List is off: the PivotTable Fields pane stays hidden.
+    pub pivot_list_hidden: bool,
     /// The cells of a PivotTable report where the cell menu offers Show Details, relative to the
     /// report's top-left and cached per (doc uid, revision, sheet, pivot): finding them computes
     /// the whole report. `None` when the report can't be computed or is out of date: every cell

@@ -21,6 +21,7 @@ mod galleries;
 mod home;
 mod insert;
 mod page_layout;
+mod pivot;
 mod review;
 mod shortcuts;
 mod title_bar;
@@ -158,6 +159,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             CHART_FORMAT_TAB => chart_format(app, ui),
                             SPARKLINE_TAB => sparkline_tab(app, ui),
                             PIVOT_ANALYZE_TAB => pivot_analyze(app, ui),
+                            PIVOT_DESIGN_TAB => pivot::design(app, ui),
                             crate::paper_view::TAB => crate::paper_view::ribbon_tab(app, ui),
                             _ => home(app, ui),
                         }
@@ -284,8 +286,11 @@ pub(crate) const SPARKLINE_TAB: &str = "Sparkline";
 
 /// PivotTable Analyze (ピボットテーブル分析), while the active cell is in a PivotTable.
 pub(crate) const PIVOT_ANALYZE_TAB: &str = "PivotTable Analyze";
+/// The PivotTable's Design tab (デザイン), after PivotTable Analyze.
+pub(crate) const PIVOT_DESIGN_TAB: &str = "PivotTable Design";
 
-const CONTEXTUAL_TABS: [&str; 6] = ["Table Design", "Chart Design", CHART_FORMAT_TAB, SPARKLINE_TAB, PIVOT_ANALYZE_TAB, crate::paper_view::TAB];
+const CONTEXTUAL_TABS: [&str; 7] =
+    ["Table Design", "Chart Design", CHART_FORMAT_TAB, SPARKLINE_TAB, PIVOT_ANALYZE_TAB, PIVOT_DESIGN_TAB, crate::paper_view::TAB];
 
 fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
     let mut v = Vec::new();
@@ -297,6 +302,7 @@ fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
         }
         if app.selected_object.is_none() && crate::pivot_pane::active_pivot(app).is_some() {
             v.push(PIVOT_ANALYZE_TAB);
+            v.push(PIVOT_DESIGN_TAB);
         }
         if app.selected_chart().is_some_and(|id| sh.charts.iter().any(|c| c.id == id)) {
             v.push("Chart Design");
@@ -329,6 +335,7 @@ mod tooltip_tests {
             include_str!("ribbon/home.rs"),
             include_str!("ribbon/insert.rs"),
             include_str!("ribbon/page_layout.rs"),
+            include_str!("ribbon/pivot.rs"),
             include_str!("ribbon/review.rs"),
             include_str!("ribbon/shortcuts.rs"),
             include_str!("ribbon/title_bar.rs"),

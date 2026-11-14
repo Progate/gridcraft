@@ -49,6 +49,7 @@ pub mod outline;
 pub mod panes;
 pub mod paper_view;
 pub mod pivot_pane;
+pub mod pivot_ui;
 pub mod printing;
 pub mod ribbon;
 pub mod selection_glide;

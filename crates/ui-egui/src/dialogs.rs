@@ -31,6 +31,7 @@ mod insert_function;
 mod names;
 mod page_setup;
 mod paste;
+mod pivot;
 mod ref_edit;
 mod scenarios;
 mod show;
@@ -1328,6 +1329,7 @@ impl Dialog {
                 );
                 return None;
             }
+            n if pivot::handles(n) => return pivot::open(app, n, &params),
             _ => return None,
         };
         ref_edit::record_home(app, &mut d);

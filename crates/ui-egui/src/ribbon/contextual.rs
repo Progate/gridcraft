@@ -553,6 +553,7 @@ fn pivot_chart_fields(app: &mut SheetApp, ui: &mut Ui, id: u32) {
 /// and Collapse Field for the active field, Refresh, PivotChart and the field list.
 pub(super) fn pivot_analyze(app: &mut SheetApp, ui: &mut Ui) {
     let Some(pivot) = crate::pivot_pane::active_pivot(app) else { return };
+    super::pivot::analyze_head(app, ui);
     for (label, tip, collapse) in [("Expand\nField", "Expand Field", false), ("Collapse\nField", "Collapse Field", true)] {
         let __k = big_button(ui, if collapse { Icon::Minus } else { Icon::Plus }, label, tip, false);
         if __k.clicked() {
@@ -560,13 +561,15 @@ pub(super) fn pivot_analyze(app: &mut SheetApp, ui: &mut Ui) {
         }
     }
     sep(ui);
+    super::pivot::analyze_group_filter(app, ui);
     let __k = big_button(ui, Icon::Redo, "Refresh", "Refresh", false);
     control_keytip(app, ui, &__k, "pivot.refresh");
     if __k.clicked() {
         act(app, "pivot.refresh", json!({"pivot": pivot}));
     }
-    sep(ui);
+    super::pivot::analyze_data_actions(app, ui);
     pivot_chart_button(app, ui, false);
+    super::pivot::analyze_show(app, ui);
 }
 
 /// A Quick Layout's tooltip: the chart elements it shows, in the interface language.

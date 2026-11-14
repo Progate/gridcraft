@@ -220,6 +220,7 @@ pub fn show(app: &mut SheetApp, ui: &mut egui::Ui) {
         sheet: sh,
         selection: &sel,
     });
+    crate::pivot_ui::paint(app, &painter.with_clip_rect(geo.cells), &geo, sh, si);
     if sh.view == gridcraft_engine::model::SheetViewMode::PageBreakPreview {
         paint_pages(app, &painter.with_clip_rect(geo.cells), &geo, sh);
     }
@@ -365,6 +366,7 @@ impl<F: Fn(&mut SheetApp, egui::Vec2) -> Geo> ActiveCellVisibility<'_, F> {
 
 fn show_grid_interactions(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Response, geo: &Geo, sh: &Sheet, wb: &Workbook) {
     let previous_popups = (app.grid.filter_menu, app.grid.list_picker, app.grid.header_menu, app.grid.fill_menu);
+    let previous_pivot_menu = app.grid.pivot_menu.clone();
     // A pan the grid never saw end (it was hidden mid-drag) must not swallow the next press.
     if app.grid.touch_pan && !resp.dragged() && !resp.drag_stopped() {
         app.grid.touch_pan = false;
@@ -385,6 +387,7 @@ fn show_grid_interactions(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Re
         in_cell_editor(app, ui, geo, sh, wb);
     }
     filter_menu(app, ui, geo, previous_popups.0 == app.grid.filter_menu);
+    crate::pivot_ui::menu(app, ui, previous_pivot_menu == app.grid.pivot_menu);
     list_picker(app, ui, geo, previous_popups.1 == app.grid.list_picker);
     header_menu(app, ui, previous_popups.2 == app.grid.header_menu);
     context_menu(app, ui);

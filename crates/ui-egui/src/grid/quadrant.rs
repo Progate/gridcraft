@@ -398,7 +398,8 @@ fn paint_cell(q: &QuadrantPaint<'_>, painted: &(CellRef, Rect, Look, Option<CfLo
         },
         h => painted_halign(h, geo.rtl),
     };
-    let indent = st.align.indent as f32 * 9.0 * z;
+    // A PivotTable item with a ＋/－ button starts its caption after the button.
+    let indent = (st.align.indent as f32 * 9.0 + crate::pivot_ui::label_offset(p.ctx(), si, c)) * z;
     let pad = 2.5 * z;
     let rotated = st.align.rotation != 0 && st.align.rotation != 255;
     if st.align.rotation == 255 {
