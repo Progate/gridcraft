@@ -579,6 +579,7 @@ pub(crate) fn commit<R>(d: &mut DocState, f: impl FnOnce(&mut Ctx) -> Result<R>)
     if let Some(t0) = t0 {
         eprintln!("commit: + rows {:?}", since(t0));
     }
+    crate::workbook_links::note_new_links(&d.wb, &wb, &changed, &mut d.link_reads);
     d.wb = std::sync::Arc::new(wb);
     d.selection = sel;
     Ok(r)

@@ -128,3 +128,23 @@ fn a_saved_workbook_keeps_the_link_and_its_values() {
     assert!(r["links"][0]["status"].as_str().unwrap().starts_with("Error"), "{r}");
     assert_eq!(value(&t, "A1"), Value::number(120.0), "a link that can't be read keeps its values");
 }
+
+#[test]
+fn a_reference_filled_down_or_pasted_reads_its_values_at_once() {
+    let dir = folder("fill");
+    save_budget(&dir, "予算.xlsx", 120.0);
+    let mut s = monthly(&dir);
+    s.execute("cell.set", json!({"cell": "B3", "input": "=[予算.xlsx]予算!B3"})).unwrap();
+    s.execute("edit.fillDown", json!({"range": "B3:B4"})).unwrap();
+    assert_eq!(input(&s, "B4"), "=[予算.xlsx]予算!B4");
+    assert_eq!(value(&s, "B4"), Value::number(30.0), "Fill Down");
+    s.execute("edit.autoFill", json!({"source": "B3", "target": "B3:B5"})).unwrap();
+    assert_eq!(value(&s, "B4"), Value::number(30.0), "the fill handle");
+    s.execute("edit.copy", json!({"range": "B4"})).unwrap();
+    s.execute("edit.paste", json!({"at": "A3"})).unwrap();
+    assert_eq!(input(&s, "A3"), "=[予算.xlsx]予算!A3");
+    assert_eq!(value(&s, "A3"), Value::text("家賃"), "a pasted reference");
+    // One Undo takes the paste and the values it read back together.
+    s.execute("edit.undo", json!({})).unwrap();
+    assert_eq!(input(&s, "A3"), "");
+}

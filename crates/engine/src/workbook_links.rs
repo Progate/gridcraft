@@ -224,26 +224,42 @@ fn apply(s: &mut Session, links: Vec<ExternalLink>) -> Result<()> {
     })
 }
 
-/// After formulas were entered in `range` of `sheet`: when one reads another workbook, makes its
-/// link and reads the values it needs, as Excel reads the workbook a typed reference names.
-pub(crate) fn after_entry(s: &mut Session, sheet: usize, range: RangeRef) -> Result<()> {
-    let d = s.doc()?;
-    let Some(sh) = d.wb.sheet(sheet) else { return Ok(()) };
-    let mut names: Vec<String> = vec![];
-    for (_, c) in sh.cells.iter_range(range) {
-        if let Some(f) = c.formula.as_ref().filter(|f| may_link(&f.text))
-            && let Some(refs) = f.with_expr(external_refs)
-        {
-            for (n, _) in refs {
-                if !names.contains(&n) {
-                    names.push(n);
-                }
+/// Most other-workbook sheet names one edit queues for reading (each is one link to read).
+const MAX_PENDING_READS: usize = 256;
+
+/// After an edit from `old` to `new` that changed the cells `changed`: notes in `pending` the
+/// other-workbook sheets that the formulas it wrote read (a formula typed, filled down or pasted).
+/// Formulas the edit did not write are skipped, so recalculating cells that read a link (as
+/// updating it does) queues nothing.
+pub(crate) fn note_new_links(old: &Workbook, new: &Workbook, changed: &[(usize, CellRef)], pending: &mut Vec<String>) {
+    for (si, at) in changed {
+        if pending.len() >= MAX_PENDING_READS {
+            return;
+        }
+        let Some(f) = new.sheet(*si).and_then(|sh| sh.cells.get(*at)).and_then(|c| c.formula.as_ref()).filter(|f| may_link(&f.text)) else {
+            continue;
+        };
+        let before = old.sheet(*si).and_then(|sh| sh.cells.get(*at)).and_then(|c| c.formula.as_ref());
+        if before.is_some_and(|b| Arc::ptr_eq(b, f) || b.text == f.text) {
+            continue;
+        }
+        for (n, _) in f.with_expr(external_refs).unwrap_or_default() {
+            if !pending.contains(&n) {
+                pending.push(n);
             }
         }
     }
-    if names.is_empty() {
-        return Ok(());
-    }
+}
+
+/// Reads the links the formulas an edit wrote name (see [`note_new_links`]): makes each one's
+/// link and reads the values it needs, as Excel reads the workbook a typed, filled or pasted
+/// reference names.
+pub(crate) fn read_pending(s: &mut Session) -> Result<()> {
+    let names = match s.active_mut() {
+        Some(d) if !d.link_reads.is_empty() => std::mem::take(&mut d.link_reads),
+        _ => return Ok(()),
+    };
+    let d = s.doc()?;
     let (uid, wb) = (d.uid, d.wb.clone());
     let (links, _) = updated(s, uid, &wb, Which::Read(names));
     apply(s, links)

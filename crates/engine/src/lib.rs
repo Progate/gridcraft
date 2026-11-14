@@ -227,6 +227,10 @@ pub struct DocState {
     /// The references `edit.goTo` with `record: true` went to in this document, newest first,
     /// without names, each area written with its sheet (`Sheet1!B14:C22,Sheet1!F19:G30`).
     pub go_to_recent: Vec<String>,
+    /// Sheet names of other workbooks (`[予算.xlsx]予算`) that formulas an edit just wrote read:
+    /// [`Session::execute`] reads their values before the command returns, so a reference filled
+    /// down or pasted shows its value at once, as a typed one does.
+    pub link_reads: Vec<String>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -352,6 +356,7 @@ impl DocState {
             touched: None,
             edits: None,
             go_to_recent: vec![],
+            link_reads: vec![],
         }
     }
     pub fn is_dirty(&self) -> bool {
@@ -873,7 +878,13 @@ impl Session {
         // on the sheet it names or the active one, as when it was recorded.
         let top = self.depth == 1;
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            if top { cmd::run_on_selected_sheets(self, spec, &params) } else { (spec.run)(self, &params) }
+            let r = if top { cmd::run_on_selected_sheets(self, spec, &params) } else { (spec.run)(self, &params) };
+            // Formulas the command wrote that read another workbook (filled, pasted, typed) get
+            // their values now; a link that can't be read keeps showing its cached values.
+            if r.is_ok() {
+                let _ = workbook_links::read_pending(self);
+            }
+            r
         }));
         self.depth = self.depth.saturating_sub(1);
         if marked.is_some() {
