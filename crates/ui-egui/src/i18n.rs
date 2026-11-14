@@ -200,9 +200,13 @@ impl Language {
     /// Translates an interface label; untranslated labels fall back to English.
     ///
     /// A label that needs two translations (Home's text "Orientation" vs Page Layout's print
-    /// "Orientation") is keyed `context|label`: English shows only the part after the `|`.
+    /// "Orientation") is keyed `context|label`: English shows only the part after the `|`, and a
+    /// language without its own translation of the context key shows its translation of the label.
     pub fn tr(self, text: &str) -> &str {
-        self.translated(text).unwrap_or_else(|| text.rsplit_once('|').map_or(text, |(_, label)| label))
+        self.translated(text).unwrap_or_else(|| match text.rsplit_once('|') {
+            Some((_, label)) => self.translated(label).unwrap_or(label),
+            None => text,
+        })
     }
 
     /// The catalog's own translation of `text`, or `None` when it falls back to English.
@@ -539,8 +543,11 @@ mod tests {
             assert_eq!(language.tr("Sheet1!A1"), "Sheet1!A1");
             assert_eq!(language.tr("Not in any catalog|Untranslated"), "Untranslated");
         }
-        // A `context|label` key shows only its label in English.
+        // A `context|label` key shows only its label in English, and the label's translation in a
+        // language that has no translation of its own for the context.
         assert_eq!(Language::En.tr("Page Layout|Orientation"), "Orientation");
+        assert_eq!(Language::Ja.tr("Not in any catalog|Rows"), Language::Ja.tr("Rows"));
+        assert_eq!(Language::Ja.tr("Series|Linear"), "加算");
         // Errors drop the `command `id`:` prefix before translating; an untranslated one stays whole.
         assert_eq!(Language::PtBr.tr_error("command `chart`: Select a chart first."), Language::PtBr.tr("Select a chart first."));
         assert_eq!(Language::PtBr.tr_error("Sheet|Unknown failure"), "Sheet|Unknown failure");

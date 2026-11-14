@@ -624,11 +624,12 @@ impl Dialog {
                 "Series",
                 "edit.fillSeries",
                 vec![
-                    Choice { key: "direction", label: "Series in", options: vec![("columns", "Columns"), ("rows", "Rows")] },
-                    Choice { key: "type", label: "Type", options: vec![("linear", "Linear"), ("growth", "Growth"), ("date", "Date")] },
+                    // Excel's Japanese labels: 範囲, 種類 (加算 / 乗算 / 日付), 増加単位 (日 / 週日 / 月 / 年).
+                    Choice { key: "direction", label: "Series|Series in", options: vec![("columns", "Columns"), ("rows", "Rows")] },
+                    Choice { key: "type", label: "Type", options: vec![("linear", "Series|Linear"), ("growth", "Series|Growth"), ("date", "Date")] },
                     Choice {
                         key: "dateUnit",
-                        label: "Date unit",
+                        label: "Series|Date unit",
                         options: vec![("day", "Day"), ("weekday", "Weekday"), ("month", "Month"), ("year", "Year")],
                     },
                     Number { key: "step", label: "Step value:" },
