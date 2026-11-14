@@ -456,14 +456,14 @@ pub(super) fn data_cols_exceed_sheet(col_groups: usize, grand_total: bool, value
 
 /// Colours for a PivotTable style name (our own palette, keyed by the familiar
 /// `PivotStyleLight1…28 / Medium1…28 / Dark1…28` names).
-pub(super) struct Look {
-    header_fill: Color,
-    header_font: Color,
-    line: Color,
-    filter_fill: Color,
+pub struct Look {
+    pub header_fill: Color,
+    pub header_font: Color,
+    pub line: Color,
+    pub filter_fill: Color,
 }
 
-pub(super) fn look(style: &str) -> Look {
+pub fn look(style: &str) -> Look {
     let rest = style.strip_prefix("PivotStyle").unwrap_or(style);
     let (fam, n) = ["Light", "Medium", "Dark"]
         .iter()

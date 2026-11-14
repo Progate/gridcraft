@@ -395,3 +395,37 @@ pub(super) fn field_settings(s: &mut Session, p: &Json) -> Result<Json> {
     s.ui_requests.push(crate::UiRequest::Dialog("pivotFieldSettings".into(), params));
     Ok(json!({}))
 }
+
+/// `pivot.activeField`: the field of the active cell (PivotTable Analyze › Active Field): a value
+/// field's caption, or a row or column field's name.
+pub(super) fn active_field(s: &mut Session, p: &Json) -> Result<Json> {
+    if let Some(v) = value_at_active_cell(s, p) {
+        return Ok(json!({"field": v, "area": "values"}));
+    }
+    let field = super::layout::field_at_active_cell(s, p).ok();
+    let (si, pi) = find_pivot(s, p)?;
+    let d = s.doc()?;
+    let pt = d.wb.sheet(si).and_then(|sh| sh.pivots.get(pi)).ok_or_else(|| other("There's no such PivotTable."))?;
+    let Some(field) = field else { return Ok(json!({"field": null, "pivot": pt.name})) };
+    let axis = pv::axis_position(pt, &field);
+    let caption =
+        axis.and_then(|(rows, i)| (if rows { &pt.rows } else { &pt.columns }).get(i)).map(|f| pv::field_caption(&d.wb, pt, f)).unwrap_or(field);
+    let area = match axis {
+        Some((true, _)) => "rows",
+        Some((false, _)) => "columns",
+        None => "filters",
+    };
+    Ok(json!({"field": caption, "area": area, "pivot": pt.name}))
+}
+
+/// `pivot.clearAll`: Clear › Clear All, every field out of the PivotTable (its options stay).
+pub(super) fn clear_all(s: &mut Session, p: &Json) -> Result<Json> {
+    update(s, p, |pt, _, _| {
+        pt.rows.clear();
+        pt.columns.clear();
+        pt.values.clear();
+        pt.filters.clear();
+        pt.values_position = None;
+        Ok(json!({}))
+    })
+}

@@ -31,10 +31,11 @@ pub(crate) use items::source_date_range;
 pub use items::{
     CAPTIONS_EN, CAPTIONS_JA, Captions, Grouping, captions, distinct_labels, field_grouping, func_caption, func_caption_ja, item_label, value_name,
 };
+use output::cell_style;
 #[cfg(test)]
 use output::data_cols_exceed_sheet;
 pub use output::{ButtonArea, CellKind, OutCell, Output, PivotButton, RowKind};
-use output::{cell_style, look};
+pub use output::{Look, look};
 
 /// Largest source block read (cells).
 pub const MAX_SOURCE_CELLS: u64 = 10_000_000;

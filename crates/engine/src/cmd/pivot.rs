@@ -28,7 +28,10 @@ mod layout;
 mod params;
 mod slicers;
 
-use analyze::{blank_rows, buttons, clear_filter, expand_buttons, field_headers, field_settings, items, label_filter, repeat_labels, value_filter};
+use analyze::{
+    active_field, blank_rows, buttons, clear_all, clear_filter, expand_buttons, field_headers, field_settings, items, label_filter, repeat_labels,
+    value_filter,
+};
 pub(crate) use charts::insert_pivot_chart;
 use charts::recommended;
 use create::{insert_pivot, options, show_details, summarize_table};
@@ -214,6 +217,16 @@ pub fn specs() -> Vec<CommandSpec> {
             "{pivot?, on?: bool (default: switch)} Report Layout › Repeat All Item Labels (on) / Do Not Repeat Item Labels (off), in the Outline and Tabular layouts",
             has_doc,
             repeat_labels
+        ),
+        cmd!(query "pivot.activeField", "Active Field", ["PivotTable Analyze", "Active Field"], None, "{pivot?} → {field, area: rows|columns|values|filters} of the active cell", has_doc, active_field),
+        cmd!(
+            "pivot.clearAll",
+            "Clear All",
+            ["PivotTable Analyze", "Actions"],
+            None,
+            "{pivot?} removes every field from the PivotTable (its layout options stay)",
+            has_doc,
+            clear_all
         ),
         cmd!(query "pivot.buttons", "PivotTable Buttons", [], None, "{pivot?} → the report's buttons: [{kind: field|expand, cell, area, fields | field, item, collapsed}]", has_doc, buttons),
         cmd!(
