@@ -7,6 +7,7 @@
 mod b64;
 pub mod cell;
 mod cellmap;
+pub mod external;
 pub mod features;
 pub mod macros;
 pub mod password;
@@ -18,6 +19,7 @@ pub mod style;
 pub mod workbook;
 
 pub use cell::{Cell, CellPicture, Formula};
+pub use external::{ExternalLink, ExternalSheet};
 pub use features::*;
 pub use macros::*;
 pub use password::PasswordHash;

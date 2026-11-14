@@ -264,6 +264,12 @@ fn is_r1c1_token(name: &str) -> bool {
 /// `.`, holds anything but letters (any script), digits, `_` and `.`, reads as an A1 cell within
 /// the sheet or as an R1C1 reference, or is a boolean.
 pub fn sheet_needs_quotes(name: &str) -> bool {
+    // A sheet of another workbook: Excel writes `[予算.xlsx]予算!B3` bare, and quotes it when the
+    // workbook's file name or the sheet's name needs quotes, or a folder comes first
+    // (`'C:\会計\[予算.xlsx]予算'!B3`). Files spell the workbook by number, `[1]予算!B3`.
+    if let Some((dir, book, sheet)) = split_external(name) {
+        return !dir.is_empty() || book.chars().any(|c| !(c.is_alphanumeric() || c == '_' || c == '.')) || sheet_needs_quotes(sheet);
+    }
     let Some(first) = name.chars().next() else {
         return true;
     };
@@ -271,6 +277,20 @@ pub fn sheet_needs_quotes(name: &str) -> bool {
         return true;
     }
     CellRef::parse(name).is_some() || is_r1c1_token(name) || name.eq_ignore_ascii_case("TRUE") || name.eq_ignore_ascii_case("FALSE")
+}
+
+/// A sheet of another workbook, as formulas name it: `[予算.xlsx]予算`, `C:\会計\[予算.xlsx]予算`
+/// or, in files, `[1]予算` → (folder, workbook, sheet) = (`""` or `C:\会計\`, `予算.xlsx`, `予算`).
+/// Excel's sheet names can't hold `[` or `]`, so a name with a bracketed workbook in front always
+/// names a sheet in another workbook.
+pub fn split_external(name: &str) -> Option<(&str, &str, &str)> {
+    let open = name.find('[')?;
+    let close = open + name.get(open..)?.find(']')?;
+    let (dir, book, sheet) = (name.get(..open)?, name.get(open + 1..close)?, name.get(close + 1..)?);
+    if book.trim().is_empty() || sheet.is_empty() || book.contains('[') || sheet.contains(['[', ']']) {
+        return None;
+    }
+    Some((dir, book, sheet))
 }
 
 /// A sheet name as it is written in a reference: quoted, with `'` doubled, when Excel quotes it.

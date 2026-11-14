@@ -592,3 +592,24 @@ fn wrappers_stacked_across_levels_are_bounded_as_a_whole() {
     assert!(parse(&format!("{}1{}", "(".repeat(200), ")".repeat(200))).is_ok());
     assert!(parse(&format!("={}", vec!["A1%"; 100].join("+"))).is_ok(), "siblings are not stacked");
 }
+
+#[test]
+fn references_to_other_workbooks_parse_and_print_as_excel_writes_them() {
+    for (typed, printed, sheet) in [
+        ("[予算.xlsx]予算!B3", "[予算.xlsx]予算!B3", "[予算.xlsx]予算"),
+        ("'[予算.xlsx]予算'!B3", "[予算.xlsx]予算!B3", "[予算.xlsx]予算"),
+        ("'[予算 2025.xlsx]予算'!$B$3", "'[予算 2025.xlsx]予算'!$B$3", "[予算 2025.xlsx]予算"),
+        ("'C:\\会計\\[予算.xlsx]予算'!B3:B5", "'C:\\会計\\[予算.xlsx]予算'!B3:B5", "C:\\会計\\[予算.xlsx]予算"),
+        ("'/Users/me/[予算.xlsx]予算'!B3", "'/Users/me/[予算.xlsx]予算'!B3", "/Users/me/[予算.xlsx]予算"),
+        ("[1]Sheet1!$A$1", "[1]Sheet1!$A$1", "[1]Sheet1"),
+        ("'[Book 2.xlsx]My Sheet'!A1", "'[Book 2.xlsx]My Sheet'!A1", "[Book 2.xlsx]My Sheet"),
+    ] {
+        let e = parse(typed).unwrap_or_else(|err| panic!("{typed}: {err}"));
+        assert_eq!(print(&e), printed, "{typed}");
+        let Expr::Ref(r) = &e else { panic!("{typed} is not a reference: {e:?}") };
+        assert_eq!(r.sheet_name(), Some(sheet), "{typed}");
+    }
+    // In a formula, beside structured references.
+    let e = parse("SUM([予算.xlsx]予算!B3:B5)+Table1[@Qty]-[@Price]").unwrap();
+    assert_eq!(print(&e), "SUM([予算.xlsx]予算!B3:B5)+Table1[@Qty]-[@Price]");
+}
