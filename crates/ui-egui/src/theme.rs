@@ -141,6 +141,9 @@ pub struct Tokens {
     /// between cells showing an error. Sheet colours.
     pub sheet_trace_arrow: Color32,
     pub sheet_trace_error: Color32,
+    /// A trace arrow to or from another sheet: dashed, from or to a worksheet icon, as Excel
+    /// draws it in black.
+    pub sheet_trace_external: Color32,
 }
 
 /// The eight category colours, in the order of [`Tokens::cat`].
@@ -176,6 +179,7 @@ const SHEET_MACRO_TARGET: Color32 = rgb(0x6B3FC0);
 /// Trace arrows on the sheet, the same in both themes.
 const SHEET_TRACE_ARROW: Color32 = rgb(0x1F5FC9);
 const SHEET_TRACE_ERROR: Color32 = rgb(0xD13438);
+const SHEET_TRACE_EXTERNAL: Color32 = rgb(0x262626);
 
 /// Code colours for one background; plain text uses the surface's own text colour.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -293,6 +297,7 @@ impl Tokens {
             on_sheet_py_tag: Color32::WHITE,
             sheet_trace_arrow: SHEET_TRACE_ARROW,
             sheet_trace_error: SHEET_TRACE_ERROR,
+            sheet_trace_external: SHEET_TRACE_EXTERNAL,
         }
     }
 

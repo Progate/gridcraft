@@ -846,8 +846,50 @@ pub(crate) fn paint_overlays(input: OverlayInput<'_>) {
             let n = vec2(-d.y, d.x);
             p.add(egui::Shape::convex_polygon(vec![to, to - d * 9.0 + n * 4.0, to - d * 9.0 - n * 4.0], colour, Stroke::NONE));
         }
+        // An arrow with its other end on another sheet, as Excel draws it: dashed, between the
+        // cell and a worksheet icon (up and left of a cell whose precedent is elsewhere, down and
+        // right of one whose dependent is), one per cell and direction.
+        let mut drawn: Vec<(RangeRef, bool)> = Vec::new();
+        for a in trace.arrows.iter().filter(|a| (a.from.0 == si) != (a.to.0 == si)) {
+            let incoming = a.to.0 == si;
+            let here = if incoming { a.to.1 } else { a.from.1 };
+            if drawn.contains(&(here, incoming)) {
+                continue;
+            }
+            drawn.push((here, incoming));
+            let cell = geo.range_rect(sh, here).center();
+            let icon = cell + if incoming { vec2(-64.0, -36.0) } else { vec2(64.0, 36.0) } * geo.z.max(0.5);
+            if !Rect::from_two_pos(icon, cell).expand(12.0).intersects(clip) {
+                continue;
+            }
+            let colour = t.sheet_trace_external;
+            let (from, to) = if incoming { (icon, cell) } else { (cell, icon) };
+            p.extend(egui::Shape::dashed_line(&[from, to], Stroke::new(1.25, colour), 4.0, 3.0));
+            p.circle_filled(from, 3.0, colour);
+            let d = (to - from).normalized();
+            let n = vec2(-d.y, d.x);
+            p.add(egui::Shape::convex_polygon(vec![to, to - d * 9.0 + n * 4.0, to - d * 9.0 - n * 4.0], colour, Stroke::NONE));
+            paint_sheet_icon(p, icon, colour);
+        }
     }
     let _ = (wb, si);
+}
+
+/// The small worksheet a trace arrow to another sheet starts or ends at: a white sheet with a
+/// header row and grid lines, centred on `at`.
+fn paint_sheet_icon(p: &Painter, at: egui::Pos2, colour: Color32) {
+    let r = Rect::from_center_size(at, vec2(18.0, 14.0));
+    p.rect_filled(r, 1.0, Color32::WHITE);
+    p.rect_filled(Rect::from_min_size(r.min, vec2(r.width(), 3.5)), 0.0, colour.gamma_multiply(0.35));
+    for i in 1..3 {
+        let x = r.left() + r.width() * i as f32 / 3.0;
+        p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(0.5, colour.gamma_multiply(0.6)));
+    }
+    for i in 1..3 {
+        let y = r.top() + 3.5 + (r.height() - 3.5) * i as f32 / 3.0;
+        p.line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(0.5, colour.gamma_multiply(0.6)));
+    }
+    p.rect_stroke(r, 1.0, Stroke::new(1.0, colour), StrokeKind::Inside);
 }
 
 fn paint_pages(app: &mut SheetApp, p: &Painter, geo: &Geo, sh: &Sheet) {
@@ -928,10 +970,16 @@ mod trace_arrow_tests {
         app.run("selection.set", json!({"cell": cell})).unwrap();
     }
 
-    /// What the ribbon's Trace Precedents / Trace Dependents buttons do.
+    /// What the ribbon's Trace Precedents, Trace Dependents and Trace Error buttons do.
     fn trace(app: &mut SheetApp, id: &str) {
-        let r = app.run(id, json!({})).unwrap();
-        app.grid.trace = Trace::new(app, r);
+        match id {
+            "formulas.tracePrecedents" => Trace::add_level(app, false),
+            "formulas.traceDependents" => Trace::add_level(app, true),
+            _ => {
+                let r = app.run(id, json!({})).unwrap();
+                app.grid.trace = Trace::new(app, r);
+            }
+        }
     }
 
     /// The lines `paint_overlays` draws on the active sheet scrolled by `scroll`, as (tail, head)
@@ -1034,6 +1082,54 @@ mod trace_arrow_tests {
         // The precedent lives on Sheet1, but the arrow belongs to Two's F7.
         app.run("sheet.activate", json!({"sheet": "Sheet1"})).unwrap();
         assert!(arrows(&mut app).1.is_empty(), "no arrow on Sheet1 from B2 to where F7 would be");
+    }
+
+    /// The dashed lines `paint_overlays` draws to and from other sheets, as their dash count.
+    fn dashes(app: &mut SheetApp) -> usize {
+        lines_in(app, Tokens::light().sheet_trace_external, vec2(0.0, 0.0)).1.len()
+    }
+
+    #[test]
+    fn a_precedent_on_another_sheet_is_a_dashed_arrow_from_a_sheet_icon() {
+        let mut app = app();
+        app.run("home.insertSheet", json!({"name": "Two"})).unwrap();
+        app.run("cell.set", json!({"sheet": "Sheet1", "cell": "B2", "input": "1"})).unwrap();
+        app.run("sheet.activate", json!({"sheet": "Two"})).unwrap();
+        app.run("cell.set", json!({"cell": "F7", "input": "=Sheet1!B2+Sheet1!B3"})).unwrap();
+        select(&mut app, "F7");
+        trace(&mut app, "formulas.tracePrecedents");
+        assert!(arrows(&mut app).1.is_empty(), "no solid arrow");
+        let n = dashes(&mut app);
+        assert!(n >= 5, "one dashed arrow for both precedents on Sheet1: {n} dashes");
+        // Dependents on another sheet, from the precedent's side.
+        app.grid.trace = None;
+        app.run("sheet.activate", json!({"sheet": "Sheet1"})).unwrap();
+        select(&mut app, "B2");
+        trace(&mut app, "formulas.traceDependents");
+        assert!(dashes(&mut app) >= 5);
+    }
+
+    #[test]
+    fn pressing_trace_precedents_again_goes_one_level_further() {
+        let mut app = app();
+        for (c, v) in [("B2", "1"), ("C2", "=B2*2"), ("D2", "=C2+1"), ("E2", "=D2+B2")] {
+            app.run("cell.set", json!({"cell": c, "input": v})).unwrap();
+        }
+        select(&mut app, "E2");
+        trace(&mut app, "formulas.tracePrecedents");
+        assert_eq!(arrows(&mut app).1.len(), 2, "D2 and B2");
+        trace(&mut app, "formulas.tracePrecedents");
+        assert_eq!(arrows(&mut app).1.len(), 3, "and C2 → D2");
+        trace(&mut app, "formulas.tracePrecedents");
+        assert_eq!(arrows(&mut app).1.len(), 4, "and B2 → C2");
+        trace(&mut app, "formulas.tracePrecedents");
+        assert_eq!(arrows(&mut app).1.len(), 4, "nothing further back");
+        // Another cell's arrows join the ones shown.
+        select(&mut app, "C2");
+        trace(&mut app, "formulas.traceDependents");
+        assert_eq!(arrows(&mut app).1.len(), 4, "C2 → D2 shows already: one level further, D2 → E2, shows too");
+        let (geo, lines) = arrows(&mut app);
+        assert!(lines.contains(&link(&app, &geo, "D2", "E2")));
     }
 
     #[test]

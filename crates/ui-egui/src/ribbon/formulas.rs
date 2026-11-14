@@ -150,15 +150,12 @@ pub(super) fn formulas(app: &mut SheetApp, ui: &mut Ui) {
     });
     sep(ui);
     ui.vertical(|ui| {
-        if small_button(ui, Icon::Trace, "Trace Precedents", "Trace Precedents", false).clicked()
-            && let Ok(r) = app.run("formulas.tracePrecedents", json!({}))
-        {
-            app.grid.trace = crate::grid::Trace::new(app, r);
+        // Pressed again, each goes one level further, as in Excel.
+        if small_button(ui, Icon::Trace, "Trace Precedents", "Trace Precedents", false).clicked() {
+            crate::grid::Trace::add_level(app, false);
         }
-        if small_button(ui, Icon::Trace, "Trace Dependents", "Trace Dependents", false).clicked()
-            && let Ok(r) = app.run("formulas.traceDependents", json!({}))
-        {
-            app.grid.trace = crate::grid::Trace::new(app, r);
+        if small_button(ui, Icon::Trace, "Trace Dependents", "Trace Dependents", false).clicked() {
+            crate::grid::Trace::add_level(app, true);
         }
         if small_button(ui, Icon::Close, "Remove Arrows", "Remove Arrows", false).clicked() {
             app.grid.trace = None;

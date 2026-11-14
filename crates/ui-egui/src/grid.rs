@@ -193,6 +193,12 @@ impl Trace {
     pub fn new(app: &SheetApp, result: serde_json::Value) -> Option<Trace> {
         let d = app.session.active()?;
         let traced = (d.wb.active_sheet(), RangeRef::new(d.selection.active, d.selection.active));
+        Trace::from_result(app, result, traced)
+    }
+
+    /// [`Trace::new`] for a trace of `traced` rather than of the active cell.
+    fn from_result(app: &SheetApp, result: serde_json::Value, traced: (usize, RangeRef)) -> Option<Trace> {
+        let d = app.session.active()?;
         let end = |v: &serde_json::Value| {
             let sheet = match v["sheet"].as_str() {
                 Some(name) => d.wb.sheet_index(name)?,
@@ -215,6 +221,67 @@ impl Trace {
                 .collect(),
         };
         Some(Trace { uid: d.uid, revision: d.revision, arrows })
+    }
+
+    /// Trace Precedents (`dependents` false) or Trace Dependents pressed on the active cell, as in
+    /// Excel: the arrows join the ones already shown (of other cells too), and pressing again on a
+    /// cell whose arrows all show already goes one level further, tracing the cells at the far
+    /// ends of the last level (on the active sheet). Nothing is added once there is no further
+    /// level.
+    pub fn add_level(app: &mut SheetApp, dependents: bool) {
+        use std::collections::HashSet;
+        /// How many levels one press may look through for arrows not yet shown.
+        const MAX_LEVELS: usize = 64;
+        /// Most cells one level traces from (the cells of a large precedent range).
+        const MAX_FRONTIER: usize = 2000;
+        let cmd = if dependents { "formulas.traceDependents" } else { "formulas.tracePrecedents" };
+        let Some(d) = app.session.active() else { return };
+        let (uid, revision, si, start) = (d.uid, d.revision, d.wb.active_sheet(), d.selection.active);
+        let mut arrows = match &app.grid.trace {
+            Some(t) if t.uid == uid && t.revision == revision => t.arrows.clone(),
+            _ => Vec::new(),
+        };
+        let mut frontier = vec![start];
+        let mut seen: HashSet<CellRef> = HashSet::from([start]);
+        for _ in 0..MAX_LEVELS {
+            let mut level: Vec<TraceArrow> = Vec::new();
+            for cell in &frontier {
+                let Ok(r) = app.session.run(cmd, serde_json::json!({"cell": cell.a1()})) else { continue };
+                let traced = (si, RangeRef::new(*cell, *cell));
+                if let Some(t) = Trace::from_result(app, r, traced) {
+                    level.extend(t.arrows);
+                }
+            }
+            let fresh: Vec<TraceArrow> = level.iter().filter(|a| !arrows.contains(a)).copied().collect();
+            if !fresh.is_empty() {
+                arrows.extend(fresh);
+                break;
+            }
+            // Every arrow of this level shows already: trace from its far ends next.
+            let Some(d) = app.session.active() else { break };
+            let Some(sh) = d.wb.sheet(si) else { break };
+            let mut next = Vec::new();
+            for a in &level {
+                let (sheet, range) = if dependents { a.to } else { a.from };
+                if sheet != si {
+                    continue;
+                }
+                let cells = (range.start.row..=range.end.row).flat_map(|r| (range.start.col..=range.end.col).map(move |c| CellRef::new(r, c)));
+                for c in cells.take(MAX_FRONTIER) {
+                    if next.len() >= MAX_FRONTIER {
+                        break;
+                    }
+                    if sh.cell(c).is_some_and(|x| x.formula.is_some() || dependents) && seen.insert(c) {
+                        next.push(c);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            frontier = next;
+        }
+        app.grid.trace = Some(Trace { uid, revision, arrows });
     }
 
     /// The active document's uid and revision, to hand [`Trace::keep_through_zoom`] after a zoom.

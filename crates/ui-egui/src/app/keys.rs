@@ -35,6 +35,9 @@ impl SheetApp {
                 }
                 keytips::Action::Command(id @ ("edit.copy" | "edit.cut")) => self.copy_to_clipboard(ctx, id),
                 keytips::Action::Command("edit.paste") => self.paste_from_clipboard(),
+                // Alt, M, P / Alt, M, D draw the arrows as the ribbon buttons do.
+                keytips::Action::Command("formulas.tracePrecedents") => crate::grid::Trace::add_level(self, false),
+                keytips::Action::Command("formulas.traceDependents") => crate::grid::Trace::add_level(self, true),
                 keytips::Action::Command(id) => self.run_or_alert(id, json!({})),
                 keytips::Action::CommandWith(id, params) => {
                     let params: Json = serde_json::from_str(params).unwrap_or_else(|_| json!({}));
