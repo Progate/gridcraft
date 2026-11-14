@@ -429,6 +429,11 @@ impl<'h> Evaluator<'h> {
                 }
                 Ev::V(Array::new(h, w, data).map(Value::from).unwrap_or(Value::Error(CellError::Value)))
             }
+            // A sheet of another workbook (`[予算.xlsx]予算!B3`) reads the values cached from it:
+            // a value, as Excel's references into a closed workbook give.
+            Expr::Ref(r @ Reference { sheet: SheetSel::Named(n), .. }) if gridcraft_core::split_external(n).is_some() => {
+                Ev::V(self.host.workbook().external_value(n, r.range()).unwrap_or(Value::Error(CellError::Ref)))
+            }
             Expr::Ref(r) => match self.reference_areas(r) {
                 Ok(a) => Ev::R(a),
                 Err(x) => err(x),

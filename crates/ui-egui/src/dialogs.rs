@@ -35,6 +35,7 @@ mod ref_edit;
 mod scenarios;
 mod show;
 mod spelling;
+mod subtotal;
 mod text_import;
 mod text_to_columns;
 mod zoom;
@@ -855,28 +856,30 @@ impl Dialog {
                 d
             }
             "solverResults" => Dialog::custom("solverResults", "Solver Results", params.clone()),
-            "subtotal" => Dialog::form(
-                "subtotal",
-                "Subtotal",
-                "data.subtotal",
-                vec![
-                    Text { key: "groupBy", label: "At each change in (column letter):" },
-                    Choice {
-                        key: "function",
-                        label: "Use function",
-                        options: vec![
-                            ("sum", "Sum"),
-                            ("count", "Count"),
-                            ("average", "Average"),
-                            ("max", "Max"),
-                            ("min", "Min"),
-                            ("product", "Product"),
-                        ],
-                    },
-                    Text { key: "columnsText", label: "Add subtotal to (columns, e.g. C,D):" },
-                ],
-                json!({"groupBy": "A", "function": "sum"}),
+            "subtotal" => subtotal::open(app, &params),
+            // Workbook Links ▸ Change source: the workbook the link's formulas read instead.
+            "changeLinkSource" => Dialog::form(
+                "changeLinkSource",
+                "Workbook Links|Change Source",
+                "data.changeLinkSource",
+                vec![Text { key: "source", label: "Workbook Links|File name:" }],
+                json!({"link": p("link"), "source": params.get("source").and_then(Json::as_str).unwrap_or("")}),
             ),
+            // Group / Ungroup on a block of cells ask whether to group its rows or its columns.
+            "groupLines" | "ungroupLines" => {
+                let group = name == "groupLines";
+                Dialog::form(
+                    name,
+                    if group { "Group" } else { "Ungroup" },
+                    if group { "data.group" } else { "data.ungroup" },
+                    vec![Choice {
+                        key: "by",
+                        label: if group { "Group|Group" } else { "Ungroup|Ungroup" },
+                        options: vec![("rows", "Group|Rows"), ("cols", "Group|Columns")],
+                    }],
+                    json!({"by": "rows"}),
+                )
+            }
             "outlineSettings" => {
                 let (below, right) =
                     app.session.active().and_then(|d| d.wb.active().map(|s| (s.summary_below, s.summary_right))).unwrap_or((true, true));

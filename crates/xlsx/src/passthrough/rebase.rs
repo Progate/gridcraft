@@ -130,29 +130,44 @@ fn close_tag_from(x: &str, from: usize, local: &str) -> Option<usize> {
 /// does on Save As, or made absolute when no relative path exists (another drive). `None` when
 /// nothing changes.
 pub fn rebase_links(wb: &Workbook, to: &Path) -> Option<Workbook> {
-    let p = wb.preserved.as_deref()?;
     let from = Folder::of(wb.source_dir.as_deref()?)?;
     let to = Folder::of(to)?;
     if from == to {
         return None;
     }
-    let mut parts = p.parts.clone();
+    let mut out: Option<Workbook> = None;
+    if let Some(p) = wb.preserved.as_deref() {
+        let mut parts = p.parts.clone();
+        let mut changed = false;
+        for r in parts.iter_mut().flat_map(|part| part.rels.iter_mut()) {
+            if r.external
+                && is_kind(r, &["externalLinkPath"])
+                && let Some(target) = rebase(&r.target, &from, &to)
+            {
+                r.target = target;
+                changed = true;
+            }
+        }
+        if changed {
+            let mut o = wb.clone();
+            o.preserved = Some(Arc::new(Preserved { parts, ..p.clone() }));
+            out = Some(o);
+        }
+    }
+    // Modelled links hold their file as a path (`予算 2025.xlsx`), the target decoded.
+    let mut links = wb.external_links.clone();
     let mut changed = false;
-    for r in parts.iter_mut().flat_map(|part| part.rels.iter_mut()) {
-        if r.external
-            && is_kind(r, &["externalLinkPath"])
-            && let Some(target) = rebase(&r.target, &from, &to)
-        {
-            r.target = target;
+    for l in &mut links {
+        let uri = l.target.replace('%', "%25").replace(' ', "%20");
+        if let Some(target) = rebase(&uri, &from, &to) {
+            l.target = decode_name(&target);
             changed = true;
         }
     }
-    if !changed {
-        return None;
+    if changed {
+        out.get_or_insert_with(|| wb.clone()).external_links = links;
     }
-    let mut out = wb.clone();
-    out.preserved = Some(Arc::new(Preserved { parts, ..p.clone() }));
-    Some(out)
+    out
 }
 
 /// An absolute folder, lexically normalized.

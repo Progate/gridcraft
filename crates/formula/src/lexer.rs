@@ -110,7 +110,9 @@ fn quoted(src: &str, chars: &[(usize, char)], i: usize, start: usize, out: &mut 
     if char_at(chars, j) != Some('!') {
         return Err(LexError { msg: "expected ! after sheet name".into(), pos: byte_pos(src, chars, j) });
     }
-    let (first, last) = match value.split_once(':') {
+    // `'C:\会計\[予算.xlsx]予算'!`: a folder's drive colon is not a 3-D span.
+    let span = if gridcraft_core::split_external(&value).is_some() { None } else { value.split_once(':') };
+    let (first, last) = match span {
         Some((first, last)) => (first.to_string(), Some(last.to_string())),
         None => (value, None),
     };
@@ -154,6 +156,43 @@ fn structured_ref(src: &str, chars: &[(usize, char)], i: usize, start: usize, ou
     let inner = src.get(byte_pos(src, chars, i + 1)..byte_pos(src, chars, j.saturating_sub(1))).unwrap_or("").to_string();
     emit(src, chars, out, Tok::Struct(inner), start, j);
     Ok(j)
+}
+
+/// A sheet of another workbook written without quotes, `[予算.xlsx]予算!` (and in files
+/// `[1]予算!`): the bracketed workbook, the sheet's name and `!` make one sheet prefix. Anything
+/// else in brackets is a structured reference (`[@Col]`, `[[#Headers],[Col]]`), which a sheet
+/// name and `!` never follow.
+fn external_sheet(
+    src: &str,
+    chars: &[(usize, char)],
+    locale: crate::FormulaLocale,
+    array_depth: usize,
+    i: usize,
+    start: usize,
+    out: &mut Vec<Token>,
+) -> Option<usize> {
+    let ch = |index| char_at(chars, index);
+    let mut j = i + 1;
+    while let Some(c) = ch(j) {
+        match c {
+            ']' => break,
+            '[' | '\'' | '"' | '!' => return None,
+            _ => j += 1,
+        }
+    }
+    if ch(j) != Some(']') || j == i + 1 {
+        return None;
+    }
+    let mut k = j + 1;
+    while ch(k).is_some_and(|c| is_word_char(c) && !(array_depth > 0 && c == locale.array_column_separator())) {
+        k += 1;
+    }
+    if k == j + 1 || ch(k) != Some('!') {
+        return None;
+    }
+    let value: String = chars.get(i..k)?.iter().map(|c| c.1).collect();
+    emit(src, chars, out, Tok::Sheet(value, None), start, k + 1);
+    Some(k + 1)
 }
 
 fn number(src: &str, chars: &[(usize, char)], locale: crate::FormulaLocale, i: usize, start: usize, out: &mut Vec<Token>) -> Result<usize, LexError> {
@@ -296,7 +335,10 @@ pub fn tokenize_locale(src: &str, locale: crate::FormulaLocale) -> Result<Vec<To
                 i = error_literal(src, &chars, i, start, &mut out)?;
             }
             '[' => {
-                i = structured_ref(src, &chars, i, start, &mut out)?;
+                i = match external_sheet(src, &chars, locale, array_depth, i, start, &mut out) {
+                    Some(j) => j,
+                    None => structured_ref(src, &chars, i, start, &mut out)?,
+                };
             }
             '.' if ch(i + 1) == Some(':') => {
                 // Trim reference `A1.:E10` / `A1.:.E10` (the word before stopped at the dot).

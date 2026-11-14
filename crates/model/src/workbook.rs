@@ -326,6 +326,10 @@ pub struct Workbook {
     /// the links in memory are still written for the old one. Not in JSON.
     #[serde(skip)]
     pub source_path: Option<std::path::PathBuf>,
+    /// Links to other workbooks that formulas read (`=[予算.xlsx]予算!B3`), with the values cached
+    /// from them, in the order a file numbers them (`[1]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub external_links: Vec<crate::ExternalLink>,
 }
 
 fn is_all(s: &ShowObjects) -> bool {
@@ -422,6 +426,7 @@ impl Workbook {
             source_dir: None,
             region: gridcraft_core::region::default_region(),
             source_path: None,
+            external_links: vec![],
         }
     }
     pub fn sheet(&self, i: usize) -> Option<&Sheet> {

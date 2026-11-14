@@ -31,6 +31,7 @@ pub fn build_params(d: &Dialog) -> Json {
         }
         "textImport" => return super::text_import::import_params(d),
         "consolidate" => return super::consolidate::params(d),
+        "subtotal" => return super::subtotal::params(d),
         "createTable" => {
             // The reference box reads `=$A$1:$D$9`, as Excel's; the command takes it without `=`.
             if let Some(r) = d.values.get("range").and_then(Json::as_str).map(|r| r.trim().trim_start_matches('=').to_string()) {
@@ -108,11 +109,6 @@ pub fn build_params(d: &Dialog) -> Json {
             }
             if let Some(m) = v.as_object_mut() {
                 m.remove("unchecked");
-            }
-        }
-        "subtotal" => {
-            if let Some(t) = d.values.get("columnsText").and_then(Json::as_str).filter(|t| !t.trim().is_empty()) {
-                v["columns"] = Json::Array(t.split(',').map(|c| json!(c.trim().to_ascii_uppercase())).collect());
             }
         }
         "allowEditRanges" => {
@@ -209,6 +205,8 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         "solver" => 460.0,
         "scenarioManager" => 420.0,
         "consolidate" => 440.0,
+        "subtotal" => 340.0,
+        "groupLines" | "ungroupLines" => 220.0,
         "customAutoFilter" => 440.0,
         "top10AutoFilter" => 320.0,
         "assignAction" => 440.0,
@@ -265,6 +263,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "moveChart" => move_chart(app, ui, &mut d, &mut confirm, &mut open),
                 "commandSearch" => command_search(app, ui, &mut d, &mut confirm),
                 "consolidate" => super::consolidate::consolidate(app, ui, &mut d, &mut confirm, &mut open),
+                "subtotal" => super::subtotal::subtotal(app, ui, &mut d, &mut confirm, &mut open),
                 "goalSeek" => goal_seek(app, ui, &mut d, &mut confirm, &mut open),
                 "scenarioManager" => super::scenarios::scenario_manager(app, ui, &mut d, &mut confirm, &mut open),
                 "convertToRange" => {

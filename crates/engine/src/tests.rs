@@ -1695,7 +1695,9 @@ fn subtotal_with_a_sheet_prefix_works_on_the_named_sheet() {
     assert_eq!(col(prices, 0), ["Item", "a", "a", "a Total", "b", "b Total", "Grand Total"].map(Value::from));
     assert_eq!(col(prices, 1)[1..], [1.0, 2.0, 3.0, 4.0, 4.0, 7.0].map(Value::from));
     assert!(wb.styles.get(prices.style_id(CellRef::new(3, 0))).font.bold);
-    assert_eq!(prices.rows.get(&1).map(|l| l.outline), Some(1));
+    // Detail at level 2, the subtotal rows at level 1, as Excel's three-level outline.
+    assert_eq!(prices.rows.get(&1).map(|l| l.outline), Some(2));
+    assert_eq!(prices.rows.get(&3).map(|l| l.outline), Some(1));
     let sheet1 = wb.sheet(wb.sheet_index("Sheet1").unwrap()).unwrap();
     assert_eq!(col(sheet1, 0)[..4], ["Name", "x", "x", "y"].map(Value::from));
     assert!(sheet1.value(CellRef::new(4, 0)).is_empty());

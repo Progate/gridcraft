@@ -287,6 +287,9 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     if wb.sheets.iter().any(|sheet| sheet.cell_pictures.keys().any(|c| sheet.cell(*c).is_some_and(|cell| cell.formula.is_some()))) {
         return Err(IoError::Format("a static cell picture cannot also contain a formula".into()));
     }
+    // Formulas that read other workbooks name them by number in the file (`[1]予算!B3`).
+    let file_links = crate::links::file_form(wb);
+    let wb = file_links.as_ref().map_or(wb, |(w, _)| w);
     check_sheet_names(wb)?;
     let mut out = Out {
         parts: vec![],
@@ -364,6 +367,9 @@ pub fn write_xlsx_named_with(wb: &Workbook, kind: XlsxKind, book_name: Option<&s
     w.push_str(&workbook_view_attrs(wb));
     let _ = write!(w, "/></bookViews><sheets>{sheets_xml}</sheets>");
     w.push_str(&kept.elements);
+    if let Some((_, links)) = &file_links {
+        w.push_str(&crate::links::write(links, &mut out, &mut wb_rels));
+    }
     if !names.is_empty() {
         let _ = write!(w, "<definedNames>{names}</definedNames>");
     }

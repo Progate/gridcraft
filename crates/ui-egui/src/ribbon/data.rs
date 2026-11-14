@@ -8,6 +8,12 @@ pub(super) fn data(app: &mut SheetApp, ui: &mut Ui) {
     if gd.clicked() {
         app.import_text_file();
     }
+    // Queries & Connections: Workbook Links opens its task pane.
+    let __k = small_button(ui, Icon::Link, "Workbook Links", "Workbook Links", false);
+    control_keytip(app, ui, &__k, "data.editLinks");
+    if __k.clicked() {
+        act(app, "data.editLinks", json!({}));
+    }
     sep(ui);
     ui.vertical(|ui| {
         let __k = small_button(ui, Icon::SortAsc, "", "Sort A to Z", false);

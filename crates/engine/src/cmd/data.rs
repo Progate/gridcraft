@@ -20,14 +20,17 @@ use crate::selection::current_region;
 mod filter;
 mod grouping;
 mod sort;
+mod subtotal;
 mod tools;
 mod validation;
 
 pub use filter::{FilterColumnKind, filter_column_kind, filter_criterion_at, filter_values};
 pub(crate) use filter::{apply_filter, grow_autofilter};
 use filter::{clear_filter, filter_by, reapply, toggle_filter};
-use grouping::{detail, group, outline_settings, show_levels, subtotal};
+use grouping::{detail, group, outline_settings, show_levels};
 use sort::{quick_sort, sort};
+use subtotal::{remove_subtotals, subtotal};
+pub use subtotal::{subtotal_fields, subtotal_functions, subtotal_list};
 /// Text to Columns' field splitting, for the wizard's preview.
 pub use tools::split_delimited;
 use tools::{remove_duplicates, text_to_columns};
@@ -156,9 +159,54 @@ pub fn specs() -> Vec<CommandSpec> {
             "Subtotal",
             ["Data", "Outline"],
             None,
-            "{range?, groupBy: \"A\", function?: sum|count|average|max|min|product, columns: [\"C\"], header?: true}",
+            "{range?, groupBy: \"店舗\" | \"A\" (At each change in: a header name, a column letter, or a position in the list), function?: sum|count|average|max|min|product|countNums|stdDev|stdDevP|var|varP, columns: [\"金額\", \"D\"] (Add subtotal to: header names or letters), replace?: bool (Replace current subtotals, default true), pageBreaks?: bool (Page break between groups, default false), summaryBelow?: bool (Summary below data, default true), header?: true} → {groups, removed, grandTotal}. The rows get a three-level outline: 1 grand total, 2 subtotals, 3 detail",
             has_doc,
             subtotal
+        ),
+        cmd!(
+            "data.removeSubtotals",
+            "Remove All Subtotals",
+            ["Data", "Outline"],
+            None,
+            "{range?, header?: true} (the Subtotal dialog's Remove All: deletes the list's SUBTOTAL rows, its row outline and page breaks) → {removed, range}",
+            has_doc,
+            remove_subtotals
+        ),
+        cmd!(
+            query "data.editLinks",
+            "Workbook Links",
+            ["Data", "Queries & Connections"],
+            None,
+            "{} → {links: [{link: 1, name: \"予算.xlsx\", folder, target, sheets, formulas, status}]}: the other workbooks this one's formulas read (=[予算.xlsx]予算!B3), as Excel's Workbook Links (Edit Links) lists them",
+            has_doc,
+            crate::workbook_links::list
+        ),
+        cmd!(
+            "data.updateLinks",
+            "Refresh Workbook Links",
+            ["Data", "Queries & Connections", "Workbook Links"],
+            None,
+            "{link?: 1 | \"予算.xlsx\"} (default: every link) reads the values again from the linked workbook, open in this session or its file beside this one (Excel's Update Values / Refresh) → {links}",
+            has_doc,
+            crate::workbook_links::update
+        ),
+        cmd!(
+            "data.changeLinkSource",
+            "Change Link Source",
+            ["Data", "Queries & Connections", "Workbook Links"],
+            None,
+            "{link: 1 | \"予算.xlsx\", source: \"予算2026.xlsx\" | \"C:\\会計\\予算.xlsx\"} points the formulas that read the link at another workbook and reads its values (Excel's Change Source) → {links}",
+            has_doc,
+            crate::workbook_links::change_source
+        ),
+        cmd!(
+            "data.breakLinks",
+            "Break Workbook Links",
+            ["Data", "Queries & Connections", "Workbook Links"],
+            None,
+            "{link?: 1 | \"予算.xlsx\"} (default: every link) turns the formulas that read the link into their values and removes the link (Excel's Break Link) → {cells, links}",
+            has_doc,
+            crate::workbook_links::break_links
         ),
         cmd!("data.flashFill", "Flash Fill", ["Data", "Data Tools"], None, "{range?}", has_doc, |s, p| s.execute("edit.flashFill", p.clone())),
     ]
