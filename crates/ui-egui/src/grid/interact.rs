@@ -144,6 +144,24 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
         if let Some(p) = at
             && let Some((obj, _, _)) = under
         {
+            // A click on a chart's title or axis title selects that title; a second click on the
+            // selected title edits its text in place (Excel).
+            if primary_clicked && !primary_drag && obj.kind == ObjKind::Chart && handle.is_none() {
+                let element = crate::chartview::chart_element_at(ui.painter(), geo, wb, wb.active_sheet(), sh, obj.id, p);
+                let again = element.is_some() && app.selected_object == Some(obj) && app.selected_chart_element() == element.map(|e| (obj.id, e));
+                app.selected_object = Some(obj);
+                match element {
+                    Some(e) if again => {
+                        app.begin_chart_text_edit(obj.id, e, None);
+                        return;
+                    }
+                    Some(e) => {
+                        app.grid.chart_element = Some((obj.id, e));
+                        return;
+                    }
+                    None => app.grid.chart_element = None,
+                }
+            }
             app.selected_object = Some(obj);
             if resp.double_clicked() && app.open_object(obj) != crate::objects::OpenAction::Select {
                 return;

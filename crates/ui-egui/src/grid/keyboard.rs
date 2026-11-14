@@ -5,8 +5,13 @@ use super::{CellRef, Drag, Sheet, SheetApp, json};
 /// Grid keyboard handling when no text field has focus.
 pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Response, geo: &Geo, sh: &Sheet) {
     // Focus left on an editor that no longer exists goes back to the grid.
-    let stale = [egui::Id::unique("gridcraft.cell_editor"), egui::Id::unique("gridcraft.formula_bar"), crate::text_box::editor_id()];
-    let editing = app.editor.is_some() || app.text_box_editor.is_some();
+    let stale = [
+        egui::Id::unique("gridcraft.cell_editor"),
+        egui::Id::unique("gridcraft.formula_bar"),
+        crate::text_box::editor_id(),
+        crate::chart_text::editor_id(),
+    ];
+    let editing = app.editor.is_some() || app.text_box_editor.is_some() || app.editing_chart_text();
     if !editing && ctx.memory(|m| m.focused()).is_some_and(|f| stale.contains(&f)) {
         resp.request_focus();
     }
@@ -59,6 +64,13 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             // insert text at, so a middle click on a cell is deliberately not a paste.
             egui::Event::MiddleClickPaste { .. } => {}
             egui::Event::Text(_) if shortcut_pressed || shortcut_ran => {}
+            // Typing with a chart title selected replaces its text, as in Excel.
+            egui::Event::Text(text) if text.chars().all(|c| !c.is_control()) && !text.is_empty() && app.selected_chart_element().is_some() => {
+                if let Some((id, el)) = app.selected_chart_element() {
+                    app.begin_chart_text_edit(id, el, Some(text));
+                }
+                return;
+            }
             egui::Event::Text(text) if text.chars().all(|c| !c.is_control()) && !text.is_empty() => {
                 app.begin_edit(Some(text), false);
                 if let Some(ed) = app.editor.as_mut() {
@@ -120,6 +132,12 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
                             app.move_after_enter(if shift { -1 } else { 1 }, 0);
                         }
                     }
+                    // A selected title: Delete removes that title, not the chart (Excel), F2 edits it.
+                    Key::Delete | Key::Backspace if delete_chart_element(app) => {}
+                    Key::F2 if let Some((id, el)) = app.selected_chart_element() => {
+                        app.begin_chart_text_edit(id, el, None);
+                    }
+                    Key::Escape if app.selected_chart_element().is_some() => app.grid.chart_element = None,
                     Key::Tab => app.move_after_enter(0, if shift { -1 } else { 1 }),
                     Key::F2 => app.begin_edit(None, false),
                     // With an object selected, Delete and Backspace delete it, not the cells.
@@ -155,6 +173,20 @@ pub(super) fn keyboard(app: &mut SheetApp, ctx: &egui::Context, resp: &egui::Res
             _ => {}
         }
     }
+}
+
+/// Removes the selected chart title or axis title (Add Chart Element ▸ … ▸ None); false when no
+/// title is selected.
+fn delete_chart_element(app: &mut SheetApp) -> bool {
+    let Some((id, el)) = app.selected_chart_element() else { return false };
+    let params = match el {
+        gridcraft_chart::ChartElement::Title => json!({"chart": id, "element": "title", "on": false}),
+        gridcraft_chart::ChartElement::HorizontalAxisTitle => json!({"chart": id, "element": "axisTitle", "axis": "horizontal", "on": false}),
+        gridcraft_chart::ChartElement::VerticalAxisTitle => json!({"chart": id, "element": "axisTitle", "axis": "vertical", "on": false}),
+    };
+    app.run_or_alert("chart.addElement", params);
+    app.grid.chart_element = None;
+    true
 }
 
 /// Excel: F4 outside a formula repeats the last action on the selection (in a formula, the cell

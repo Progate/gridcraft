@@ -27,7 +27,7 @@ mod title_bar;
 mod view;
 
 use automate::automate;
-use contextual::{chart_design, table_design};
+use contextual::{chart_design, chart_format, sparkline_tab, table_design};
 pub(crate) use controls::{ComboResult, editable_combo};
 use controls::{act, keytip};
 use data::data;
@@ -155,6 +155,8 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             "Automate" => automate(app, ui),
                             "Table Design" => table_design(app, ui),
                             "Chart Design" => chart_design(app, ui),
+                            CHART_FORMAT_TAB => chart_format(app, ui),
+                            SPARKLINE_TAB => sparkline_tab(app, ui),
                             crate::paper_view::TAB => crate::paper_view::ribbon_tab(app, ui),
                             _ => home(app, ui),
                         }
@@ -274,7 +276,12 @@ fn theme_choices(app: &mut SheetApp, ui: &mut Ui) {
     }
 }
 
-const CONTEXTUAL_TABS: [&str; 3] = ["Table Design", "Chart Design", crate::paper_view::TAB];
+/// The chart's Format tab (書式), after Chart Design as in Excel.
+pub(crate) const CHART_FORMAT_TAB: &str = "Format";
+/// The Sparkline tab (スパークライン), while the active cell holds a sparkline.
+pub(crate) const SPARKLINE_TAB: &str = "Sparkline";
+
+const CONTEXTUAL_TABS: [&str; 5] = ["Table Design", "Chart Design", CHART_FORMAT_TAB, SPARKLINE_TAB, crate::paper_view::TAB];
 
 fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
     let mut v = Vec::new();
@@ -286,6 +293,9 @@ fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
         }
         if app.selected_chart().is_some_and(|id| sh.charts.iter().any(|c| c.id == id)) {
             v.push("Chart Design");
+            v.push(CHART_FORMAT_TAB);
+        } else if app.selected_object.is_none() && sh.sparklines.iter().any(|sp| sp.cell == d.selection.active) {
+            v.push(SPARKLINE_TAB);
         }
         if app.grid.hf_edit.is_some() {
             v.push(crate::paper_view::TAB);

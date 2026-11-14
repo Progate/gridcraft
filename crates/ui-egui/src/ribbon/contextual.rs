@@ -110,34 +110,157 @@ fn table_style_strip(app: &mut SheetApp, ui: &mut Ui, tname: &str, current: &str
     });
 }
 
-pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
-    let Some(id) = app.selected_chart() else { return };
-    let ae = big_button(ui, Icon::Chart, "Add Chart\nElement", "Add Chart Element", true);
-    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["chart.set"]) {
-        keytip(app, ui, sequence, ae.rect.center_bottom());
+/// What Chart Design reads of the selected chart: its type, Chart Styles entry and elements.
+struct ChartState {
+    id: u32,
+    kind: gridcraft_engine::model::ChartKind,
+    gallery: Option<u32>,
+    styles: u32,
+    axes: bool,
+    across: bool,
+    horizontal_title: bool,
+    vertical_title: bool,
+    title: bool,
+    overlay: bool,
+    data_table: bool,
+}
+
+fn chart_state(app: &SheetApp) -> Option<ChartState> {
+    let id = app.selected_chart()?;
+    let d = app.session.active()?;
+    let si = d.wb.active_sheet();
+    let c = d.wb.sheet(si)?.charts.iter().find(|c| c.id == id)?;
+    let shown = gridcraft_engine::cmd::insert::shown_chart_title(&d.wb, si, c, app.session.prefs.chart_title());
+    Some(ChartState {
+        id,
+        kind: c.kind,
+        gallery: c.gallery_style(),
+        styles: gridcraft_engine::model::chart_style_family(c.kind).map_or(0, |(_, n)| n),
+        axes: gridcraft_engine::cmd::extra::has_axes(c),
+        across: c.value_axis_across(),
+        horizontal_title: c.axis_title(true).is_some(),
+        vertical_title: c.axis_title(false).is_some(),
+        title: shown.is_some(),
+        overlay: c.title_overlay,
+        data_table: c.supports_data_table(),
+    })
+}
+
+/// A menu item shown selected while its choice is the chart's, as Excel highlights it.
+fn check_item(app: &mut SheetApp, ui: &mut Ui, label: &str, on: bool) -> bool {
+    let text = app.ui.language.tr(label);
+    ui.add(egui::Button::selectable(on, text).min_size(vec2(200.0, 22.0))).clicked()
+}
+
+/// Add Chart Element, as Excel's menu: Axis Titles, Chart Title, Data Labels, Data Table,
+/// Gridlines and Legend, each a submenu of its choices.
+fn add_chart_element_menu(app: &mut SheetApp, ui: &mut Ui, c: &ChartState) {
+    let lang = app.ui.language;
+    let id = c.id;
+    if c.axes {
+        ui.menu_button(lang.tr("Axis Titles"), |ui| {
+            for (label, axis, on) in [("Primary Horizontal", "horizontal", c.horizontal_title), ("Primary Vertical", "vertical", c.vertical_title)] {
+                if check_item(app, ui, label, on) {
+                    act(app, "chart.addElement", json!({"chart": id, "element": "axisTitle", "axis": axis, "on": !on}));
+                    ui.close();
+                }
+            }
+        });
     }
-    egui::Popup::menu(&ae).show(|ui| {
+    ui.menu_button(lang.tr("Chart Title"), |ui| {
+        for (label, on, params) in [
+            ("None", !c.title, json!({"chart": id, "element": "title", "on": false})),
+            ("Above Chart", c.title && !c.overlay, json!({"chart": id, "element": "title", "position": "above"})),
+            ("Centered Overlay", c.title && c.overlay, json!({"chart": id, "element": "title", "position": "overlay"})),
+        ] {
+            if check_item(app, ui, label, on) {
+                act(app, "chart.addElement", params);
+                ui.close();
+            }
+        }
+    });
+    ui.menu_button(lang.tr("Data Labels"), |ui| {
+        menu_items(
+            app,
+            ui,
+            &[("None", "chart.set", json!({"chart": id, "dataLabels": false})), ("Show", "chart.set", json!({"chart": id, "dataLabels": true}))],
+        );
+    });
+    if c.data_table {
+        ui.menu_button(lang.tr("Data Table"), |ui| {
+            menu_items(
+                app,
+                ui,
+                &[
+                    ("None", "chart.addElement", json!({"chart": id, "element": "dataTable", "on": false})),
+                    ("With Legend Keys", "chart.addElement", json!({"chart": id, "element": "dataTable", "dataTableKeys": true})),
+                    ("No Legend Keys", "chart.addElement", json!({"chart": id, "element": "dataTable", "dataTableKeys": false})),
+                ],
+            );
+        });
+    }
+    if c.axes {
+        ui.menu_button(lang.tr("Gridlines"), |ui| {
+            let on = app.session.active().and_then(|d| d.wb.active()?.charts.iter().find(|x| x.id == id).map(|x| x.gridlines)).unwrap_or(false);
+            // GridCraft's gridlines are the value axis's major ones: horizontal lines, or vertical on a bar chart.
+            let label = if c.across { "Primary Major Vertical" } else { "Primary Major Horizontal" };
+            if check_item(app, ui, label, on) {
+                act(app, "chart.set", json!({"chart": id, "gridlines": !on}));
+                ui.close();
+            }
+        });
+    }
+    ui.menu_button(lang.tr("Legend"), |ui| {
         menu_items(
             app,
             ui,
             &[
-                ("Legend: Bottom", "chart.set", json!({"chart": id, "legend": "bottom"})),
-                ("Legend: Right", "chart.set", json!({"chart": id, "legend": "right"})),
-                ("Legend: Top", "chart.set", json!({"chart": id, "legend": "top"})),
-                ("Legend: None", "chart.set", json!({"chart": id, "legend": "none"})),
-                ("-", "", json!(null)),
-                ("Data Labels: Show", "chart.set", json!({"chart": id, "dataLabels": true})),
-                ("Data Labels: None", "chart.set", json!({"chart": id, "dataLabels": false})),
-                ("Data Table: With Legend Keys", "chart.addElement", json!({"chart": id, "element": "dataTable", "dataTableKeys": true})),
-                ("Data Table: No Legend Keys", "chart.addElement", json!({"chart": id, "element": "dataTable", "dataTableKeys": false})),
-                ("Data Table: None", "chart.addElement", json!({"chart": id, "element": "dataTable", "on": false})),
-                ("Gridlines: Show", "chart.set", json!({"chart": id, "gridlines": true})),
-                ("Gridlines: None", "chart.set", json!({"chart": id, "gridlines": false})),
+                ("None", "chart.set", json!({"chart": id, "legend": "none"})),
+                ("Right", "chart.set", json!({"chart": id, "legend": "right"})),
+                ("Top", "chart.set", json!({"chart": id, "legend": "top"})),
+                ("Left", "chart.set", json!({"chart": id, "legend": "left"})),
+                ("Bottom", "chart.set", json!({"chart": id, "legend": "bottom"})),
             ],
         );
     });
-    let kind = app.session.active().and_then(|d| d.wb.active()?.charts.iter().find(|c| c.id == id).map(|c| c.kind));
-    let layouts = kind.map_or(&[][..], gridcraft_engine::cmd::extra::quick_layouts);
+}
+
+/// How many Chart Styles the ribbon shows before the More arrow, as Excel's gallery row.
+const RIBBON_CHART_STYLES: u32 = 6;
+
+/// One Chart Styles thumbnail: the chart drawn small, its number, and the chosen one framed.
+/// Returns whether it was clicked.
+fn chart_style_swatch(app: &SheetApp, ui: &mut Ui, n: u32, current: Option<u32>) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let (r, resp) = ui.allocate_exact_size(vec2(52.0, 40.0), Sense::click());
+    ui.painter().rect_filled(r, 2.0, Color32::WHITE);
+    if let Some(d) = app.session.active()
+        && let Some(id) = app.selected_chart()
+        && let Some(c) = d.wb.active().and_then(|sh| sh.charts.iter().find(|c| c.id == id))
+    {
+        crate::chartview::paint_chart(ui.painter(), r.shrink(2.0), &d.wb, d.wb.active_sheet(), c);
+    }
+    ui.painter().text(r.left_top() + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, n.to_string(), crate::theme::ui_font(9.0), Color32::from_gray(0x40));
+    if current == Some(n) {
+        ui.painter().rect_stroke(r.expand(2.5), 2.0, Stroke::new(2.0, t.accent), StrokeKind::Outside);
+    }
+    if resp.hovered() {
+        ui.painter().rect_stroke(r.expand(1.0), 2.0, Stroke::new(2.0, Color32::from_rgb(0xE8, 0x7D, 0x2B)), StrokeKind::Outside);
+    }
+    let name = app.ui.language.tr("Style {n}").replace("{n}", &n.to_string());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
+    resp.on_hover_text(name).clicked()
+}
+
+pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
+    let Some(c) = chart_state(app) else { return };
+    let id = c.id;
+    let ae = big_button(ui, Icon::Chart, "Add Chart\nElement", "Add Chart Element", true);
+    for sequence in keytip_table::group_extension(app.keytips.prefix().unwrap_or_default(), &["chart.set"]) {
+        keytip(app, ui, sequence, ae.rect.center_bottom());
+    }
+    egui::Popup::menu(&ae).show(|ui| add_chart_element_menu(app, ui, &c));
+    let layouts = gridcraft_engine::cmd::extra::quick_layouts(c.kind);
     if !layouts.is_empty() {
         let ql = big_button(ui, Icon::Chart, "Quick\nLayout", "Quick Layout", true);
         control_keytip(app, ui, &ql, "chart.quickLayout");
@@ -152,6 +275,9 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
             }
         });
     }
+    sep(ui);
+    chart_style_strip(app, ui, &c);
+    sep(ui);
     let __k = big_button(ui, Icon::Redo, "Switch\nRow/Column", "Switch Row/Column", false);
     control_keytip(app, ui, &__k, "chart.switchRowColumn");
     if __k.clicked() {
@@ -160,6 +286,7 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
     if big_button(ui, Icon::Table, "Select\nData", "Select Data", false).clicked() {
         app.open_dialog("selectData", json!({"chart": id}));
     }
+    sep(ui);
     let ct = big_button(ui, Icon::ChartBar, "Change\nChart Type", "Change Chart Type", true);
     for sequence in keytip_table::group_extension(
         app.keytips.prefix().unwrap_or_default(),
@@ -191,18 +318,15 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("comboChart", json!({"chart": id}));
         }
     });
+    sep(ui);
     let __k = big_button(ui, Icon::Chart, "Move\nChart", "Move Chart", false);
     control_keytip(app, ui, &__k, "chart.move");
     if __k.clicked() {
         app.open_dialog("moveChart", json!({"chart": id}));
     }
+    sep(ui);
     if big_button(ui, Icon::Settings, "Format\nPane", "Format Chart pane", false).clicked() {
         app.grid.pane = Some("formatChart".into());
-    }
-    let __k = big_button(ui, Icon::TextBox, "Alt\nText", "Alt Text", false);
-    control_keytip(app, ui, &__k, "object.altText");
-    if __k.clicked() {
-        app.open_dialog("altText", json!({"kind": "chart", "id": id}));
     }
     let __k = big_button(ui, Icon::TextBox, "Chart\nTitle", "Edit chart title", false);
     control_keytip(app, ui, &__k, "chartTitle");
@@ -215,6 +339,117 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
         act(app, "chart.delete", json!({"chart": id}));
         app.selected_object = None;
     }
+}
+
+/// Chart Design ▸ Chart Styles: the first styles of the chart type's gallery, and the More arrow
+/// that opens all of them. Picking one saves it as the chart's style (`chart.set {style}`).
+fn chart_style_strip(app: &mut SheetApp, ui: &mut Ui, c: &ChartState) {
+    if c.styles == 0 {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.add_space(4.0);
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for n in 1..=c.styles.min(RIBBON_CHART_STYLES) {
+            if chart_style_swatch(app, ui, n, c.gallery) {
+                picked = Some(n);
+            }
+        }
+        let more = icon_button(ui, Icon::Chevron, t.text_dim, "More Chart Styles", vec2(18.0, 40.0));
+        control_keytip(app, ui, &more, "chart.set");
+        egui::Popup::menu(&more).show(|ui| {
+            egui::Grid::new("gridcraft.chart_styles").spacing(vec2(6.0, 6.0)).show(ui, |ui| {
+                for n in 1..=c.styles {
+                    if chart_style_swatch(app, ui, n, c.gallery) {
+                        picked = Some(n);
+                        ui.close();
+                    }
+                    if n % 4 == 0 {
+                        ui.end_row();
+                    }
+                }
+            });
+        });
+    });
+    if let Some(n) = picked {
+        act(app, "chart.set", json!({"chart": c.id, "style": n}));
+    }
+}
+
+/// The chart's Format tab (書式), with what GridCraft can do there: Format Selection, Alt Text
+/// (Excel's Accessibility group) and Bring Forward / Send Backward.
+pub(super) fn chart_format(app: &mut SheetApp, ui: &mut Ui) {
+    let Some(id) = app.selected_chart() else { return };
+    let __k = big_button(ui, Icon::Settings, "Format\nSelection", "Format Selection", false);
+    control_keytip(app, ui, &__k, "chart.formatSelection");
+    if __k.clicked() {
+        app.grid.pane = Some("formatChart".into());
+    }
+    sep(ui);
+    let __k = big_button(ui, Icon::TextBox, "Alt\nText", "Alt Text", false);
+    control_keytip(app, ui, &__k, "object.altText");
+    if __k.clicked() {
+        app.open_dialog("altText", json!({"kind": "chart", "id": id}));
+    }
+    sep(ui);
+    for (label, tip, cmd) in
+        [("Bring\nForward", "Bring Forward", "arrange.bringForward"), ("Send\nBackward", "Send Backward", "arrange.sendBackward")]
+    {
+        let __k = big_button(ui, Icon::Shapes, label, tip, false);
+        control_keytip(app, ui, &__k, cmd);
+        if __k.clicked() {
+            act(app, cmd, json!({"kind": "chart", "id": id}));
+        }
+    }
+}
+
+/// The Sparkline tab (スパークライン) for the sparkline group of the active cell: its type (Line,
+/// Column, Win/Loss) and the points it shows (High Point, Low Point, Markers), as Excel's Type and
+/// Show groups. A change applies to the whole group.
+pub(super) fn sparkline_tab(app: &mut SheetApp, ui: &mut Ui) {
+    use gridcraft_engine::model::SparklineKind;
+    let Some((cell, kind, markers, high, low)) = app.session.active().and_then(|d| {
+        let sp = d.wb.active()?.sparklines.iter().find(|sp| sp.cell == d.selection.active)?;
+        Some((sp.cell.a1(), sp.kind, sp.markers, sp.high, sp.low))
+    }) else {
+        return;
+    };
+    for (label, tip, k, icon) in [
+        ("Line", "Line", SparklineKind::Line, Icon::ChartLine),
+        ("Column", "Column", SparklineKind::Column, Icon::ChartBar),
+        ("Win/Loss", "Win/Loss", SparklineKind::WinLoss, Icon::Sparkline),
+    ] {
+        let resp = big_button(ui, icon, label, tip, false);
+        if kind == k {
+            ui.painter().rect_stroke(resp.rect, 4.0, Stroke::new(1.5, Tokens::get(ui.ctx()).accent), StrokeKind::Inside);
+        }
+        if resp.clicked() && kind != k {
+            let ty = match k {
+                SparklineKind::Line => "line",
+                SparklineKind::Column => "column",
+                SparklineKind::WinLoss => "winLoss",
+            };
+            act(app, "sparkline.set", json!({"cell": cell, "type": ty}));
+        }
+    }
+    sep(ui);
+    ui.vertical(|ui| {
+        for (label, key, v) in [("High Point", "high", high), ("Low Point", "low", low)] {
+            let mut on = v;
+            if ui.checkbox(&mut on, app.ui.language.tr(label)).changed() {
+                act(app, "sparkline.set", json!({"cell": cell, key: on}));
+            }
+        }
+    });
+    ui.vertical(|ui| {
+        // Excel greys Markers out for column and win/loss sparklines, which have no line to mark.
+        let mut on = markers;
+        if ui.add_enabled(kind == SparklineKind::Line, egui::Checkbox::new(&mut on, app.ui.language.tr("Markers"))).changed() {
+            act(app, "sparkline.set", json!({"cell": cell, "markers": on}));
+        }
+    });
 }
 
 /// A Quick Layout's tooltip: the chart elements it shows, in the interface language.

@@ -618,16 +618,20 @@ pub(super) fn object_menu(app: &mut SheetApp, ui: &mut egui::Ui) {
                 items.push(("Set as Total", "ui:setAsTotal"));
                 items.push(("-", ""));
             }
+            // A chart's items in Excel's order: Change Chart Type, Select Data, Move Chart, Edit
+            // Alt Text, Format Chart Area.
             if kind == "chart" {
                 items.extend([
                     ("-", ""),
-                    ("Select Data…", "ui:selectData"),
                     ("Change Chart Type…", "ui:comboChart"),
+                    ("Select Data…", "ui:selectData"),
                     ("Move Chart…", "ui:moveChart"),
+                    ("-", ""),
+                    ("Edit Alt Text…", "ui:altText"),
                     ("Format Chart Area…", "ui:formatChart"),
                 ]);
             }
-            if kind == "chart" || kind == "image" {
+            if kind == "image" {
                 items.push(("View Alt Text…", "ui:altText"));
             }
             let lang = crate::i18n::current(ui.ctx());

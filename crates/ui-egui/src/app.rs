@@ -218,6 +218,7 @@ impl SheetApp {
         // shown); any other window's request was dropped before it.
         self.ui.keytip_invoke = self.ui.keytip_invoke_next.take();
         text_box::before_ui(self, &ctx);
+        crate::chart_text::before_ui(self, &ctx);
         // Another window came forward without going through a command (which settles drafts
         // first): the draft goes into its own window instead of floating over this one. If its
         // workbook refuses it, its window comes back to the front with the draft open.

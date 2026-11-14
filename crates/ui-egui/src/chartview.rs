@@ -537,6 +537,36 @@ pub fn chart_point_at(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &She
     gridcraft_chart::point_at(ch, &data, ch.anchor.width, ch.anchor.height, &m, local.x, local.y)
 }
 
+/// The title (chart title or axis title) of chart `id` under `at`, laid out as [`paint_objects`]
+/// draws the chart.
+pub fn chart_element_at(p: &Painter, geo: &Geo, wb: &Workbook, si: usize, sh: &Sheet, id: u32, at: Pos2) -> Option<gridcraft_chart::ChartElement> {
+    let ch = sh.charts.iter().find(|c| c.id == id)?;
+    let r = anchor_rect(geo, sh, &ch.anchor);
+    let z = geo.z.max(0.01);
+    let data = resolve(p.ctx(), wb, si, ch);
+    let m = EguiMeasure { painter: p, z: geo.z };
+    let local = (at - r.min) / z;
+    gridcraft_chart::element_at(ch, &data, ch.anchor.width, ch.anchor.height, &m, local.x, local.y)
+}
+
+/// Where `element` of chart `id` is drawn on the sheet, `None` when the chart doesn't show it.
+pub fn chart_element_rect(
+    p: &Painter,
+    geo: &Geo,
+    wb: &Workbook,
+    si: usize,
+    sh: &Sheet,
+    id: u32,
+    element: gridcraft_chart::ChartElement,
+) -> Option<Rect> {
+    let ch = sh.charts.iter().find(|c| c.id == id)?;
+    let r = anchor_rect(geo, sh, &ch.anchor);
+    let data = resolve(p.ctx(), wb, si, ch);
+    let m = EguiMeasure { painter: p, z: geo.z };
+    let [x, y, w, h] = gridcraft_chart::element_rect(ch, &data, ch.anchor.width, ch.anchor.height, &m, element)?;
+    Some(Rect::from_min_size(r.min + vec2(x, y) * geo.z, vec2(w, h) * geo.z))
+}
+
 /// The rect a chart sheet's chart fills inside the window area `area`: a small margin all
 /// round, like Excel's zoomed-to-fit chart sheet.
 pub fn chart_sheet_rect(area: Rect) -> Rect {

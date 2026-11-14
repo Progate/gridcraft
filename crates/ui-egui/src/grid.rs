@@ -273,6 +273,11 @@ pub struct GridState {
     /// The data point of a waterfall chart the right-click landed on (series, point), for the
     /// menu's Set as Total.
     pub object_menu_point: Option<(usize, usize)>,
+    /// The title of the selected chart a click selected (the chart title or an axis title), as
+    /// Excel selects one: framed, typed over, or edited in place with a second click.
+    pub chart_element: Option<(u32, gridcraft_chart::ChartElement)>,
+    /// A chart title or axis title being edited in place.
+    pub chart_text: Option<crate::chart_text::ChartTextEdit>,
     pub marching_phase: f32,
     /// The selection outline on its way to a new selection.
     pub glide: crate::selection_glide::SelectionGlide,

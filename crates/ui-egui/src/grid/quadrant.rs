@@ -677,7 +677,13 @@ fn paint_sparklines(q: &QuadrantPaint<'_>, range: RangeRef) {
             v => vec![v.as_f64()],
         };
         let col = sp.color.resolve(&wb.theme).unwrap_or([0x2B, 0x7C, 0xD3]);
-        let prims = gridcraft_chart::render_sparkline(sp.kind, &vals, [col[0], col[1], col[2], 255], sp.markers, rect.width(), rect.height());
+        let mark = |on: bool, c: gridcraft_engine::model::Color| on.then(|| c.resolve(&wb.theme).map(|c| [c[0], c[1], c[2], 255])).flatten();
+        let points = gridcraft_chart::SparkPoints {
+            markers: sp.markers,
+            high: mark(sp.high, gridcraft_engine::model::Sparkline::HIGH_COLOR),
+            low: mark(sp.low, gridcraft_engine::model::Sparkline::LOW_COLOR),
+        };
+        let prims = gridcraft_chart::render_sparkline_points(sp.kind, &vals, [col[0], col[1], col[2], 255], points, rect.width(), rect.height());
         crate::chartview::paint_prims(p, rect.min, &prims, 1.0);
     }
 }
