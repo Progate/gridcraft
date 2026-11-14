@@ -12,6 +12,7 @@ fn harness() -> egui_kittest::Harness<'static, SheetApp> {
 }
 
 fn type_password(h: &mut egui_kittest::Harness<'static, SheetApp>) {
+    h.run_steps(3);
     h.get_by_role(Role::PasswordInput).click();
     h.run_steps(2);
     h.input_mut().events.push(egui::Event::Text(SECRET.into()));
@@ -44,7 +45,14 @@ fn protect_and_unprotect_sheet_mask_the_password() {
 
     h.get_by_label("   OK   ").click();
     h.run_steps(3);
-    assert!(h.state().dialog.is_none());
+    // Excel asks for the password again before protecting, masked as well.
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.name.as_str()), Some("confirmPassword"));
+    assert!(h.state().session.active().unwrap().wb.active().unwrap().protection.is_none());
+    type_password(&mut h);
+    assert!(!secret_on_screen(&h));
+    h.get_by_label("   OK   ").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "{:?} {:?}", h.state().message, h.state().dialog.as_ref().map(|d| (d.name.clone(), d.values.clone())));
     assert!(h.state().session.active().unwrap().wb.active().unwrap().protection.as_ref().is_some_and(|p| p.password.is_some()));
 
     // Unprotect asks for the password with a masked field too, and it starts hidden again.

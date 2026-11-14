@@ -645,17 +645,27 @@ fn write_sheet_printing<'a>(s: &mut String, sheet: &'a Sheet, rels: &mut Rels, o
 fn write_sheet_rules(s: &mut String, sheet: &Sheet, rels: &mut Rels, out: &mut Out) -> Vec<u32> {
     // sheetProtection
     if let Some(p) = &sheet.protection {
-        s.push_str("<sheetProtection sheet=\"1\" objects=\"1\" scenarios=\"1\"");
+        s.push_str("<sheetProtection sheet=\"1\"");
+        // Objects and scenarios default to unprotected in the schema: Excel writes them when the
+        // Edit objects / Edit scenarios boxes are clear.
+        if !p.edit_objects {
+            s.push_str(" objects=\"1\"");
+        }
+        if !p.edit_scenarios {
+            s.push_str(" scenarios=\"1\"");
+        }
         for (attr, allowed) in [
             ("formatCells", p.format_cells),
             ("formatColumns", p.format_columns),
             ("formatRows", p.format_rows),
             ("insertColumns", p.insert_columns),
             ("insertRows", p.insert_rows),
+            ("insertHyperlinks", p.insert_hyperlinks),
             ("deleteColumns", p.delete_columns),
             ("deleteRows", p.delete_rows),
             ("sort", p.sort),
             ("autoFilter", p.autofilter),
+            ("pivotTables", p.pivot_tables),
         ] {
             if allowed {
                 let _ = write!(s, " {attr}=\"0\"");

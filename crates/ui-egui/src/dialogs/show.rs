@@ -111,15 +111,7 @@ pub fn build_params(d: &Dialog) -> Json {
                 m.remove("unchecked");
             }
         }
-        "allowEditRanges" => {
-            if let Some(m) = v.as_object_mut() {
-                // Blank fields mean "unchanged"; the check box clears a password.
-                m.retain(|_, x| x.as_str().is_none_or(|s| !s.trim().is_empty()));
-                if m.remove("removePassword").and_then(|x| x.as_bool()) == Some(true) {
-                    m.insert("password".into(), json!(""));
-                }
-            }
-        }
+        "protectSheet" | "protectWorkbook" | "newEditRange" | "modifyEditRange" | "confirmPassword" => super::protection::params(d, &mut v),
         "newFormattingRule" => v = super::cf_rule::params(d),
         "cfQuick" => {
             let mut rule = Map::new();
@@ -253,6 +245,7 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
                 "textToColumns" => super::text_to_columns::text_to_columns(app, ui, &mut d, &mut confirm, &mut open),
                 "sort" => sort(app, ui, &mut d, &mut confirm),
                 "nameManager" => name_manager(app, ui, &mut d, &mut open),
+                "allowEditRanges" => super::protection::allow_edit_ranges(app, ui, &mut d, &mut open),
                 "pasteName" => paste_name(app, ui, &mut d, &mut confirm, &mut open),
                 "createNames" => super::names::create_names(app, ui, &mut d, &mut confirm, &mut open),
                 "manageRules" => manage_rules(app, ui, &mut d, &mut confirm, &mut open),
@@ -506,6 +499,30 @@ pub fn show(app: &mut SheetApp, ctx: &egui::Context) {
         // would read them against the wrong sheet, so it doesn't run and the dialog stays.
         app.message = Some((d.title.clone(), crate::clean_error(&e)));
         confirm = false;
+    }
+    // Protection dialogs: Confirm Password after a new password, as Excel asks; and Protect Sheet
+    // or Protect Workbook with nothing to protect close without protecting.
+    if confirm && d.name == "confirmPassword" && !super::protection::confirmed(&d) {
+        app.message = Some((d.title.clone(), "The confirmation password is not identical.".into()));
+        d.values.insert("reenter".into(), json!(""));
+        confirm = false;
+    }
+    if confirm && d.command.is_some() {
+        match super::protection::before_ok(&d, &build_params(&d)) {
+            Ok(Some(next)) => {
+                // The confirmation takes over and runs the command; this dialog goes away with it.
+                confirm = false;
+                open = false;
+                let mut next = next;
+                next.back = d.back.take();
+                app.dialog = Some(next);
+            }
+            Ok(None) => {}
+            Err(()) => {
+                confirm = false;
+                open = false;
+            }
+        }
     }
     if confirm && let Some(cmd) = d.command {
         let params = build_params(&d);

@@ -23,7 +23,12 @@ impl SheetApp {
         let at = sh.merge_at(d.selection.active).map(|m| m.start).unwrap_or(d.selection.active);
         // A locked cell on a protected sheet can't be entered (Excel's warning, and the engine
         // refuses `cell.set` anyway): refuse before a draft exists, rather than leaving one that
-        // can never be committed and blocks Save (#2945).
+        // can never be committed and blocks Save (#2945). One in an Allow Edit Range with a
+        // password asks for it there and then, as Excel's Unlock Range does.
+        if let Some(title) = self.session.password_range_at(d.wb.active_sheet(), at) {
+            self.open_dialog("unlockRange", json!({"title": title}));
+            return;
+        }
         if let Some(m) = self.session.locked_cell_message(d.wb.active_sheet(), at) {
             self.message = Some(("GridCraft".into(), m));
             return;

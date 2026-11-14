@@ -212,6 +212,18 @@ pub struct SheetProtection {
     pub delete_rows: bool,
     pub sort: bool,
     pub autofilter: bool,
+    /// Insert hyperlinks (`insertHyperlinks="0"`).
+    #[serde(default)]
+    pub insert_hyperlinks: bool,
+    /// Use PivotTable & PivotChart (`pivotTables="0"`).
+    #[serde(default)]
+    pub pivot_tables: bool,
+    /// Edit objects: pictures, charts and shapes stay editable (`objects` left off).
+    #[serde(default)]
+    pub edit_objects: bool,
+    /// Edit scenarios (`scenarios` left off).
+    #[serde(default)]
+    pub edit_scenarios: bool,
 }
 
 /// Review › Allow Edit Ranges: cells that stay editable on a protected sheet, with or without a

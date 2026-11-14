@@ -689,6 +689,18 @@ impl Session {
         }
         cmd::locked_cell_error(sh, at, &d.unlocked_ranges)
     }
+    /// The title of the Allow Edit Range whose password would let `at` on `sheet` be edited, as
+    /// Excel asks for it (Unlock Range) when the cell is typed into: `None` when the edit is
+    /// allowed already, or when no password opens it (a plain locked cell).
+    pub fn password_range_at(&self, sheet: usize, at: CellRef) -> Option<String> {
+        self.locked_cell_message(sheet, at)?;
+        let d = self.active()?;
+        let sh = d.wb.sheet(sheet)?;
+        sh.edit_ranges
+            .iter()
+            .find(|r| r.contains(at) && r.password.is_some() && !d.unlocked_ranges.iter().any(|(s, t)| *s == sh.name && *t == r.title))
+            .map(|r| r.title.clone())
+    }
     /// The regional format the session reads typed entry in ([`Prefs::region`]).
     pub fn region(&self) -> &'static gridcraft_core::Region {
         gridcraft_core::region::find(&self.prefs.region).unwrap_or_else(gridcraft_core::region::default_region)

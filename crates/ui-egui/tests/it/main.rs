@@ -102,6 +102,7 @@ mod pivot_tabs_ui;
 mod popup_dismissal;
 mod protect_password;
 mod protected_cell;
+mod protection_dialogs;
 mod python_cell_edit;
 mod python_hidden;
 mod python_mode;

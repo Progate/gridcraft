@@ -32,6 +32,7 @@ mod names;
 mod page_setup;
 mod paste;
 mod pivot;
+mod protection;
 mod ref_edit;
 mod scenarios;
 mod show;
@@ -450,75 +451,9 @@ impl Dialog {
                 }
                 d
             }
-            "protectSheet" => Dialog::form(
-                "protectSheet",
-                "Protect Sheet",
-                "review.protectSheet",
-                vec![
-                    Password { key: "password", label: "Password (optional):" },
-                    Note("Allow all users of this sheet to:".into()),
-                    Check { key: "selectLockedCells", label: "Select locked cells" },
-                    Check { key: "selectUnlockedCells", label: "Select unlocked cells" },
-                    Check { key: "formatCells", label: "Format cells" },
-                    Check { key: "formatColumns", label: "Format columns" },
-                    Check { key: "formatRows", label: "Format rows" },
-                    Check { key: "insertColumns", label: "Insert columns" },
-                    Check { key: "insertRows", label: "Insert rows" },
-                    Check { key: "deleteColumns", label: "Delete columns" },
-                    Check { key: "deleteRows", label: "Delete rows" },
-                    Check { key: "sort", label: "Sort" },
-                    Check { key: "autofilter", label: "Use AutoFilter" },
-                ],
-                json!({"selectLockedCells": true, "selectUnlockedCells": true}),
-            ),
-            "allowEditRanges" => {
-                let list = app.session.run("review.allowEditRanges", json!({})).unwrap_or(Json::Null);
-                let rows: Vec<String> = list
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .map(|r| {
-                                let lock = match (r["password"].as_bool(), r["unlocked"].as_bool()) {
-                                    (Some(true), Some(true)) => " (password, unlocked)",
-                                    (Some(true), _) => " (password)",
-                                    _ => "",
-                                };
-                                format!("{}: {}{lock}", r["title"].as_str().unwrap_or(""), r["range"].as_str().unwrap_or(""))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let summary = if rows.is_empty() { "No ranges yet.".to_string() } else { rows.join("\n") };
-                Dialog::form(
-                    "allowEditRanges",
-                    "Allow Edit Ranges",
-                    "review.allowEditRanges",
-                    vec![
-                        Note(format!("Ranges that stay editable when the sheet is protected:\n{summary}")),
-                        Choice {
-                            key: "action",
-                            label: "Action",
-                            options: vec![("add", "New"), ("modify", "Modify"), ("delete", "Delete"), ("unlock", "Unlock with password")],
-                        },
-                        Text { key: "title", label: "Title:" },
-                        Text { key: "range", label: "Refers to cells:" },
-                        Text { key: "password", label: "Range password:" },
-                        Text { key: "newTitle", label: "New title (Modify):" },
-                        Check { key: "removePassword", label: "Remove the password (Modify)" },
-                    ],
-                    json!({"action": "add", "range": sel}),
-                )
+            "protectSheet" | "protectWorkbook" | "allowEditRanges" | "newEditRange" | "modifyEditRange" | "unlockRange" => {
+                protection::open(app, name, &params, &sel)?
             }
-            "protectWorkbook" => Dialog::form(
-                "protectWorkbook",
-                "Protect Structure and Windows",
-                "review.protectWorkbook",
-                vec![
-                    Password { key: "password", label: "Password (optional):" },
-                    Note("Protect workbook for: Structure (sheets can't be added, moved, renamed, hidden or deleted).".into()),
-                ],
-                json!({"on": true}),
-            ),
             "encryptPassword" => Dialog::form(
                 "encryptPassword",
                 "Encrypt Document",

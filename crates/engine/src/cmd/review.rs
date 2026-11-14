@@ -14,7 +14,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Protect Sheet…",
             ["Review", "Protect"],
             None,
-            "{password?, formatCells?, formatColumns?, formatRows?, insertRows?, insertColumns?, deleteRows?, deleteColumns?, sort?, autofilter?}",
+            "{password?, selectLockedCells?, selectUnlockedCells?, formatCells?, formatColumns?, formatRows?, insertRows?, insertColumns?, insertHyperlinks?, deleteRows?, deleteColumns?, sort?, autofilter?, pivotTables?, editObjects?, editScenarios?}",
             has_doc,
             protect_sheet
         ),
@@ -158,6 +158,10 @@ fn protect_sheet(s: &mut Session, p: &Json) -> Result<Json> {
         delete_rows: b("deleteRows"),
         sort: b("sort"),
         autofilter: b("autofilter"),
+        insert_hyperlinks: b("insertHyperlinks"),
+        pivot_tables: b("pivotTables"),
+        edit_objects: b("editObjects"),
+        edit_scenarios: b("editScenarios"),
     };
     let d = s.doc()?;
     let what = d.wb.sheet(sheet).map(|sh| sh.name.clone()).unwrap_or_default();
@@ -564,6 +568,26 @@ mod edit_range_tests {
         s.execute("review.allowEditRanges", json!({"action": "add", "title": "Budget", "range": "B1:B3,D1", "password": "pa55"})).unwrap();
         s.execute("review.protectSheet", json!({})).unwrap();
         s
+    }
+
+    #[test]
+    fn the_password_range_of_a_cell_is_the_one_excel_asks_for() {
+        let mut s = protected_book();
+        let at = |a1: &str| CellRef::parse(a1).unwrap();
+        assert_eq!(s.password_range_at(0, at("B2")).as_deref(), Some("Budget"));
+        assert_eq!(s.password_range_at(0, at("A2")), None, "a range without a password is open");
+        assert_eq!(s.password_range_at(0, at("C1")), None, "a plain locked cell has no password to ask for");
+        s.execute("review.allowEditRanges", json!({"action": "unlock", "title": "Budget", "password": "pa55"})).unwrap();
+        assert_eq!(s.password_range_at(0, at("B2")), None, "unlocked");
+    }
+
+    #[test]
+    fn protect_sheet_keeps_excels_other_permissions() {
+        let mut s = Session::new();
+        s.new_workbook();
+        s.execute("review.protectSheet", json!({"insertHyperlinks": true, "editObjects": true})).unwrap();
+        let p = s.doc().unwrap().wb.sheet(0).unwrap().protection.clone().unwrap();
+        assert!(p.insert_hyperlinks && p.edit_objects && !p.edit_scenarios && !p.pivot_tables);
     }
 
     #[test]
