@@ -45,6 +45,8 @@ fn chart(kind: ChartKind) -> Chart {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     }
 }
 
@@ -133,6 +135,8 @@ fn sparklines_of_one_group_are_saved_in_one_sparkline_group() {
         kind: SparklineKind::Column,
         color: Color::Theme(4, 0),
         markers: false,
+        high: false,
+        low: false,
         group,
     };
     s.sparklines = (3..7).map(|r| sp(r, 1)).collect();
@@ -173,4 +177,27 @@ fn pie_data_label_parts_are_written_and_read_back() {
     let ch = &back.sheet(0).unwrap().charts[0];
     assert!(ch.data_labels);
     assert_eq!(ch.label_parts, gridcraft_model::LabelParts { value: false, category_name: true, percentage: true, ..Default::default() });
+}
+
+#[test]
+fn high_and_low_points_are_saved_with_their_colours() {
+    let mut s = Sheet::new("Sheet1");
+    s.sparklines.push(Sparkline {
+        cell: CellRef::new(0, 5),
+        source: "Sheet1!A1:D1".into(),
+        kind: SparklineKind::Line,
+        color: Color::Theme(4, 0),
+        markers: true,
+        high: true,
+        low: true,
+        group: 0,
+    });
+    let wb = Workbook { sheets: vec![Arc::new(s)], ..Default::default() };
+    let bytes = crate::write_xlsx(&wb).unwrap();
+    let mut pkg = crate::package::Package::open(&bytes).unwrap();
+    let xml = String::from_utf8(pkg.read("xl/worksheets/sheet1.xml").unwrap().unwrap()).unwrap();
+    assert!(xml.contains(r#"<x14:sparklineGroup displayEmptyCellsAs="gap" markers="1" high="1" low="1"><x14:colorSeries theme="4"/><x14:colorMarkers theme="4"/><x14:colorHigh theme="5"/><x14:colorLow theme="5"/><x14:sparklines>"#), "{xml}");
+    let (back, _) = crate::read_xlsx(&bytes).unwrap();
+    let sp = &back.sheet(0).unwrap().sparklines[0];
+    assert!(sp.high && sp.low && sp.markers);
 }

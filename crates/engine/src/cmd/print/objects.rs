@@ -155,7 +155,13 @@ fn draw_sparklines(pg: &mut Page, wb: &Workbook, si: usize, sh: &Sheet, b: &Bloc
         let color = rgb_of(sp.color, wb).unwrap_or([0x15, 0x60, 0x82]);
         let (x, y, w, h) = b.rect(RangeRef::cell(sp.cell));
         let (wpx, hpx) = (w / b.k, h / b.k);
-        let prims = gridcraft_chart::render_sparkline(sp.kind, &vals, [color[0], color[1], color[2], 255], sp.markers, wpx, hpx);
+        let mark = |on: bool, c: gridcraft_model::Color| on.then(|| rgb_of(c, wb).map(|c| [c[0], c[1], c[2], 255])).flatten();
+        let points = gridcraft_chart::SparkPoints {
+            markers: sp.markers,
+            high: mark(sp.high, gridcraft_model::Sparkline::HIGH_COLOR),
+            low: mark(sp.low, gridcraft_model::Sparkline::LOW_COLOR),
+        };
+        let prims = gridcraft_chart::render_sparkline_points(sp.kind, &vals, [color[0], color[1], color[2], 255], points, wpx, hpx);
         draw_prims(pg, &prims, Xf { ox: x, oy: y, k: b.k });
     }
 }

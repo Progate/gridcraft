@@ -89,6 +89,8 @@ fn chart_names_are_written_qualified() {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     });
     wb.sheets = vec![Arc::new(s), Arc::new(Sheet::new("My Data"))];
     wb.names = vec![
@@ -173,6 +175,8 @@ fn chart_names_keep_spaces_around_a_quoted_sheet_name() {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     });
     wb.sheets = vec![Arc::new(s), Arc::new(Sheet::new(" Sales "))];
     wb.names = vec![

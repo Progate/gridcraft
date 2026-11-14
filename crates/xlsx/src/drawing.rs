@@ -194,6 +194,9 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
                             let chartex = uri.contains("chartex");
                             match if chartex { crate::chartex::read_chartex(&cx_xml) } else { crate::chart::read_chart(&cx_xml) } {
                                 Some(mut ch) => {
+                                    if !chartex {
+                                        ch.chart_style = chart_style_id(cx, &target);
+                                    }
                                     ch.id = cx.next_object_id();
                                     ch.anchor = anchor;
                                     ch.alt_text = read_alt_text(obj.path(&["nvGraphicFramePr", "cNvPr"]));
@@ -222,6 +225,14 @@ pub fn read_drawing(cx: &mut Ctx<'_>, part: &str, sheet: &mut Sheet) -> Result<(
         }
     }
     Ok(())
+}
+
+/// The `id` of chart part `chart`'s style part (`cs:chartStyle`), the Chart Styles gallery entry
+/// Excel 2013 and later saves; `None` without one. A style part that can't be read only loses
+/// the gallery choice, never the chart.
+fn chart_style_id(cx: &mut Ctx<'_>, chart: &str) -> Option<u32> {
+    let rel = cx.pkg.rels(chart).ok()?.into_iter().find(|r| r.kind.eq_ignore_ascii_case("chartStyle"))?;
+    cx.pkg.read_xml(&rel.target).ok().flatten()?.attr("id")?.trim().parse().ok()
 }
 
 /// URI of the Office 2017 extension that marks a drawing object as decorative.

@@ -55,6 +55,8 @@ fn workbook(categories: &str, values: &str) -> Workbook {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     });
     Workbook { sheets: vec![Arc::new(s)], ..Workbook::default() }
 }

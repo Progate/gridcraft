@@ -67,6 +67,8 @@ fn chart(id: u32, kind: ChartKind, trendlines: Vec<Trendline>) -> Chart {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     }
 }
 

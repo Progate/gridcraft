@@ -113,7 +113,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Properties",
             ["Chart Design"],
             None,
-            "{chart?: id, type?, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series, in order] (Combo ▸ Custom Combination: per-series chart type and Secondary Axis; makes the chart a combo), title?: text (literal; \"\" removes the title), autoTitle?: true (Excel's automatic title: the series name for one series, else Chart Title), legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?, holeSize?, firstSliceAngle?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
+            "{chart?: id, type?, subtype?, combo?: [{type?: column|line|area, subtype?, secondary?: bool} per series, in order] (Combo ▸ Custom Combination: per-series chart type and Secondary Axis; makes the chart a combo), title?: text (literal; \"\" removes the title), autoTitle?: true (Excel's automatic title: the series name for one series, else Chart Title), legend?: none|bottom|top|left|right, dataLabels?, gridlines?, dataTable?: bool, dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool (data tables: column/bar/line/area and compatible combo charts), quartiles?: exclusive|inclusive, style?: n (Chart Styles gallery: Style n, 1 to 14 for a column chart; saved as Excel's chart style id), titlePosition?: above|overlay (Chart Title ▸ Above Chart / Centered Overlay), holeSize?, firstSliceAngle?, xTitle?, yTitle?, at?, width?, height?, dx?, dy?}",
             has_doc,
             chart_set
         ),
@@ -127,6 +127,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{range: \"B2:M2\" (or \"B4:M7\" with a location range), location: \"N2\" | \"N4:N7\" (one sparkline per cell, one group), type?: line|column|winLoss, markers?}",
             has_doc,
             insert_sparkline
+        ),
+        cmd!(
+            "sparkline.set",
+            "Sparkline",
+            ["Sparkline"],
+            None,
+            "{range?: \"O2\" | \"O2:O6\" (default: the selection; every sparkline group with a sparkline there changes), type?: line|column|winLoss, markers?: bool, high?: bool (High Point), low?: bool (Low Point)}",
+            has_doc,
+            sparkline_set
         ),
         cmd!(
             "insert.picture",
@@ -966,6 +975,8 @@ pub fn build_chart(s: &Session, p: &Json) -> Result<(usize, Chart)> {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title,
+        title_overlay: false,
+        chart_style: None,
     };
     if let Some(rows) = p.get("combo") {
         apply_combo(&mut chart, rows)?;
@@ -1008,7 +1019,12 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         let sh = cx.sheet_mut(si)?;
         let Some(c) = sh.charts.get_mut(ci) else { return Ok(Json::Null) };
         if let Some(t) = str_param(p, "type") {
-            c.kind = chart_kind(t, str_param(p, "subtype").unwrap_or(""));
+            let kind = chart_kind(t, str_param(p, "subtype").unwrap_or(""));
+            // Another type has another Chart Styles gallery: Excel starts it at Style 1.
+            if gridcraft_model::chart_style_family(kind) != gridcraft_model::chart_style_family(c.kind) {
+                c.chart_style = None;
+            }
+            c.kind = kind;
             if c.kind != ChartKind::Combo {
                 // Per-series types and axes belong to combo charts: a plain chart draws every series alike.
                 for series in &mut c.series {
@@ -1053,8 +1069,20 @@ fn chart_set(s: &mut Session, p: &Json) -> Result<Json> {
         if let Some(v) = bool_param(p, "gridlines") {
             c.gridlines = v;
         }
-        if let Some(v) = u32_param(p, "style") {
-            c.style = v.clamp(1, 16);
+        if let Some(v) = p.get("style") {
+            // Chart Design ▸ Chart Styles: Style n of the chart type's gallery.
+            let (first, count) =
+                gridcraft_model::chart_style_family(c.kind).ok_or_else(|| bad("chart.set", "this chart type has no Chart Styles gallery"))?;
+            let n =
+                v.as_u64().filter(|n| (1..=u64::from(count)).contains(n)).ok_or_else(|| bad("chart.set", format!("`style` must be 1 to {count}")))?;
+            c.chart_style = Some(first + n as u32 - 1);
+        }
+        if let Some(pos) = str_param(p, "titlePosition") {
+            c.title_overlay = match pos {
+                "above" => false,
+                "overlay" => true,
+                _ => return Err(bad("chart.set", "`titlePosition` must be above or overlay")),
+            };
         }
         if let Some(v) = u32_param(p, "holeSize") {
             c.hole_size = v.clamp(10, 90) as u8;
@@ -1283,9 +1311,65 @@ fn insert_sparkline(s: &mut Session, p: &Json) -> Result<Json> {
         let group = if sources.len() > 1 { sh.sparklines.iter().map(|x| x.group).max().unwrap_or(0).saturating_add(1) } else { 0 };
         sh.sparklines.retain(|x| !loc.contains(x.cell));
         for (cell, source) in &sources {
-            sh.sparklines.push(Sparkline { cell: *cell, source: source.clone(), kind, color: Color::Theme(4, 0), markers, group });
+            sh.sparklines.push(Sparkline {
+                cell: *cell,
+                source: source.clone(),
+                kind,
+                color: Color::Theme(4, 0),
+                markers,
+                high: false,
+                low: false,
+                group,
+            });
         }
         Ok(json!({"count": sources.len()}))
+    })
+}
+
+/// The Sparkline tab: the type and the points shown of the sparkline groups in the range (a
+/// sparkline's whole group changes, as in Excel).
+fn sparkline_set(s: &mut Session, p: &Json) -> Result<Json> {
+    let sheet = target_sheet(s, p)?;
+    let ranges = target_ranges(s, p)?;
+    let kind = match str_param(p, "type") {
+        None => None,
+        Some("line") => Some(SparklineKind::Line),
+        Some("column") => Some(SparklineKind::Column),
+        Some("winLoss") => Some(SparklineKind::WinLoss),
+        Some(other) => return Err(bad("sparkline.set", format!("`type` must be line, column or winLoss, not `{other}`"))),
+    };
+    let flag = |k: &str| match p.get(k) {
+        None => Ok(None),
+        Some(v) => v.as_bool().map(Some).ok_or_else(|| bad("sparkline.set", format!("`{k}` must be a boolean"))),
+    };
+    let (markers, high, low) = (flag("markers")?, flag("high")?, flag("low")?);
+    edit(s, |cx| {
+        let sh = cx.sheet_mut(sheet)?;
+        let picked: Vec<(CellRef, u32)> =
+            sh.sparklines.iter().filter(|sp| ranges.iter().any(|r| r.contains(sp.cell))).map(|sp| (sp.cell, sp.group)).collect();
+        if picked.is_empty() {
+            return Err(bad("sparkline.set", "no sparkline in the range"));
+        }
+        let mut changed = 0;
+        for sp in &mut sh.sparklines {
+            if !picked.iter().any(|(cell, group)| *cell == sp.cell || (*group != 0 && *group == sp.group)) {
+                continue;
+            }
+            if let Some(k) = kind {
+                sp.kind = k;
+            }
+            if let Some(v) = markers {
+                sp.markers = v;
+            }
+            if let Some(v) = high {
+                sp.high = v;
+            }
+            if let Some(v) = low {
+                sp.low = v;
+            }
+            changed += 1;
+        }
+        Ok(json!({"count": changed}))
     })
 }
 

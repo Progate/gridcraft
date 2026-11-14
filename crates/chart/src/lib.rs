@@ -25,9 +25,9 @@ use serde::{Deserialize, Serialize};
 
 pub use axis::{Scale, format_number, nice_scale};
 pub use raster::rasterize;
-pub use render::{Swatch, legend_entries, point_at, render, supports_trendline, title_text};
+pub use render::{Swatch, element_at, element_rect, legend_entries, point_at, render, supports_trendline, title_text};
 pub use resolve::{default_palette, resolve, series_color, series_plot_kind};
-pub use sparkline::render_sparkline;
+pub use sparkline::{SparkPoints, render_sparkline, render_sparkline_points};
 
 /// Straight (non-premultiplied) RGBA colour.
 pub type Rgba = [u8; 4];
@@ -46,6 +46,17 @@ pub enum VAlign {
     Top,
     Middle,
     Bottom,
+}
+
+/// A chart element a click can select by itself (the chart title and the axis titles), as in
+/// Excel, where a selected title's text can then be typed over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChartElement {
+    Title,
+    /// Axis Titles ▸ Primary Horizontal.
+    HorizontalAxisTitle,
+    /// Axis Titles ▸ Primary Vertical.
+    VerticalAxisTitle,
 }
 
 /// A drawing primitive in chart coordinates (origin top-left, y down, units = points/pixels).

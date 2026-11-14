@@ -6442,6 +6442,7 @@ fn a_script_cannot_switch_windows() {
 }
 
 mod chart_location;
+mod chart_styles_elements;
 mod chart_titles_layouts;
 mod controls;
 mod equation;

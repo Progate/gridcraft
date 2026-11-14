@@ -1037,10 +1037,11 @@ fn read_ext(cx: &mut Ctx<'_>, e: &El, sheet: &mut Sheet) {
                         };
                         let color = g.child("colorSeries").map(|c| read_color(c, &cx.palette)).unwrap_or_default();
                         let markers = g.flag("markers", false);
+                        let (high, low) = (g.flag("high", false), g.flag("low", false));
                         for s in g.child("sparklines").map(|s| s.kids("sparkline").collect::<Vec<_>>()).unwrap_or_default() {
                             let source = s.child("f").map(|f| f.text.trim().to_string()).unwrap_or_default();
                             if let Some(cell) = s.child("sqref").and_then(|q| CellRef::parse(q.text.trim())) {
-                                sheet.sparklines.push(Sparkline { cell, source, kind, color, markers, group });
+                                sheet.sparklines.push(Sparkline { cell, source, kind, color, markers, high, low, group });
                             }
                         }
                     }

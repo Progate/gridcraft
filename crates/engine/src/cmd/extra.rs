@@ -23,7 +23,7 @@ mod window;
 
 pub(crate) use cells::is_checkbox_cell;
 use cells::{background, checkbox, draw_border, new_cell_style, recently_used, theme_colors, theme_fonts, toggle_checkbox, use_in_formula};
-pub use chart::{LayoutLabels, QuickLayout, quick_layouts, select_data_preview};
+pub use chart::{LayoutLabels, QuickLayout, has_axes, quick_layouts, select_data_preview};
 use chart::{add_element, change_colors, format_data_labels, format_series, move_chart, quick_layout, select_data, set_as_total};
 use data::{from_csv, from_table_range, queries, table_resize};
 use objects::{align, arrange, rotate, selection_pane, shape_fill, shape_outline};
@@ -40,7 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Chart Element",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{chart?, element: title|legend|dataLabels|dataTable|gridlines|axisTitles|smooth|trendline, on?: bool, position?: bottom|top|left|right; dataTable: dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool; trendline: series?: index (default all), type?: linear|exponential|linearForecast|movingAverage|logarithmic|power|polynomial, order?: 2..6, period?: 2..255, forward?, backward?, displayEquation?, displayRSquared?}",
+            "{chart?, element: title|legend|dataLabels|dataTable|gridlines|axisTitles|axisTitle|smooth|trendline, on?: bool, position?: bottom|top|left|right (legend) | above|overlay (title: Above Chart, Centered Overlay); axisTitle: axis: horizontal|vertical (Axis Titles ▸ Primary Horizontal / Primary Vertical); dataTable: dataTableKeys?: bool, dataTableHorizontalBorder?: bool, dataTableVerticalBorder?: bool, dataTableOutline?: bool; trendline: series?: index (default all), type?: linear|exponential|linearForecast|movingAverage|logarithmic|power|polynomial, order?: 2..6, period?: 2..255, forward?, backward?, displayEquation?, displayRSquared?}",
             has_doc,
             add_element
         ),

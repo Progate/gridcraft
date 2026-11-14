@@ -638,6 +638,15 @@ pub struct Chart {
     /// turns it into literal text.
     #[serde(default)]
     pub auto_title: bool,
+    /// Add Chart Element ▸ Chart Title ▸ Centered Overlay (中央揃えで重ねて配置): the title sits
+    /// over the plot instead of taking room above it (`c:title/c:overlay`).
+    #[serde(default)]
+    pub title_overlay: bool,
+    /// Chart Design ▸ Chart Styles: the chosen style as Excel's chart style id, saved as the
+    /// `id` of the chart's style part (`cs:chartStyle`). `None` is the chart type's first style
+    /// (Style 1), which a new chart and a change of chart type get.
+    #[serde(default)]
+    pub chart_style: Option<u32>,
 }
 
 /// Format Data Labels ▸ Label Options ▸ Label Contains: the parts of a data label (`c:dLbls`
@@ -681,7 +690,56 @@ impl AltText {
     }
 }
 
+/// The Chart Styles gallery of a chart type: Excel's chart style id of its Style 1 and how many
+/// styles the gallery offers. Excel numbers a type's styles from its first id up (a clustered
+/// column's Style 1 is 201, a line's 227, a scatter's 240, a pie's 251), so Style `n` is
+/// `first + n - 1`. `None` for types GridCraft offers no gallery for.
+pub fn chart_style_family(kind: ChartKind) -> Option<(u32, u32)> {
+    use ChartKind::*;
+    match kind {
+        ColumnClustered | ColumnStacked | ColumnStacked100 | Combo => Some((201, 14)),
+        BarClustered | BarStacked | BarStacked100 => Some((216, 11)),
+        Line | LineMarkers | LineStacked => Some((227, 13)),
+        Scatter | ScatterLines => Some((240, 11)),
+        Pie => Some((251, 12)),
+        Area | AreaStacked | AreaStacked100 => Some((276, 10)),
+        _ => None,
+    }
+}
+
 impl Chart {
+    /// The Chart Styles gallery number (Style 1, Style 2…) the chart's style is, `None` for a
+    /// type without a gallery or a style id outside it (one read from a file).
+    pub fn gallery_style(&self) -> Option<u32> {
+        let (first, count) = chart_style_family(self.kind)?;
+        match self.chart_style {
+            None => Some(1),
+            Some(id) => id.checked_sub(first).map(|n| n + 1).filter(|n| *n <= count),
+        }
+    }
+
+    /// Whether the value axis runs across (a bar chart), so the horizontal axis's title is the
+    /// value axis's (`y_title`) and the vertical one's the category axis's (`x_title`).
+    pub fn value_axis_across(&self) -> bool {
+        matches!(self.kind, ChartKind::BarClustered | ChartKind::BarStacked | ChartKind::BarStacked100)
+    }
+
+    /// The title of the axis drawn across the bottom (`horizontal`) or up the side, as Excel's
+    /// Axis Titles ▸ Primary Horizontal and Primary Vertical name them.
+    pub fn axis_title(&self, horizontal: bool) -> Option<&str> {
+        if horizontal == self.value_axis_across() { self.y_title.as_deref() } else { self.x_title.as_deref() }
+    }
+
+    /// The field holding the title of the horizontal (`horizontal`) or vertical axis.
+    pub fn axis_title_mut(&mut self, horizontal: bool) -> &mut Option<String> {
+        if horizontal == self.value_axis_across() { &mut self.y_title } else { &mut self.x_title }
+    }
+
+    /// The chart style id saved in the chart's style part: the chosen one, or the type's Style 1.
+    pub fn chart_style_id(&self) -> Option<u32> {
+        self.chart_style.or_else(|| chart_style_family(self.kind).map(|(first, _)| first))
+    }
+
     /// Data tables belong to category-axis column, bar, line and area charts.
     pub fn supports_data_table(&self) -> bool {
         let eligible = |kind| {
@@ -1120,6 +1178,13 @@ pub struct Sparkline {
     pub kind: SparklineKind,
     pub color: Color,
     pub markers: bool,
+    /// Sparkline ▸ Show ▸ High Point (頂点 (山)): the highest point drawn in its own colour
+    /// (`x14:sparklineGroup high`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub high: bool,
+    /// Sparkline ▸ Show ▸ Low Point (頂点 (谷)) (`low`).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub low: bool,
     /// Sparklines with the same non-zero group were made together (Create Sparklines over a
     /// location range) and are saved as one `x14:sparklineGroup`; 0 is a group of its own.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -1128,6 +1193,17 @@ pub struct Sparkline {
 
 fn is_zero(n: &u32) -> bool {
     *n == 0
+}
+
+impl Sparkline {
+    /// The colour of the high point (Sparkline ▸ High Point) and of the low point: the theme's
+    /// second accent, so both stand out from the first accent's line.
+    pub const HIGH_COLOR: Color = Color::Theme(5, 0);
+    pub const LOW_COLOR: Color = Color::Theme(5, 0);
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 // ---------------------------------------------------------------- filter & sort
@@ -1306,6 +1382,8 @@ mod tests {
             alt_text: Default::default(),
             label_parts: Default::default(),
             auto_title: false,
+            title_overlay: false,
+            chart_style: None,
         };
         let mut json = serde_json::to_value(&chart).expect("serialize chart");
         json.as_object_mut().expect("chart object").remove("hole_size");

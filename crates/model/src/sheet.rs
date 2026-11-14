@@ -973,6 +973,8 @@ mod tests {
                 alt_text: Default::default(),
                 label_parts: Default::default(),
                 auto_title: false,
+                title_overlay: false,
+                chart_style: None,
             }),
             ObjKind::Image => s.images.push(Image {
                 id,

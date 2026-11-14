@@ -159,6 +159,8 @@ pub fn read_chartex(root: &El) -> Option<Chart> {
         label_parts: Default::default(),
         // A `cx:title` without text: the automatic title.
         auto_title: chart.child("title").is_some_and(|t| t.child("tx").is_none()),
+        title_overlay: false,
+        chart_style: None,
     })
 }
 
@@ -200,8 +202,15 @@ fn tx_xml(t: &str, wb: &Workbook, si: usize, names: &mut Vec<String>) -> String 
 
 /// The chart style part a chartex part comes with: every element at its plain default.
 pub fn style_xml() -> String {
-    let mut s = String::from(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<cs:chartStyle xmlns:cs=\"http://schemas.microsoft.com/office/drawing/2012/chartStyle\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" id=\"201\">",
+    style_xml_with_id(201)
+}
+
+/// A chart style part (`cs:chartStyle`) naming Chart Styles gallery style `id`, every element at
+/// its plain default: the chart part itself carries how the chart looks, and Excel reads the id
+/// to show which gallery style the chart has.
+pub fn style_xml_with_id(id: u32) -> String {
+    let mut s = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<cs:chartStyle xmlns:cs=\"http://schemas.microsoft.com/office/drawing/2012/chartStyle\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" id=\"{id}\">",
     );
     for e in [
         "axisTitle",

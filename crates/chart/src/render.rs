@@ -8,7 +8,7 @@ use gridcraft_model::{Chart, ChartKind, LineDash, QuartileMethod, Theme, Trendli
 use crate::axis::{Fmt, Scale, clean, nice_scale};
 use crate::resolve::{MAX_POINTS, MAX_SERIES, MAX_TRENDLINES, points_per_series, series_color};
 use crate::trend::{auto_name, fit_trendline, moving_average};
-use crate::{ChartData, HAlign, Measure, Prim, Rgba, SeriesData, VAlign};
+use crate::{ChartData, ChartElement, HAlign, Measure, Prim, Rgba, SeriesData, VAlign};
 
 mod cartesian;
 mod frame;
@@ -59,6 +59,8 @@ struct Ctx<'a> {
     /// Where data points were drawn, for [`point_at`]: (series, point, `[x, y, w, h]`). Only the
     /// kinds whose points can be picked one by one record theirs.
     points: Vec<(usize, usize, [f32; 4])>,
+    /// Where the title and axis titles were drawn (`[x, y, w, h]`), for [`element_at`].
+    elements: Vec<(ChartElement, [f32; 4])>,
 }
 
 #[cfg(test)]
@@ -222,6 +224,19 @@ pub fn render(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure) 
     layout(chart, data, w, h, m).map(|ctx| finalize(ctx.out, w, h)).unwrap_or_default()
 }
 
+/// The title or axis title drawn under `(x, y)` (in the coordinates of [`render`]'s box), which a
+/// click selects as Excel does.
+pub fn element_at(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure, x: f32, y: f32) -> Option<ChartElement> {
+    let ctx = layout(chart, data, w, h, m)?;
+    ctx.elements.iter().rev().find(|(_, [ex, ey, ew, eh])| x >= *ex && x <= ex + ew && y >= *ey && y <= ey + eh).map(|(e, _)| *e)
+}
+
+/// Where `element` is drawn as `[x, y, w, h]` in [`render`]'s box, `None` when the chart doesn't show it.
+pub fn element_rect(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure, element: ChartElement) -> Option<[f32; 4]> {
+    let ctx = layout(chart, data, w, h, m)?;
+    ctx.elements.iter().find(|(e, _)| *e == element).map(|(_, r)| *r)
+}
+
 /// The data point drawn under `(x, y)` (in the coordinates of [`render`]'s box) as (series,
 /// point), for kinds whose points can be picked one by one (waterfall); `None` elsewhere.
 pub fn point_at(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &dyn Measure, x: f32, y: f32) -> Option<(usize, usize)> {
@@ -234,17 +249,22 @@ fn layout<'a>(chart: &Chart, data: &ChartData, w: f32, h: f32, m: &'a dyn Measur
         return None;
     }
     let data = sanitized(data);
-    let mut ctx = Ctx { out: Vec::new(), m, points: Vec::new() };
+    let mut ctx = Ctx { out: Vec::new(), m, points: Vec::new(), elements: Vec::new() };
     ctx.out.push(Prim::Rect { x: 0.0, y: 0.0, w, h, fill: Some(WHITE), stroke: Some((GRID, 1.0)), radius: 0.0 });
     let pad = (w.min(h) * 0.04).clamp(2.0, 10.0);
     let mut area = Bx { x: pad, y: pad, w: w - 2.0 * pad, h: h - 2.0 * pad };
     if let Some(t) = chart_title(chart, &data) {
         let size = TITLE_SIZE.min(h * 0.12).max(4.0);
         let t = ctx.fit(&t, size, area.w);
+        let tw = ctx.tw(&t, size);
         ctx.text(w / 2.0, area.y, &t, size, TEXT, (HAlign::Center, VAlign::Top));
-        let used = size * 1.3 + 4.0;
-        area.y += used;
-        area.h -= used;
+        ctx.elements.push((ChartElement::Title, [w / 2.0 - tw / 2.0 - 2.0, area.y - 2.0, tw + 4.0, size * 1.3 + 4.0]));
+        // Centered Overlay lays the title over the plot, which keeps the whole chart.
+        if !chart.title_overlay {
+            let used = size * 1.3 + 4.0;
+            area.y += used;
+            area.h -= used;
+        }
     }
     let entries = legend_entries(chart, &data);
     if !entries.is_empty() && area.ok() {

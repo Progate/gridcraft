@@ -6,9 +6,25 @@ use crate::render::{DOWN, finalize};
 use crate::resolve::MAX_POINTS;
 use crate::{Prim, Rgba};
 
+/// The points a sparkline marks (Sparkline ▸ Show): every point (Markers), and the highest and
+/// lowest in their own colours (High Point, Low Point).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SparkPoints {
+    pub markers: bool,
+    pub high: Option<Rgba>,
+    pub low: Option<Rgba>,
+}
+
 /// Draws a sparkline into a `w`×`h` box at the origin. Gaps (`None`) break lines; column and
 /// win/loss sparklines draw negatives in our "down" red.
 pub fn render_sparkline(kind: SparklineKind, values: &[Option<f64>], color: Rgba, markers: bool, w: f32, h: f32) -> Vec<Prim> {
+    render_sparkline_points(kind, values, color, SparkPoints { markers, ..SparkPoints::default() }, w, h)
+}
+
+/// [`render_sparkline`] marking `points`: a line's markers and its high and low points as dots,
+/// a column's highest and lowest bars in the high and low colours.
+pub fn render_sparkline_points(kind: SparklineKind, values: &[Option<f64>], color: Rgba, points: SparkPoints, w: f32, h: f32) -> Vec<Prim> {
+    let markers = points.markers;
     if !(w.is_finite() && h.is_finite()) || w < 1.0 || h < 1.0 || w > 1e6 || h > 1e6 {
         return vec![];
     }
@@ -47,12 +63,21 @@ pub fn render_sparkline(kind: SparklineKind, values: &[Option<f64>], color: Rgba
                 }
             }
             flush(&mut run, &mut out);
+            let r = (h * 0.08).clamp(1.0, 3.0);
             if markers || n == 1 {
-                let r = (h * 0.08).clamp(1.0, 3.0);
                 let step = (n / 500).max(1);
                 for (j, v) in vals.iter().enumerate().step_by(step) {
                     if let Some(v) = v {
                         out.push(Prim::Circle { cx: fx(j), cy: fy(*v), r, fill: Some(color), stroke: None });
+                    }
+                }
+            }
+            // High and low points go over the markers, every point at the extreme marked.
+            for (extreme, mark) in [(lo, points.low), (hi, points.high)] {
+                let Some(mark) = mark else { continue };
+                for (j, v) in vals.iter().enumerate() {
+                    if *v == Some(extreme) {
+                        out.push(Prim::Circle { cx: fx(j), cy: fy(extreme), r: r + 0.5, fill: Some(mark), stroke: None });
                     }
                 }
             }
@@ -73,7 +98,13 @@ pub fn render_sparkline(kind: SparklineKind, values: &[Option<f64>], color: Rgba
                 }
                 let top = fy(v);
                 let (y, hh) = (top.min(base), (top - base).abs().max(0.5));
-                let fill = if v < 0.0 { DOWN } else { color };
+                let raw = vals.get(j).copied().flatten();
+                let fill = match (points.high, points.low) {
+                    (Some(c), _) if raw == Some(hi) => c,
+                    (_, Some(c)) if raw == Some(lo) => c,
+                    _ if v < 0.0 => DOWN,
+                    _ => color,
+                };
                 out.push(Prim::Rect { x: x0 + j as f32 * slot + (slot - bw) / 2.0, y, w: bw, h: hh, fill: Some(fill), stroke: None, radius: 0.0 });
             }
         }

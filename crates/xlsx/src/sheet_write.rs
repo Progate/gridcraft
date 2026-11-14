@@ -316,9 +316,23 @@ fn write_sheet_extensions(s: &mut String, sheet: &Sheet, prio: &[u32], slicers: 
             let color = if sp.color == Color::Auto { "rgb=\"FF376092\"".to_string() } else { color_attrs(&sp.color) };
             let _ = write!(
                 s,
-                "<x14:sparklineGroup displayEmptyCellsAs=\"gap\"{ty}{}><x14:colorSeries {color}/><x14:sparklines>",
+                "<x14:sparklineGroup displayEmptyCellsAs=\"gap\"{ty}{}{}{}><x14:colorSeries {color}/>",
                 if sp.markers { " markers=\"1\"" } else { "" },
+                if sp.high { " high=\"1\"" } else { "" },
+                if sp.low { " low=\"1\"" } else { "" },
             );
+            // The marker, high and low point colours, in CT_SparklineGroup's order, as Excel
+            // writes them for the points it shows: without them Excel draws those points black.
+            if sp.markers {
+                let _ = write!(s, "<x14:colorMarkers {color}/>");
+            }
+            if sp.high {
+                let _ = write!(s, "<x14:colorHigh {}/>", color_attrs(&gridcraft_model::Sparkline::HIGH_COLOR));
+            }
+            if sp.low {
+                let _ = write!(s, "<x14:colorLow {}/>", color_attrs(&gridcraft_model::Sparkline::LOW_COLOR));
+            }
+            s.push_str("<x14:sparklines>");
             for m in group {
                 let src =
                     if m.source.contains('!') { m.source.clone() } else { format!("{}!{}", gridcraft_formula::quote_sheet(&sheet.name), m.source) };
@@ -401,9 +415,20 @@ fn write_chart_part(wb: &Workbook, si: usize, ch: &gridcraft_model::Chart, drels
         out.part(&format!("xl/charts/_rels/chartEx{n}.xml.rels"), None, crels.xml().into_bytes());
         drels.add_uri(crate::chartex::REL_CHARTEX, &format!("../charts/chartEx{n}.xml"))
     } else {
-        let name = format!("xl/charts/chart{}.xml", out.charts);
+        let n = out.charts;
+        let name = format!("xl/charts/chart{n}.xml");
         out.part(&name, Some(CT_CHART), crate::chart::write_chart(wb, si, ch, &out.book_name).into_bytes());
-        drels.add("chart", &format!("../charts/chart{}.xml", out.charts))
+        // As Excel 2013 and later save every chart: a style part naming its Chart Styles gallery
+        // style, and a colour part.
+        if let Some(id) = ch.chart_style_id() {
+            out.part(&format!("xl/charts/style{n}.xml"), Some(crate::chartex::CT_STYLE), crate::chartex::style_xml_with_id(id).into_bytes());
+            out.part(&format!("xl/charts/colors{n}.xml"), Some(crate::chartex::CT_COLORS), crate::chartex::colors_xml().into_bytes());
+            let mut crels = Rels::default();
+            crels.add_uri(crate::chartex::REL_STYLE, &format!("style{n}.xml"));
+            crels.add_uri(crate::chartex::REL_COLORS, &format!("colors{n}.xml"));
+            out.part(&format!("xl/charts/_rels/chart{n}.xml.rels"), None, crels.xml().into_bytes());
+        }
+        drels.add("chart", &format!("../charts/chart{n}.xml"))
     }
 }
 

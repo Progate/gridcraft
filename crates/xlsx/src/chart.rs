@@ -316,6 +316,8 @@ pub fn read_chart(root: &El) -> Option<Chart> {
         alt_text: Default::default(),
         label_parts,
         auto_title,
+        title_overlay: chart.child("title").is_some_and(|t| bool_val(t, "overlay")),
+        chart_style: None,
     })
 }
 
@@ -737,12 +739,13 @@ fn group_xml(g: G, series: &[(usize, &Series)], ch: &Chart, axes: (u32, u32), wb
     }
 }
 
-fn title_xml(t: &str) -> String {
+/// A `c:title` with text `t`; `overlay` lays it over the plot (Centered Overlay).
+fn title_xml(t: &str, overlay: bool) -> String {
     let mut s = String::from("<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/>");
     for line in t.split('\n') {
         let _ = write!(s, "<a:p><a:pPr><a:defRPr/></a:pPr><a:r><a:t>{}</a:t></a:r></a:p>", esc(line));
     }
-    s.push_str("</c:rich></c:tx><c:overlay val=\"0\"/></c:title>");
+    let _ = write!(s, "</c:rich></c:tx><c:overlay val=\"{}\"/></c:title>", u8::from(overlay));
     s
 }
 
@@ -769,7 +772,7 @@ fn axis_xml(a: &Ax<'_>) -> String {
         s.push_str("<c:majorGridlines/>");
     }
     if let Some(t) = a.title {
-        s.push_str(&title_xml(t));
+        s.push_str(&title_xml(t, false));
     }
     let _ = write!(
         s,
@@ -841,12 +844,14 @@ pub fn write_chart(wb: &Workbook, si: usize, ch: &Chart, book_name: &str) -> Str
     s.push_str("<c:chart>");
     match &ch.title {
         Some(t) if !t.is_empty() => {
-            s.push_str(&title_xml(t));
+            s.push_str(&title_xml(t, ch.title_overlay));
             s.push_str("<c:autoTitleDeleted val=\"0\"/>");
         }
         // Excel's automatic title has no text of its own: Excel shows the series name, or Chart
         // Title in its own language.
-        None if ch.auto_title => s.push_str("<c:title><c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>"),
+        None if ch.auto_title => {
+            let _ = write!(s, "<c:title><c:overlay val=\"{}\"/></c:title><c:autoTitleDeleted val=\"0\"/>", u8::from(ch.title_overlay));
+        }
         _ => s.push_str("<c:autoTitleDeleted val=\"1\"/>"),
     }
     s.push_str("<c:plotArea><c:layout/>");

@@ -326,6 +326,8 @@ fn sample() -> Workbook {
         kind: SparklineKind::WinLoss,
         color: Color::Rgb(0x112233),
         markers: true,
+        high: false,
+        low: false,
         group: 0,
     });
     s.tables.push(Table {
@@ -451,6 +453,8 @@ fn sample() -> Workbook {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     };
     for kind in [
         ChartKind::ColumnClustered,
@@ -1647,6 +1651,8 @@ fn solid_data_bar_survives_with_sparklines_and_gradient_neighbours() {
         kind: SparklineKind::Line,
         color: Color::Rgb(0x376092),
         markers: false,
+        high: false,
+        low: false,
         group: 0,
     });
     let bytes = write_xlsx(&wb).unwrap();

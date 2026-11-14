@@ -34,6 +34,14 @@ pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
             // Add Chart Element ▸ Chart Title ▸ Above Chart keeps a typed title and otherwise turns
             // the automatic title back on; None removes it (`autoTitleDeleted`).
             "title" => {
+                if on {
+                    // Above Chart or Centered Overlay: where the title sits.
+                    match pos.as_deref() {
+                        None | Some("above") => c.title_overlay = false,
+                        Some("overlay") => c.title_overlay = true,
+                        Some(other) => return Err(bad("chart.addElement", format!("a title position is above or overlay, not `{other}`"))),
+                    }
+                }
                 if !on {
                     c.title = Some(String::new());
                     c.auto_title = false;
@@ -64,6 +72,19 @@ pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
             "axisTitles" => {
                 c.x_title = on.then(|| c.x_title.clone().unwrap_or_else(|| axis_title.into()));
                 c.y_title = on.then(|| c.y_title.clone().unwrap_or_else(|| axis_title.into()));
+            }
+            // Axis Titles ▸ Primary Horizontal / Primary Vertical: one axis's title, Axis Title
+            // (軸ラベル) until it is typed over; a title it already has is kept.
+            "axisTitle" => {
+                if !has_axes(c) {
+                    return Err(bad("chart.addElement", "this chart type has no axes"));
+                }
+                let title = match str_param(p, "axis") {
+                    Some("horizontal") => c.axis_title_mut(true),
+                    Some("vertical") => c.axis_title_mut(false),
+                    _ => return Err(bad("chart.addElement", "`axis` must be horizontal or vertical")),
+                };
+                *title = on.then(|| title.clone().filter(|t| !t.trim().is_empty()).unwrap_or_else(|| axis_title.into()));
             }
             "smooth" => {
                 for s in &mut c.series {
@@ -100,6 +121,13 @@ pub(super) fn add_element(s: &mut Session, p: &Json) -> Result<Json> {
         }
         Ok(())
     })
+}
+
+/// Whether the chart draws axes that can carry a title: not a pie, doughnut, radar or the
+/// newer charts without axes (treemap, sunburst, funnel).
+pub fn has_axes(c: &Chart) -> bool {
+    use gridcraft_model::ChartKind::*;
+    !matches!(c.kind, Pie | Doughnut | Radar | Treemap | Sunburst | Funnel)
 }
 
 /// The trendline described by `chart.addElement`'s trendline parameters (Excel's Add Chart

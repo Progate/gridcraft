@@ -78,6 +78,8 @@ pub(super) fn insert_pivot_chart(s: &mut Session, p: &Json) -> Result<Json> {
         alt_text: Default::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     };
     edit(s, |cx| {
         cx.sheet_mut(si)?.charts.push(chart);

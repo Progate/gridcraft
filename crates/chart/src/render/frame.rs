@@ -1,4 +1,6 @@
-use super::{AXIS, AXIS_TITLE_SIZE, Chart, ChartData, Ctx, DARK_TEXT, Fmt, GRID, HAlign, LABEL_SIZE, PI, Prim, Rgba, Scale, TEXT, VAlign, WHITE};
+use super::{
+    AXIS, AXIS_TITLE_SIZE, Chart, ChartData, ChartElement, Ctx, DARK_TEXT, Fmt, GRID, HAlign, LABEL_SIZE, PI, Prim, Rgba, Scale, TEXT, VAlign, WHITE,
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Bx {
@@ -47,16 +49,22 @@ pub(super) fn chart_title(chart: &Chart, data: &ChartData) -> Option<String> {
     }
 }
 
+/// Draws the axis titles, Excel's Primary Horizontal below the plot and Primary Vertical turned
+/// up its left side (a bar chart's value axis is the horizontal one), and returns what is left.
 pub(super) fn axis_titles(ctx: &mut Ctx, chart: &Chart, mut area: Bx) -> Bx {
     let lh = AXIS_TITLE_SIZE * 1.4 + 2.0;
-    if let Some(t) = chart.x_title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+    if let Some(t) = chart.axis_title(true).map(str::trim).filter(|t| !t.is_empty()) {
         let t = ctx.fit(t, AXIS_TITLE_SIZE, area.w);
+        let tw = ctx.tw(&t, AXIS_TITLE_SIZE);
         ctx.text(area.cx(), area.bottom(), &t, AXIS_TITLE_SIZE, TEXT, (HAlign::Center, VAlign::Bottom));
+        ctx.elements.push((ChartElement::HorizontalAxisTitle, [area.cx() - tw / 2.0 - 2.0, area.bottom() - lh, tw + 4.0, lh]));
         area.h -= lh;
     }
-    if let Some(t) = chart.y_title.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+    if let Some(t) = chart.axis_title(false).map(str::trim).filter(|t| !t.is_empty()) {
         let t = ctx.fit(t, AXIS_TITLE_SIZE, area.h);
         if !t.is_empty() {
+            let tw = ctx.tw(&t, AXIS_TITLE_SIZE);
+            ctx.elements.push((ChartElement::VerticalAxisTitle, [area.x, area.cy() - tw / 2.0 - 2.0, lh, tw + 4.0]));
             ctx.out.push(Prim::Text {
                 x: area.x,
                 y: area.cy(),

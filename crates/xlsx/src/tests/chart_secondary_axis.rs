@@ -44,6 +44,8 @@ fn chart(id: u32, kind: ChartKind, series: Vec<Series>) -> Chart {
         alt_text: AltText::default(),
         label_parts: Default::default(),
         auto_title: false,
+        title_overlay: false,
+        chart_style: None,
     }
 }
 
