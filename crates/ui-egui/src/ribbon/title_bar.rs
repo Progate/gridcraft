@@ -107,6 +107,11 @@ pub fn title_bar(app: &mut SheetApp, ui: &mut Ui) {
             } else if redo.clicked() && can_redo {
                 app.run_or_alert("edit.redo", json!({}));
             }
+            // The Quick Access Toolbar's added commands and its Customize menu, unless shown
+            // below the ribbon.
+            if !app.ui.qat_below {
+                super::qat::commands(app, ui);
+            }
             let more = icon_button(ui, Icon::More, t.text_dim, "More commands", vec2(26.0, ch));
             egui::Popup::menu(&more).show(|ui| {
                 for (label, id) in [

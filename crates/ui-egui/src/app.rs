@@ -251,6 +251,11 @@ impl SheetApp {
             backstage::show(self, ui);
         } else {
             ribbon::show(self, ui);
+            // Customize Quick Access Toolbar ▸ Show Below the Ribbon; without a title bar the
+            // toolbar has nowhere else to go.
+            if self.ui.qat_below || !self.chrome.title_bar {
+                ribbon::qat::strip(self, ui, !self.chrome.title_bar);
+            }
             widgets::notice_bar(self, ui);
             // Python mode edits only in the formula bar: it shows while a Python edit is open,
             // also when the preference hides it.

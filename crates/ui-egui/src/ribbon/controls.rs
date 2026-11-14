@@ -50,6 +50,8 @@ pub(super) fn control_keytip(app: &SheetApp, ui: &Ui, response: &egui::Response,
     if let Some(sequence) = keytip_table::control_badge(app.keytips.prefix().unwrap_or_default(), id) {
         keytip(app, ui, sequence, response.rect.center_bottom());
     }
+    // Every ribbon control that runs a command can be put on the Quick Access Toolbar.
+    super::qat::context_menu(app, response, id);
 }
 
 /// Paint the single badge for a menu anchor whose popup items run `targets`.

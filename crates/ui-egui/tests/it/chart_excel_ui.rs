@@ -254,10 +254,7 @@ fn japanese_names_the_tabs_as_excel_does() {
     // Create Sparklines, Fill Series and the Home tab's number format box as Excel names them.
     assert_eq!(ja.tr("Location Range:"), "場所の範囲:");
     assert_eq!(ja.tr("Weekday"), "週日");
-    assert_eq!(
-        ["Series|Series in", "Series|Linear", "Series|Growth", "Series|Date unit"].map(|l| ja.tr(l)),
-        ["範囲", "加算", "乗算", "増加単位"]
-    );
+    assert_eq!(["Series|Series in", "Series|Linear", "Series|Growth", "Series|Date unit"].map(|l| ja.tr(l)), ["範囲", "加算", "乗算", "増加単位"]);
     assert_eq!((ja.tr("Number Format"), ja.tr("Number")), ("数値の書式", "数値"));
     assert_eq!(ja.tr("Format Cells|Number"), "表示形式", "Format Cells' tab keeps its name");
 }

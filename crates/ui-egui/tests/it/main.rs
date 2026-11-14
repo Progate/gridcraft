@@ -104,6 +104,7 @@ mod protected_cell;
 mod python_cell_edit;
 mod python_hidden;
 mod python_mode;
+mod quick_access_toolbar;
 mod ref_edit;
 mod ribbon_layout;
 mod right_to_left;

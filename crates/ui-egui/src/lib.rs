@@ -109,6 +109,10 @@ pub struct UiState {
     /// AutoSave (the title-bar switch): save saved-to-file .xlsx workbooks shortly after every
     /// change. A preference like the rest of this struct — it stays on across restarts (#1901).
     pub autosave: bool,
+    /// Commands added to the Quick Access Toolbar (Add to Quick Access Toolbar), in order.
+    pub qat: Vec<String>,
+    /// Customize Quick Access Toolbar ▸ Show Below the Ribbon.
+    pub qat_below: bool,
     pub recent: Vec<String>,
     /// One-shot keytip request for a ribbon control: set when a keytip action resolves to
     /// [`keytips::Action::Control`], consumed (and cleared) by the control's render site.
@@ -159,6 +163,8 @@ impl Default for UiState {
             autocomplete: true,
             highlight_active_row: false,
             autosave: false,
+            qat: vec![],
+            qat_below: false,
             recent: vec![],
             keytip_invoke: None,
             keytip_invoke_next: None,

@@ -557,4 +557,3 @@ fn alt_text_fields(app: &mut SheetApp, ui: &mut Ui, o: ObjRef, alt: &gridcraft_e
         app.run_or_alert("object.altText", json!({"kind": o.kind.name(), "id": o.id, "decorative": decorative}));
     }
 }
-

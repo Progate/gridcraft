@@ -22,6 +22,7 @@ mod home;
 mod insert;
 mod page_layout;
 mod pivot;
+pub mod qat;
 mod review;
 mod shortcuts;
 mod title_bar;

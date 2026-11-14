@@ -93,6 +93,9 @@ pub fn toggle_button(ui: &mut Ui, icon: Icon, on: bool, tip: &str) -> Response {
         ui.painter().rect_filled(rect, 4.0, t.hover);
     }
     icons::paint(ui.painter(), Rect::from_center_size(rect.center(), vec2(16.0, 16.0)), icon, t.text);
+    // Named and marked pressed or not for assistive technology (and the UI tests), as Excel's are.
+    let name = tr(ui, tip).to_string();
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, name.clone()));
     resp.on_hover_text(tip_text(ui, tip))
 }
 
