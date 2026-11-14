@@ -402,7 +402,6 @@ pub(super) fn chart_design(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("comboChart", json!({"chart": id}));
         }
     });
-    pivot_chart_fields(app, ui, id);
     sep(ui);
     let __k = big_button(ui, Icon::Chart, "Move\nChart", "Move Chart", false);
     control_keytip(app, ui, &__k, "chart.move");
@@ -537,71 +536,92 @@ pub(super) fn sparkline_tab(app: &mut SheetApp, ui: &mut Ui) {
     });
 }
 
-/// PivotChart (ピボットグラフ) for the ribbon: a PivotChart of the PivotTable at the active cell in
-/// the chart type picked. Outside a PivotTable it starts one (Insert PivotTable), as Excel's
-/// button asks for the data first.
+/// PivotChart (ピボットグラフ) for the ribbon, as Excel's: in a PivotTable it opens Insert Chart
+/// (All Charts only) for a PivotChart of it; elsewhere Create PivotChart (ピボットグラフの作成),
+/// which makes a PivotTable of a table or range with its PivotChart.
 pub(super) fn pivot_chart_button(app: &mut SheetApp, ui: &mut Ui, small: bool) {
     let pc = if small {
-        crate::widgets::small_button(ui, Icon::PivotTable, "PivotChart", "PivotChart", true)
+        crate::widgets::small_button(ui, Icon::PivotTable, "PivotChart", "PivotChart", false)
     } else {
-        big_button(ui, Icon::PivotTable, "PivotChart", "PivotChart", true)
+        big_button(ui, Icon::PivotTable, "PivotChart", "PivotChart", false)
     };
     control_keytip(app, ui, &pc, "insert.pivotChart");
-    let in_pivot = crate::pivot_pane::active_pivot(app);
-    egui::Popup::menu(&pc).show(|ui| {
-        let Some(pivot) = in_pivot else {
-            if ui.button(app.ui.language.tr("PivotTable")).clicked() {
-                act(app, "insert.pivotTable", json!({}));
-            }
-            return;
-        };
-        for (label, k, s) in [
-            ("Clustered Column", "column", ""),
-            ("Stacked Column", "column", "stacked"),
-            ("Clustered Bar", "bar", ""),
-            ("Line", "line", ""),
-            ("Line with Markers", "line", "markers"),
-            ("Pie", "pie", ""),
-            ("Doughnut", "doughnut", ""),
-            ("Area", "area", ""),
-        ] {
-            if ui.button(app.ui.language.tr(label)).clicked() {
-                act(app, "insert.pivotChart", json!({"pivot": pivot, "type": k, "subtype": s}));
-            }
-        }
-    });
+    let forced = super::controls::invoke(app, "insert.pivotChart");
+    if pc.clicked() || forced {
+        open_pivot_chart(app);
+    }
 }
 
-/// A PivotChart's field buttons (Excel draws them on the chart): each axis field of its PivotTable
-/// with its filter list and Expand / Collapse Entire Field.
-fn pivot_chart_fields(app: &mut SheetApp, ui: &mut Ui, id: u32) {
-    let Some(pivot) = app
-        .session
-        .active()
-        .and_then(|d| d.wb.active()?.charts.iter().find(|c| c.id == id)?.pivot.clone())
-        .map(|p| p.rsplit_once('!').map_or(p.clone(), |(_, n)| n.to_string()))
-    else {
-        return;
-    };
+/// What PivotChart opens: Insert Chart for the PivotTable at the active cell, else Create PivotChart.
+pub(crate) fn open_pivot_chart(app: &mut SheetApp) {
+    match crate::pivot_pane::active_pivot(app) {
+        Some(pivot) => app.open_dialog("recommendedCharts", json!({"pivot": pivot})),
+        None => app.open_dialog("createPivotChart", json!({})),
+    }
+}
+
+/// The PivotTable of the selected PivotChart, by name.
+fn selected_pivot_chart(app: &SheetApp) -> Option<(u32, String, gridcraft_engine::model::PivotFieldButtons)> {
+    let id = app.selected_chart()?;
+    let c = app.session.active()?.wb.active()?.charts.iter().find(|c| c.id == id)?.clone();
+    let link = c.pivot?;
+    let (_, name) = gridcraft_engine::pivot::parse_chart_link(&link)?;
+    Some((id, name, c.pivot_buttons))
+}
+
+/// Whether the selected chart is a PivotChart (PivotChart Analyze shows then).
+pub(crate) fn pivot_chart_selected(app: &SheetApp) -> bool {
+    selected_pivot_chart(app).is_some()
+}
+
+/// PivotChart Analyze (ピボットグラフ分析), while a PivotChart is selected: Refresh, Change Data
+/// Source, Move Chart, and Show/Hide ▸ Field Buttons.
+pub(super) fn pivot_chart_analyze(app: &mut SheetApp, ui: &mut Ui) {
+    let Some((id, pivot, shown)) = selected_pivot_chart(app) else { return };
+    let __k = big_button(ui, Icon::Redo, "Refresh", "Refresh", false);
+    if __k.clicked() {
+        act(app, "pivot.refresh", json!({"pivot": pivot}));
+    }
+    let __k = big_button(ui, Icon::Table, "Change Data\nSource", "Change Data Source", false);
+    if __k.clicked() {
+        app.open_dialog("pivotChangeSource", json!({"pivot": pivot}));
+    }
     sep(ui);
-    let fb = big_button(ui, Icon::Filter, "Field\nButtons", "Field Buttons", true);
-    egui::Popup::menu(&fb).show(|ui| {
-        let Ok(info) = app.session.run("pivot.fields", json!({"pivot": pivot})) else { return };
-        let fields: Vec<String> = ["rows", "columns"]
-            .iter()
-            .flat_map(|k| info["pivot"][*k].as_array().cloned().unwrap_or_default())
-            .filter_map(|f| f["field"].as_str().or(f["sourceCol"].as_str()).or(f["name"].as_str()).map(str::to_string))
-            .collect();
+    let __k = big_button(ui, Icon::Chart, "Move\nChart", "Move Chart", false);
+    if __k.clicked() {
+        app.open_dialog("moveChart", json!({"chart": id}));
+    }
+    sep(ui);
+    field_buttons_menu(app, ui, id, shown);
+}
+
+/// Show/Hide ▸ Field Buttons (フィールド ボタン): the upper half shows or hides them all; the menu
+/// shows or hides each kind, or Hide All, as Excel's.
+fn field_buttons_menu(app: &mut SheetApp, ui: &mut Ui, id: u32, shown: gridcraft_engine::model::PivotFieldButtons) {
+    let (fb, menu) = crate::widgets::big_split_button(ui, Icon::Filter, "Field\nButtons", "Field Buttons");
+    if shown.any() {
+        ui.painter().rect_stroke(fb.rect, 4.0, egui::Stroke::new(1.0, Tokens::get(ui.ctx()).accent), egui::StrokeKind::Inside);
+    }
+    if fb.clicked() {
+        act(app, "chart.fieldButtons", json!({"chart": id}));
+    }
+    egui::Popup::menu(&menu).show(|ui| {
         let lang = app.ui.language;
-        for f in fields {
-            ui.menu_button(format!("{f} ▾"), |ui| {
-                for (label, collapse) in [("Expand Entire Field", false), ("Collapse Entire Field", true)] {
-                    if ui.button(lang.tr(label)).clicked() {
-                        act(app, "pivot.collapse", json!({"pivot": pivot, "field": f, "collapse": collapse}));
-                    }
-                }
-                crate::pivot_pane::filter_menu(app, ui, &pivot, &f, &info);
-            });
+        for (label, key, on) in [
+            ("Show Report Filter Field Buttons", "reportFilter", shown.report_filter),
+            ("Show Legend Field Buttons", "legend", shown.legend),
+            ("Show Axis Field Buttons", "axis", shown.axis),
+            ("Show Value Field Buttons", "value", shown.value),
+        ] {
+            let mut v = on;
+            if ui.checkbox(&mut v, lang.tr(label)).changed() {
+                act(app, "chart.fieldButtons", json!({"chart": id, key: v}));
+            }
+        }
+        ui.separator();
+        if ui.add_enabled(shown.any(), egui::Button::new(lang.tr("Hide All"))).clicked() {
+            act(app, "chart.fieldButtons", json!({"chart": id, "all": false}));
+            ui.close();
         }
     });
 }

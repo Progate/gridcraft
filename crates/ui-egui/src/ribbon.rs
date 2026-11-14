@@ -29,7 +29,7 @@ mod title_bar;
 mod view;
 
 use automate::automate;
-use contextual::{chart_design, chart_format, pivot_analyze, sparkline_tab, table_design};
+use contextual::{chart_design, chart_format, pivot_analyze, pivot_chart_analyze, sparkline_tab, table_design};
 pub(crate) use controls::{ComboResult, editable_combo};
 use controls::{act, keytip};
 use data::data;
@@ -160,6 +160,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                             CHART_FORMAT_TAB => chart_format(app, ui),
                             SPARKLINE_TAB => sparkline_tab(app, ui),
                             PIVOT_ANALYZE_TAB => pivot_analyze(app, ui),
+                            PIVOT_CHART_ANALYZE_TAB => pivot_chart_analyze(app, ui),
                             PIVOT_DESIGN_TAB => pivot::design(app, ui),
                             crate::paper_view::TAB => crate::paper_view::ribbon_tab(app, ui),
                             _ => home(app, ui),
@@ -290,8 +291,19 @@ pub(crate) const PIVOT_ANALYZE_TAB: &str = "PivotTable Analyze";
 /// The PivotTable's Design tab (デザイン), after PivotTable Analyze.
 pub(crate) const PIVOT_DESIGN_TAB: &str = "PivotTable Design";
 
-const CONTEXTUAL_TABS: [&str; 7] =
-    ["Table Design", "Chart Design", CHART_FORMAT_TAB, SPARKLINE_TAB, PIVOT_ANALYZE_TAB, PIVOT_DESIGN_TAB, crate::paper_view::TAB];
+/// PivotChart Analyze (ピボットグラフ分析), before Chart Design while a PivotChart is selected.
+pub(crate) const PIVOT_CHART_ANALYZE_TAB: &str = "PivotChart Analyze";
+
+const CONTEXTUAL_TABS: [&str; 8] = [
+    "Table Design",
+    PIVOT_CHART_ANALYZE_TAB,
+    "Chart Design",
+    CHART_FORMAT_TAB,
+    SPARKLINE_TAB,
+    PIVOT_ANALYZE_TAB,
+    PIVOT_DESIGN_TAB,
+    crate::paper_view::TAB,
+];
 
 fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
     let mut v = Vec::new();
@@ -306,6 +318,9 @@ fn contextual_tabs(app: &SheetApp) -> Vec<&'static str> {
             v.push(PIVOT_DESIGN_TAB);
         }
         if app.selected_chart().is_some_and(|id| sh.charts.iter().any(|c| c.id == id)) {
+            if contextual::pivot_chart_selected(app) {
+                v.push(PIVOT_CHART_ANALYZE_TAB);
+            }
             v.push("Chart Design");
             v.push(CHART_FORMAT_TAB);
         } else if app.selected_object.is_none() && sh.sparklines.iter().any(|sp| sp.cell == d.selection.active) {

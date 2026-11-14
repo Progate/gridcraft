@@ -10,7 +10,10 @@ use crate::SheetApp;
 
 /// The dialogs this module draws.
 pub(super) fn handles(name: &str) -> bool {
-    matches!(name, "pivotLabelFilter" | "pivotValueFilter" | "pivotTop10" | "pivotFieldSettings" | "insertSlicer" | "pivotChangeSource")
+    matches!(
+        name,
+        "pivotLabelFilter" | "pivotValueFilter" | "pivotTop10" | "pivotFieldSettings" | "insertSlicer" | "pivotChangeSource" | "createPivotChart"
+    )
 }
 
 /// Opens one of [`handles`]' dialogs with its title (the field's name in brackets, as Excel's).
@@ -23,6 +26,7 @@ pub(super) fn open(app: &SheetApp, name: &str, params: &Json) -> Option<Dialog> 
         "pivotTop10" => format!("{} ({field})", lang.tr("Top 10 Filter")),
         "pivotFieldSettings" => lang.tr("Field Settings").to_string(),
         "insertSlicer" => lang.tr("Insert Slicers").to_string(),
+        "createPivotChart" => lang.tr("Create PivotChart").to_string(),
         _ => lang.tr("Change PivotTable Data Source").to_string(),
     };
     let mut values = params.clone();
@@ -42,6 +46,16 @@ pub(super) fn open(app: &SheetApp, name: &str, params: &Json) -> Option<Dialog> 
         })
     {
         values["source"] = json!(src);
+    }
+    if name == "createPivotChart" {
+        // Table/Range starts as the table or block at the active cell, as Excel's does.
+        let src = gridcraft_engine::cmd::pivot::selection_source(&app.session).unwrap_or_default();
+        let here = app.session.active().and_then(|d| {
+            let sh = d.wb.active()?;
+            let at = d.selection.active;
+            Some(format!("{}!${}${}", gridcraft_engine::formula::quote_sheet(&sh.name), gridcraft_engine::core::col_to_letters(at.col), at.row + 1))
+        });
+        values = json!({"source": src, "where": "new", "location": here.unwrap_or_default()});
     }
     Some(Dialog::custom(name, &title, values))
 }
@@ -265,6 +279,51 @@ pub(super) fn show(app: &mut SheetApp, ui: &mut egui::Ui, d: &mut Dialog, confir
                 // In the order the fields are listed, as Excel stacks them.
                 let ordered: Vec<&String> = fields.iter().filter(|f| chosen.contains(f)).collect();
                 run = Some(("pivot.insertSlicer", json!({"pivot": pivot, "fields": ordered})));
+            }
+        }
+        "createPivotChart" => {
+            // Create PivotChart (ピボットグラフの作成): the data, and where the PivotTable that
+            // comes with the chart goes.
+            let mut src = text(d, "source");
+            let mut place = text(d, "where");
+            let mut location = text(d, "location");
+            ui.label(lang.tr("Choose the data that you want to analyze"));
+            ui.indent("pivot_chart_source", |ui| {
+                let _ = ui.radio(true, lang.tr("Select a table or range"));
+                ui.horizontal(|ui| {
+                    let l = ui.label(lang.tr("Table/Range:"));
+                    ui.add(egui::TextEdit::singleline(&mut src).desired_width(220.0)).labelled_by(l.id);
+                });
+            });
+            ui.add_space(6.0);
+            ui.label(lang.tr("Choose where you want the PivotChart to be placed"));
+            ui.indent("pivot_chart_place", |ui| {
+                if ui.radio(place == "new", lang.tr("New Worksheet")).clicked() {
+                    place = "new".into();
+                }
+                if ui.radio(place == "existing", lang.tr("Existing Worksheet")).clicked() {
+                    place = "existing".into();
+                }
+                ui.horizontal(|ui| {
+                    let l = ui.label(lang.tr("Location:"));
+                    ui.add_enabled(place == "existing", egui::TextEdit::singleline(&mut location).desired_width(220.0)).labelled_by(l.id);
+                });
+            });
+            d.values.insert("source".into(), json!(src));
+            d.values.insert("where".into(), json!(place));
+            d.values.insert("location".into(), json!(location));
+            ok_cancel(ui, confirm, open);
+            if *confirm {
+                *confirm = false;
+                let destination = if place == "existing" { location.trim().trim_start_matches('=').to_string() } else { "new".into() };
+                match app.run("insert.pivotChart", json!({"source": src.trim().trim_start_matches('='), "destination": destination})) {
+                    Ok(r) => {
+                        // The new PivotChart is selected, ready for its fields.
+                        app.select_object_id(r.get("chart").and_then(Json::as_u64).and_then(|id| u32::try_from(id).ok()));
+                        *open = false;
+                    }
+                    Err(e) => app.message = Some((d.title.clone(), crate::clean_error(&e))),
+                }
             }
         }
         _ => {

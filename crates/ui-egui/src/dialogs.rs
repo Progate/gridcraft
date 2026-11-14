@@ -18,6 +18,7 @@ mod analysis;
 mod autofilter;
 mod cf_rule;
 pub(crate) use cf_rule::ICON_SET_NAMES;
+pub(crate) use charts::combo_preset;
 mod charts;
 mod command_search;
 mod cond_format_rules;
@@ -43,7 +44,6 @@ mod text_to_columns;
 mod zoom;
 
 use analysis::toolpak_defaults;
-use charts::select_chart;
 use data::{abs, remove_duplicates_header, remove_duplicates_range};
 use find::go_to_entries;
 pub(crate) use names::insert_name;
@@ -1077,21 +1077,7 @@ impl Dialog {
                 };
                 d
             }
-            "recommendedCharts" => {
-                // Insert › Recommended Charts: chart types for the selected data, with previews.
-                let recs = match app.session.run("insert.chartRecommendations", json!({})) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        app.message = Some(("Insert Chart".into(), crate::clean_error(&e)));
-                        return None;
-                    }
-                };
-                let mut d = Dialog::custom("recommendedCharts", "Insert Chart", json!({}));
-                d.tab = if p("tab").as_str() == Some("All Charts") { "All Charts".into() } else { "Recommended Charts".into() };
-                d.result = Some(recs);
-                select_chart(&mut d, 0);
-                d
-            }
+            "recommendedCharts" => charts::open_insert_chart(app, &params)?,
             "selectData" => {
                 // Chart Design › Select Data: data range, series to keep, category axis labels.
                 let id = p("chart").as_u64();

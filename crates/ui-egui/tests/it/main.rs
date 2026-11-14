@@ -69,6 +69,7 @@ mod hyperlink_dialog;
 mod in_cell_editor_size;
 mod in_cell_editor_wrap;
 mod ink_render;
+mod insert_chart_menus;
 mod insert_copied_cells;
 mod interaction;
 mod interface_scale;

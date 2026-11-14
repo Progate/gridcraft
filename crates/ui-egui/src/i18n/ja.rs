@@ -2590,6 +2590,53 @@ pub(super) fn translate_message(text: &str) -> Option<String> {
     })
 }
 
+/// Insert ▸ Charts, Insert Chart, Create PivotChart and PivotChart Analyze, in Excel 365's words.
+const INSERT_CHARTS: &[(&str, &str)] = &[
+    ("Insert Column or Bar Chart", "縦棒/横棒グラフの挿入"),
+    ("Insert Line or Area Chart", "折れ線/面グラフの挿入"),
+    ("Insert Pie or Doughnut Chart", "円またはドーナツ グラフの挿入"),
+    ("Insert Hierarchy Chart", "階層構造グラフの挿入"),
+    ("Insert Statistic Chart", "統計グラフの挿入"),
+    ("Insert Scatter (X, Y) or Bubble Chart", "散布図 (X, Y) またはバブル チャートの挿入"),
+    (
+        "Insert Waterfall, Funnel, Stock, Surface or Radar Chart",
+        "ウォーターフォール図、じょうごグラフ、株価チャート、等高線グラフ、レーダー チャートの挿入",
+    ),
+    ("Insert Combo Chart", "複合グラフの挿入"),
+    ("2-D Column", "2-D 縦棒"),
+    ("2-D Bar", "2-D 横棒"),
+    ("2-D Line", "2-D 折れ線"),
+    ("2-D Area", "2-D 面"),
+    ("2-D Pie", "2-D 円"),
+    ("ChartCategory|X Y (Scatter)", "散布図 (X, Y)"),
+    ("High-Low-Close", "高値 - 安値 - 終値"),
+    ("Clustered Column - Line", "集合縦棒 - 折れ線"),
+    ("Clustered Column - Line on Secondary Axis", "集合縦棒 - 第 2 軸の折れ線"),
+    ("Stacked Area - Clustered Column", "積み上げ面 - 集合縦棒"),
+    ("Custom Combination", "ユーザー設定の組み合わせ"),
+    ("More Column Charts…", "その他の縦棒グラフ…"),
+    ("More Line Charts…", "その他の折れ線グラフ…"),
+    ("More Pie Charts…", "その他の円グラフ…"),
+    ("More Hierarchy Charts…", "その他の階層構造グラフ…"),
+    ("More Statistical Charts…", "その他の統計グラフ…"),
+    ("More Scatter Charts…", "その他の散布図…"),
+    ("More Stock Charts…", "その他の株価チャート…"),
+    ("Create Custom Combo Chart…", "ユーザー設定の複合グラフを作成する…"),
+    ("See All Charts", "すべてのグラフを表示"),
+    ("Create PivotChart", "ピボットグラフの作成"),
+    ("Select a table or range", "テーブルまたは範囲を選択"),
+    ("Choose where you want the PivotChart to be placed", "ピボットグラフの配置先を選択してください"),
+    ("New Worksheet", "新規ワークシート"),
+    ("Existing Worksheet", "既存のワークシート"),
+    ("Location:", "場所:"),
+    ("PivotChart Analyze", "ピボットグラフ分析"),
+    ("Show Report Filter Field Buttons", "レポート フィルター フィールド ボタンを表示"),
+    ("Show Legend Field Buttons", "凡例フィールド ボタンを表示"),
+    ("Show Axis Field Buttons", "軸フィールド ボタンを表示"),
+    ("Show Value Field Buttons", "値フィールド ボタンを表示"),
+    ("Hide All", "すべて非表示"),
+];
+
 /// Translates an interface label; `None` for a label the catalog does not know, so `i18n.rs` can
 /// fall back to English. Dialog strings come first, the shared core second.
 pub(super) fn translate(text: &str) -> Option<&'static str> {
@@ -2603,6 +2650,7 @@ pub(super) fn translate(text: &str) -> Option<&'static str> {
         .chain(CONSOLIDATE)
         .chain(OUTLINE)
         .chain(WORKBOOK_LINKS)
+        .chain(INSERT_CHARTS)
         .find(|(english, _)| *english == text)
         .map(|(_, translated)| *translated)
 }

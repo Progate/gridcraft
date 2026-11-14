@@ -31,7 +31,32 @@ impl gridcraft_chart::Measure for EguiMeasure<'_> {
 pub fn resolve(ctx: &egui::Context, wb: &Workbook, sheet: usize, chart: &gridcraft_engine::model::Chart) -> gridcraft_chart::ChartData {
     let mut data = gridcraft_chart::resolve(wb, sheet, chart);
     data.placeholder_title = crate::i18n::current(ctx).tr("Chart Title").to_string();
+    // A PivotChart's field buttons are drawn on screen only, as Excel prints none.
+    data.pivot_buttons = gridcraft_chart::pivot_field_buttons(wb, chart);
     data
+}
+
+/// The field button of PivotChart `id` under `at`: its kind and the field's name, laid out as
+/// [`paint_objects`] draws the chart.
+pub fn chart_field_button_at(
+    p: &Painter,
+    geo: &Geo,
+    wb: &Workbook,
+    si: usize,
+    sh: &Sheet,
+    id: u32,
+    at: Pos2,
+) -> Option<(gridcraft_chart::FieldButtonKind, String)> {
+    let ch = sh.charts.iter().find(|c| c.id == id)?;
+    ch.pivot.as_ref()?;
+    let r = anchor_rect(geo, sh, &ch.anchor);
+    let z = geo.z.max(0.01);
+    let data = resolve(p.ctx(), wb, si, ch);
+    let m = EguiMeasure { painter: p, z: geo.z };
+    let local = (at - r.min) / z;
+    let (kind, i) = gridcraft_chart::field_button_at(ch, &data, ch.anchor.width, ch.anchor.height, &m, local.x, local.y)?;
+    let name = data.pivot_buttons.as_ref()?.of(kind).get(i)?.name.clone();
+    Some((kind, name))
 }
 
 /// Paints `chart` (not necessarily on the sheet: the Recommended Charts preview) scaled to fit

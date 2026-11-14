@@ -144,6 +144,36 @@ pub(super) fn interact(app: &mut SheetApp, ui: &mut egui::Ui, resp: &egui::Respo
         if let Some(p) = at
             && let Some((obj, _, _)) = under
         {
+            // A PivotChart's field button opens the same menu as its PivotTable's ▼ for that
+            // field: sort, filters and the item list (a value field button only selects the chart).
+            if primary_clicked
+                && !primary_drag
+                && obj.kind == ObjKind::Chart
+                && handle.is_none()
+                && let Some((kind, field)) = crate::chartview::chart_field_button_at(ui.painter(), geo, wb, wb.active_sheet(), sh, obj.id, p)
+            {
+                app.selected_object = Some(obj);
+                app.grid.chart_element = None;
+                let pivot = sh
+                    .charts
+                    .iter()
+                    .find(|c| c.id == obj.id)
+                    .and_then(|c| c.pivot.as_deref())
+                    .and_then(gridcraft_engine::pivot::parse_chart_link)
+                    .map(|(_, name)| name);
+                let area = match kind {
+                    gridcraft_chart::FieldButtonKind::Axis => Some(gridcraft_engine::pivot::ButtonArea::Rows),
+                    gridcraft_chart::FieldButtonKind::Legend => Some(gridcraft_engine::pivot::ButtonArea::Columns),
+                    gridcraft_chart::FieldButtonKind::ReportFilter => Some(gridcraft_engine::pivot::ButtonArea::Filters),
+                    gridcraft_chart::FieldButtonKind::Value => None,
+                };
+                if let (Some(pivot), Some(area)) = (pivot, area) {
+                    // The menu opens below the button, its left edge at the pointer.
+                    let at = geo.mirror_pos(p) + egui::vec2(200.0, 4.0);
+                    app.grid.pivot_menu = Some(crate::pivot_ui::PivotMenu { pivot, area, fields: vec![field.clone()], field, at });
+                }
+                return;
+            }
             // A click on a chart's title or axis title selects that title; a second click on the
             // selected title edits its text in place (Excel).
             if primary_clicked && !primary_drag && obj.kind == ObjKind::Chart && handle.is_none() {

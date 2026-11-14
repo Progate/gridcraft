@@ -639,17 +639,9 @@ fn all_charts_inserts_a_hundred_percent_stacked_area() {
     let mut h = harness(s);
     h.state_mut().open_dialog("recommendedCharts", json!({"tab": "All Charts"}));
     h.run_steps(4);
-    // The entry sits below the list's visible height: scroll the list with the wheel first.
-    let first = h.get_by_label("Pie").rect().center();
-    h.input_mut().events.push(Event::PointerMoved(first));
-    h.input_mut().events.push(Event::MouseWheel {
-        unit: egui::MouseWheelUnit::Line,
-        source: egui::MouseWheelSource::Unknown,
-        delta: egui::vec2(0.0, -10.0),
-        phase: egui::TouchPhase::Move,
-        modifiers: Modifiers::NONE,
-    });
-    h.run_steps(20);
+    // All Charts lists Excel's categories; Area holds the area types.
+    h.get_by_label("Area").click();
+    h.run_steps(2);
     h.get_by_label("100% Stacked Area").click();
     h.run_steps(2);
     key(&mut h, Key::Enter, Modifiers::NONE);

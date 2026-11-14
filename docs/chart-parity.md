@@ -1,6 +1,6 @@
 # Chart parity
 
-> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-11-14 · **Change:** minor (data label positions and Data Callout as Excel's Add Chart Element ▸ Data Labels; earlier: combo charts: per-series type and secondary axis from the UI and commands; Alt Text for charts and pictures; earlier: chart-data-table keys pass the series index to the shared combo plot-kind rule, restoring compilation after #1150; earlier: doughnut charts: every series is a concentric ring, the first series innermost; hole size and first slice angle kept; rotated slices cover their own sweep; legend names categories; earlier: charts resize from eight handles, chart data tables, legend keys and borders, native XLSX round-trip and print/PDF; earlier: selected chart source outlines stay beneath floating objects) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
+> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-11-14 · **Change:** minor (Insert ▸ Charts menus and Insert Chart as Excel 365's; PivotChart field buttons and Create PivotChart; earlier: data label positions and Data Callout as Excel's Add Chart Element ▸ Data Labels; earlier: combo charts: per-series type and secondary axis from the UI and commands; Alt Text for charts and pictures; earlier: chart-data-table keys pass the series index to the shared combo plot-kind rule, restoring compilation after #1150; earlier: doughnut charts: every series is a concentric ring, the first series innermost; hole size and first slice angle kept; rotated slices cover their own sweep; legend names categories; earlier: charts resize from eight handles, chart data tables, legend keys and borders, native XLSX round-trip and print/PDF; earlier: selected chart source outlines stay beneath floating objects) · **Target:** Microsoft Excel (Microsoft 365), Excel for Mac 16.113.4
 
 Excel's chart types and chart elements against GridCraft. Part of
 [target-app-parity.md](target-app-parity.md). **Breadth ~50%, ready ~30%, 40–60 h** (estimated).
@@ -58,12 +58,12 @@ Sources: `crates/model/src/features.rs` (`ChartKind`, `Chart`, `Series`), `crate
 | Chart styles and colour palettes | ~16 styles × colour sets | style number stored, own palettes |
 | Chart sheets | yes | **kept, not editable**: not shown, and written back unchanged in their place on save (#727); left out when a sheet they plot is deleted or renamed. No F11 / Move Chart > New sheet |
 | Chart templates (`.crtx`) | yes | **missing** |
-| Recommended Charts | yes | dialog with recommendations from the data's shape (own heuristic) and an All Charts list, live previews (#215) |
+| Recommended Charts, Insert Chart | yes | Insert ▸ Charts laid out as Excel 365's (Column or Bar, Line or Area, Pie or Doughnut, Hierarchy, Statistic, Scatter or Bubble, Waterfall/Funnel/Stock/Surface/Radar, Combo with its three presets and Create Custom Combo Chart, More … Charts, the group's launcher); Insert Chart with Recommended Charts (own heuristic) and All Charts by Excel's categories, Combo with a chart type and Secondary Axis per series, live previews (#215). Not offered: Map, Surface, Pareto, 3-D and the scatter/radar/stock variants GridCraft can't draw |
 | Switch Row/Column, Select Data | yes | yes (Switch on charts read from files landed in #116) |
 | Recommended Charts | yes | partial (Insert ▸ Recommended) |
 | Switch Row/Column, Select Data | yes | yes (Switch on charts read from files landed in #116); Select Data dialog: data range, remove series, Horizontal (Category) Axis Labels (#287). No series add/edit or hidden/empty cell options |
 | Sparklines (line, column, win/loss, markers, axis) | yes | line, column, win/loss |
-| PivotCharts | yes | Insert ▸ PivotChart (`insert.pivotChart`): bound to a PivotTable's report, rebuilt on refresh and layout changes, `c:pivotSource` round trip; no field buttons, innermost category level only |
+| PivotCharts | yes | PivotChart opens Insert Chart (All Charts, PivotChart kinds only) in a PivotTable and Create PivotChart elsewhere (`insert.pivotChart {source, destination}` makes the PivotTable and an empty PivotChart); bound to the report, rebuilt on refresh and layout changes (a combo keeps its per-series types), `c:pivotSource` round trip; field buttons drawn on the chart (report filters top left, values, axis bottom left, legend above the legend) open the PivotTable's ▼ menu; PivotChart Analyze ▸ Field Buttons per kind and Hide All (`chart.fieldButtons`), saved as `c14:pivotOptions`. No Expand/Collapse Entire Field buttons; innermost category level only |
 | Animation on data change | yes (Windows) | no |
 
 Data tables are controlled by `chart.addElement {element: "dataTable", on: true,
@@ -115,6 +115,7 @@ are (#1686). Such series get no `numCache`/`strCache` on save (#1690).
 | 2026-10-29 | minor | Selected charts highlight their source cells beneath floating objects, so the blue outline no longer crosses the chart; uncovered source cells remain highlighted (#2861) |
 | 2026-10-24 | minor | 100% Stacked Area: inserted from the ribbon and All Charts, drawn as shares of each category's total, read and written as `percentStacked` |
 | 2026-10-18 | trivial | Stale notes: stock/combo, treemap/sunburst, box and waterfall kinds survive XLSX round-trip (PRs #158, #161) |
+| 2026-11-14 | minor | Insert ▸ Charts as Excel 365's menus, Insert Chart's All Charts categories and Combo rows; PivotChart opens Insert Chart or Create PivotChart; PivotChart field buttons on the chart and Field Buttons (`c14:pivotOptions`) |
 | 2026-10-18 | minor | Doughnut charts: every series is a ring (first series innermost), hole size and first slice angle modelled, editable and round-tripped; rotated slices split at 12 o'clock without overlap; legend names categories like Excel's default (#1823) |
 | 2026-10-16 | trivial | Series that refer to defined names (`[0]!Name`, `Sheet!Name`) resolve instead of showing `#NAME?`, and are saved qualified, as Excel needs (#1686) |
 | 2026-10-16 | minor | Box & whisker quartiles default to exclusive, honor each series on draw and XLSX round-trip; `chart.set {quartiles}` changes the method (#1453) |

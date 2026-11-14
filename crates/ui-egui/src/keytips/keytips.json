@@ -1135,10 +1135,10 @@
   },
   {
    "seq": "NI1",
-   "kind": "command",
-   "target": "insert.chart",
+   "kind": "control",
+   "target": "insert.chart.waterfall",
    "excel": "Waterfall Chart",
-   "note": "Waterfall (kind TBD)"
+   "note": "Insert Waterfall, Funnel, Stock, Surface or Radar Chart menu"
   },
   {
    "seq": "NI2",
@@ -1255,10 +1255,10 @@
   },
   {
    "seq": "NSD",
-   "kind": "command",
-   "target": "insert.chart",
+   "kind": "control",
+   "target": "insert.chart.combo",
    "excel": "Combo Chart",
-   "note": "Combo (kind TBD)"
+   "note": "Insert Combo Chart menu"
   },
   {
    "seq": "NSF",
@@ -1299,11 +1299,11 @@
   },
   {
    "seq": "NSZ",
-   "kind": "command",
+   "kind": "control",
    "target": "insert.pivotChart",
    "pending": false,
    "excel": "PivotChart",
-   "note": "PivotChart; reserved until the command lands"
+   "note": "PivotChart: Insert Chart for the PivotTable, or Create PivotChart"
   },
   {
    "seq": "NT",

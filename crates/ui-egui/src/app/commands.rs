@@ -133,6 +133,12 @@ impl SheetApp {
         if id == "insert.recommendedCharts" && params.get("type").is_none() {
             return self.open_dialog("recommendedCharts", json!({}));
         }
+        // PivotChart with nothing named (key tip, command search) opens Insert Chart for the
+        // PivotTable at the active cell, or Create PivotChart elsewhere, as Excel's button does;
+        // programmatic callers of `run` still make a PivotChart straight away.
+        if id == "insert.pivotChart" && params.as_object().is_none_or(serde_json::Map::is_empty) {
+            return crate::ribbon::contextual::open_pivot_chart(self);
+        }
         // Consolidate with no sources (command search, a menu) opens its dialog, as Excel's
         // Data ▸ Consolidate does; programmatic callers of `run` still get the missing-sources error.
         if id == "data.consolidate" && params.get("sources").is_none_or(Json::is_null) {

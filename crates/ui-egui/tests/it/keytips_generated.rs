@@ -1200,7 +1200,8 @@ fn keytip_nhi_() {
 fn keytip_ni1_() {
     let mut h = harness(blank());
     sequence(&mut h, "NI1", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.chart"), "NI1 must journal insert.chart");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NI1 must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
 }
 
 #[test]
@@ -1334,7 +1335,8 @@ fn keytip_nsc_() {
 fn keytip_nsd_() {
     let mut h = harness(blank());
     sequence(&mut h, "NSD", false);
-    assert!(h.state().session.journal.iter().any(|(id, _)| id == "insert.chart"), "NSD must journal insert.chart");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NSD must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
 }
 
 #[test]
@@ -1382,7 +1384,8 @@ fn keytip_nst_() {
 fn keytip_nsz_() {
     let mut h = harness(blank());
     sequence(&mut h, "NSZ", false);
-    assert!(h.state().message.is_some() || h.state().toast.is_some(), "NSZ must invoke insert.pivotChart and surface its missing-params error");
+    assert!(h.state().message.is_none() && h.state().toast.is_none(), "NSZ must route to its control without an error box");
+    assert_eq!(h.state().keytips.prefix(), None);
 }
 
 #[test]
