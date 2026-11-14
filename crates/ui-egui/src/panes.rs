@@ -1,4 +1,5 @@
-//! Right-hand task panes: Comments, Watch Window, Selection Pane, Format Chart, Workbook Links.
+//! Right-hand task panes: Comments, Watch Window, Selection Pane, Format Chart, Workbook Links,
+//! Alt Text.
 
 use egui::{Color32, Ui, vec2};
 use serde_json::{Value as Json, json};
@@ -30,6 +31,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
                 "watch" => "Watch Window",
                 "selection" => "Selection",
                 "formatChart" => "Format Chart Area",
+                "altText" => "Alt Text",
                 _ => "",
             };
             ui.label(egui::RichText::new(app.ui.language.tr(title)).font(theme::ui_bold(15.0)));
@@ -49,6 +51,7 @@ pub fn show(app: &mut SheetApp, ui: &mut Ui) {
             "watch" => watch(app, ui),
             "selection" => selection(app, ui),
             "formatChart" => format_chart(app, ui),
+            "altText" => alt_text(app, ui),
             _ => {}
         });
     });
@@ -436,22 +439,7 @@ fn format_chart(app: &mut SheetApp, ui: &mut Ui) {
             app.open_dialog("comboChart", json!({"chart": id}));
         }
     });
-    ui.collapsing(lang.tr("Alt Text"), |ui| {
-        let field = egui::Id::unique(("gridcraft.chart_alt_title", id));
-        ui.label(lang.tr("Title:"));
-        if let Some(title) = crate::widgets::committed_text(ui, field, &chart.alt_text.title, None) {
-            app.run_or_alert("object.altText", json!({"kind": "chart", "id": id, "title": title}));
-        }
-        ui.label(lang.tr("Description:"));
-        let field = egui::Id::unique(("gridcraft.chart_alt_description", id));
-        if let Some(description) = crate::widgets::committed_text(ui, field, &chart.alt_text.description, None) {
-            app.run_or_alert("object.altText", json!({"kind": "chart", "id": id, "description": description}));
-        }
-        let mut decorative = chart.alt_text.decorative;
-        if ui.checkbox(&mut decorative, lang.tr("Mark as decorative")).changed() {
-            app.run_or_alert("object.altText", json!({"kind": "chart", "id": id, "decorative": decorative}));
-        }
-    });
+    ui.collapsing(lang.tr("Alt Text"), |ui| alt_text_fields(app, ui, ObjRef::new(ObjKind::Chart, id), &chart.alt_text));
     ui.collapsing(lang.tr("Colors & Layout"), |ui| {
         ui.horizontal_wrapped(|ui| {
             for (p, label) in crate::ribbon::contextual::color_palettes(lang) {
@@ -522,3 +510,51 @@ fn chart_slider(ui: &mut Ui, draft: egui::Id, value: u32, range: std::ops::Range
         None
     }
 }
+
+/// Review ▸ Alt Text, Format ▸ Alt Text and Edit Alt Text…: Microsoft 365's Alt Text pane on the
+/// selected chart or picture, following the selection as Excel's does.
+fn alt_text(app: &mut SheetApp, ui: &mut Ui) {
+    let lang = app.ui.language;
+    let target = app.selected_object.filter(|o| matches!(o.kind, ObjKind::Chart | ObjKind::Image));
+    let current = target.and_then(|o| app.session.run("object.altText", json!({"kind": o.kind.name(), "id": o.id})).ok());
+    let (Some(o), Some(current)) = (target, current) else {
+        ui.label(egui::RichText::new(lang.tr("Select a chart or picture first.")).italics());
+        return;
+    };
+    let alt = gridcraft_engine::model::AltText {
+        title: current["title"].as_str().unwrap_or_default().to_string(),
+        description: current["description"].as_str().unwrap_or_default().to_string(),
+        decorative: current["decorative"].as_bool().unwrap_or(false),
+    };
+    alt_text_fields(app, ui, o, &alt);
+}
+
+/// The Alt Text pane's fields as Microsoft 365 has them: the question, one description box and
+/// Mark as decorative, which greys the box out. There is no Title field (Excel 365 dropped it);
+/// a title read from an older file is kept as it is.
+fn alt_text_fields(app: &mut SheetApp, ui: &mut Ui, o: ObjRef, alt: &gridcraft_engine::model::AltText) {
+    let lang = app.ui.language;
+    ui.label(lang.tr("How would you describe this object and its context to someone who is blind or has low vision?"));
+    ui.add_space(4.0);
+    let field = egui::Id::unique(("gridcraft.alt_text_description", o.kind.name(), o.id));
+    let draft = field.with("draft");
+    let mut text = ui.data_mut(|d| d.get_temp::<String>(draft)).unwrap_or_else(|| alt.description.clone());
+    let edit = egui::TextEdit::multiline(&mut text).id(field).desired_rows(5).desired_width(f32::INFINITY);
+    let r = ui.add_enabled(!alt.decorative, edit);
+    let r = r.on_hover_text(lang.tr("Description:"));
+    if r.lost_focus() {
+        ui.data_mut(|d| d.remove::<String>(draft));
+        if !ui.input(|i| i.key_pressed(egui::Key::Escape)) && text != alt.description {
+            app.run_or_alert("object.altText", json!({"kind": o.kind.name(), "id": o.id, "description": text}));
+        }
+    } else if r.has_focus() {
+        ui.data_mut(|d| d.insert_temp(draft, text));
+    } else {
+        ui.data_mut(|d| d.remove::<String>(draft));
+    }
+    let mut decorative = alt.decorative;
+    if ui.checkbox(&mut decorative, lang.tr("Mark as decorative")).changed() {
+        app.run_or_alert("object.altText", json!({"kind": o.kind.name(), "id": o.id, "decorative": decorative}));
+    }
+}
+

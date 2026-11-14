@@ -1232,28 +1232,15 @@ impl Dialog {
                 Dialog::custom("comboChart", "Change Chart Type", json!({"chart": id, "rows": rows}))
             }
             "altText" => {
-                // Alt Text of a chart or picture: Title, Description and Mark as decorative.
-                let (kind, id) = (p("kind"), p("id"));
-                let current = app.session.run("object.altText", json!({"kind": kind, "id": id}));
-                let current = match current {
-                    Ok(v) => v,
-                    Err(e) => {
-                        app.message = Some(("Alt Text".into(), crate::clean_error(&e)));
-                        return None;
-                    }
-                };
-                Dialog::form(
-                    "altText",
-                    "Alt Text",
-                    "object.altText",
-                    vec![
-                        Note("How would you describe this object and its context to someone who is blind or has low vision?".into()),
-                        Text { key: "title", label: "Title:" },
-                        Text { key: "description", label: "Description:" },
-                        Check { key: "decorative", label: "Mark as decorative" },
-                    ],
-                    json!({"kind": kind, "id": id, "title": current["title"], "description": current["description"], "decorative": current["decorative"]}),
-                )
+                // Microsoft 365's Alt Text is a task pane that follows the selection: select the
+                // object asked for and open the pane on it.
+                let kind = params.get("kind").and_then(Json::as_str).and_then(gridcraft_engine::model::ObjKind::parse);
+                let id = params.get("id").and_then(Json::as_u64).and_then(|v| u32::try_from(v).ok());
+                if let (Some(kind), Some(id)) = (kind, id) {
+                    app.selected_object = Some(gridcraft_engine::model::ObjRef::new(kind, id));
+                }
+                app.grid.pane = Some("altText".into());
+                return None;
             }
             "journal" => Dialog::custom("journal", "Action Journal", json!({})),
             "macros" => crate::macro_ui::open_dialog(app, &params),

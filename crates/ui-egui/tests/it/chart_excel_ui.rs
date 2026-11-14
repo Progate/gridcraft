@@ -176,8 +176,8 @@ fn the_charts_format_tab_has_alt_text_and_its_menu_edit_alt_text() {
     assert_eq!(h.state().ui.ribbon_tab, "Format", "a chart has a Format tab");
     h.get_by_label("Alt Text").click();
     h.run_steps(3);
-    assert!(h.state().dialog.as_ref().is_some_and(|d| d.name == "altText"), "Format ▸ Alt Text opens the Alt Text dialog");
-    h.state_mut().dialog = None;
+    assert_eq!(h.state().grid.pane.as_deref(), Some("altText"), "Format ▸ Alt Text opens the Alt Text pane");
+    h.state_mut().grid.pane = None;
     h.state_mut().ui.ribbon_tab = "Chart Design".into();
     h.run_steps(2);
     assert!(h.query_by_label("Alt Text").is_none(), "Alt Text is on the Format tab, not Chart Design");
@@ -189,7 +189,30 @@ fn the_charts_format_tab_has_alt_text_and_its_menu_edit_alt_text() {
     }
     h.get_by_label("Edit Alt Text…").click();
     h.run_steps(3);
-    assert!(h.state().dialog.as_ref().is_some_and(|d| d.name == "altText"));
+    assert_eq!(h.state().grid.pane.as_deref(), Some("altText"));
+}
+
+#[test]
+fn the_alt_text_pane_has_a_description_and_mark_as_decorative_but_no_title() {
+    let (mut s, id) = chart_session();
+    // A title read from an older file stays as it is.
+    s.execute("object.altText", json!({"kind": "chart", "id": id, "title": "Old title"})).unwrap();
+    let mut h = crate::support::harness(s, 4);
+    h.state_mut().selected_object = Some(ObjRef::new(ObjKind::Chart, id));
+    h.state_mut().open_dialog("altText", json!({"kind": "chart", "id": id}));
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none() && h.state().grid.pane.as_deref() == Some("altText"));
+    assert!(h.query_by_label("Title:").is_none(), "Microsoft 365's pane has no title field");
+    assert!(h.query_by_label("Mark as decorative").is_some());
+    h.get_by_label("Description:").click();
+    h.run_steps(2);
+    h.input_mut().events.push(Event::Text("Visits rose in May.".into()));
+    h.step();
+    // Clicking the checkbox moves focus away, which commits the description.
+    h.get_by_label("Mark as decorative").click();
+    h.run_steps(3);
+    let alt = chart(&h).alt_text;
+    assert_eq!((alt.title.as_str(), alt.description.as_str(), alt.decorative), ("Old title", "Visits rose in May.", true));
 }
 
 #[test]
